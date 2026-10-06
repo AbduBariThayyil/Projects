@@ -1,0 +1,738 @@
+#!/usr/bin/env python3
+"""lyricview-web - the browser version of lyricview (the native Qt app is `lyricview`).
+
+Serves a fullscreen word-by-word lyrics page for whatever your MPRIS player is playing and opens it in a
+Chromium-based browser (--app mode) or Firefox (own profile). Needs: playerctl. Optional: python-mutagen.
+
+  lyricview-web                 start (opens a fullscreen app window)
+  lyricview-web -p lollypop     only follow that player
+  lyricview-web --windowed      don't force fullscreen
+  lyricview-web --no-browser    just serve, open http://127.0.0.1:8765 yourself
+
+Keys:  Space play/pause · ←/→ seek 5s · N/P next/prev · [ ] lyric timing ∓100ms · F fullscreen · click a line to seek
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "lyricview"
+SEP = "\x1f"
+FMT = SEP.join(["{{status}}", "{{playerName}}", "{{artist}}", "{{title}}", "{{album}}",
+                "{{mpris:length}}", "{{xesam:url}}", "{{mpris:artUrl}}", "{{position}}"])
+UA = "lyricview/1.0"
+
+
+# ───────────────────────────── lyrics parsing ─────────────────────────────
+TS = re.compile(r"\[(\d+):(\d+(?:[.:]\d+)?)\]")
+WTS = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
+SPREAD = 1.0  # >1 stretches estimated word timing, <1 shortens
+CJK = "\u2e80-\u9fff\uac00-\ud7af\uff00-\uffef"
+TOKEN = re.compile(rf"([{CJK}]|[^\s{CJK}]+)(\s*)")
+
+
+def _t(m, s):
+    return int(m) * 60 + float(s.replace(":", "."))
+
+
+def has_timestamps(text):
+    return len(TS.findall(text or "")) >= 2
+
+
+def build_words(body, t, end):
+    """Split a lyric line into words with start/end times. Uses real <mm:ss.xx> word tags when present."""
+    if WTS.search(body):
+        parts = re.split(r"<(\d+):(\d+(?:\.\d+)?)>", body)
+        stamps = [(_t(parts[i], parts[i + 1]), parts[i + 2]) for i in range(1, len(parts) - 2, 3)]
+        if parts[0].strip():  # enhanced LRC: the first word has no <tag> - it starts at the line's own [mm:ss.xx]
+            stamps.insert(0, (t, parts[0]))
+        words = []
+        for k, (ts, txt) in enumerate(stamps):
+            te = stamps[k + 1][0] if k + 1 < len(stamps) else min(end, ts + 1.6)  # last word: don't crawl over a long gap
+            w = txt.strip()
+            if w:
+                words.append({"t": round(ts, 3), "e": round(max(te, ts + 0.05), 3), "w": w,
+                              "s": txt.endswith(" ") and k + 1 < len(stamps)})
+        if words:
+            return words
+        body = WTS.sub("", body)
+    toks = [(m.group(1), bool(m.group(2))) for m in TOKEN.finditer(body.strip())]
+    if not toks:
+        return []
+    chars = sum(len(w) for w, _ in toks)
+    # Singing time: a line normally fills (almost) its whole slot up to the next line, so slow songs
+    # aren't rushed; only long instrumental gaps are capped. SPREAD (Qt app: , and . keys) scales it.
+    gap = max(0.3, end - t)
+    cap = max(4.5, 0.17 * chars + 1.0)
+    dur = min(max(0.5, min(gap * 0.9, cap) * SPREAD), max(0.4, gap - 0.05))
+    weights = [2.5 if re.match(rf"[{CJK}]", w) else len(w) + 1.2 for w, _ in toks]
+    total, acc, words = sum(weights), 0.0, []
+    for (w, sp), wt in zip(toks, weights):
+        ws, we = t + dur * acc / total, t + dur * (acc + wt) / total
+        acc += wt
+        words.append({"t": round(ws, 3), "e": round(we, 3), "w": w, "s": sp})
+    words[-1]["s"] = False
+    return words
+
+
+def parse_lrc(text, length=None):
+    offset, raw = 0.0, []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        mo = re.match(r"\[offset:\s*([+-]?\d+)\]", ln, re.I)
+        if mo:
+            offset = int(mo.group(1)) / 1000
+            continue
+        stamps = TS.findall(ln)
+        if stamps:
+            body = TS.sub("", ln).strip()
+            raw += [(max(0.0, _t(a, b) - offset), body) for a, b in stamps]
+    raw.sort(key=lambda x: x[0])
+    lines = []
+    for i, (t, body) in enumerate(raw):
+        if not body:
+            continue
+        end = raw[i + 1][0] if i + 1 < len(raw) else (length if length and length > t + 1 else t + 5)
+        end = max(end, t + 0.3)
+        words = build_words(body, t, end)
+        if not words:
+            continue
+        lines.append({"t": round(t, 3), "e": round(end, 3), "words": words, "gap": False})
+    # instrumental gaps -> animated dots
+    out = []
+    if lines and lines[0]["t"] > 6:
+        out.append({"t": 0.5, "e": round(lines[0]["t"] - 0.4, 3), "words": [], "gap": True})
+    for i, ln in enumerate(lines):
+        out.append(ln)
+        sung_end = ln["words"][-1]["e"]
+        nxt = lines[i + 1]["t"] if i + 1 < len(lines) else None
+        if nxt and nxt - sung_end > 6:
+            out.append({"t": round(sung_end + 0.5, 3), "e": round(nxt - 0.4, 3), "words": [], "gap": True})
+    return out
+
+
+def parse_plain(text):
+    return [{"text": ln.strip()} for ln in (text or "").splitlines()]
+
+
+# ───────────────────────────── lyrics sources ─────────────────────────────
+def http_get(url, timeout=8):
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def path_from_url(url):
+    if url and url.startswith("file://"):
+        return Path(urllib.parse.unquote(urllib.parse.urlparse(url).path))
+    return None
+
+
+def tag_lyrics(path):
+    try:
+        import mutagen
+        f = mutagen.File(path)
+        if f is None:
+            return None
+        tags = f.tags
+        if tags is None:
+            return None
+        if hasattr(tags, "getall"):  # ID3
+            us = tags.getall("USLT")
+            if us:
+                return str(us[0].text)
+        for k in ("\xa9lyr", "lyrics", "LYRICS", "UNSYNCEDLYRICS", "unsyncedlyrics"):
+            if k in tags:
+                v = tags[k]
+                v = v[0] if isinstance(v, list) else v
+                return str(v)
+    except Exception:
+        pass
+    return None
+
+
+def lrclib(artist, title, album, length):
+    base, t = "https://lrclib.net/api/", re.sub(r"\s*[\(\[]\s*(?:feat|ft|with)\b[^\)\]]*[\)\]]", "", title, flags=re.I).strip() or title
+    plain = None
+    if album and length:
+        try:
+            d = json.loads(http_get(base + "get?" + urllib.parse.urlencode(
+                {"artist_name": artist, "track_name": t, "album_name": album, "duration": int(round(length))}), 6))
+            if d.get("syncedLyrics"):
+                return d["syncedLyrics"]
+            plain = d.get("plainLyrics")
+        except Exception:
+            pass
+    for params in ({"track_name": t, "artist_name": artist}, {"q": f"{artist} {t}"}):
+        try:
+            items = json.loads(http_get(base + "search?" + urllib.parse.urlencode(params), 6))
+        except Exception:
+            continue
+        good = [i for i in items if isinstance(i, dict) and (not length or not i.get("duration") or abs(i["duration"] - length) <= 6)]
+        good.sort(key=lambda i: abs((i.get("duration") or length or 0) - (length or 0)))
+        for i in good:
+            if i.get("syncedLyrics"):
+                return i["syncedLyrics"]
+        plain = plain or next((i["plainLyrics"] for i in good if i.get("plainLyrics")), None)
+    return plain
+
+
+def load_lyrics(meta):
+    """-> {'kind': synced|plain|none, 'lines': [...], 'src': str}"""
+    length = meta["length"]
+    path = path_from_url(meta["url"])
+    text, src = None, ""
+    if path:
+        for cand in (path.with_suffix(".lrc"), path.with_suffix(".LRC")):
+            if cand.exists():
+                try:
+                    text, src = cand.read_text("utf-8", "replace"), ".lrc file"
+                    break
+                except OSError:
+                    pass
+        if not text or not has_timestamps(text):
+            t2 = tag_lyrics(path) if path.exists() else None
+            if t2 and (has_timestamps(t2) or not text):
+                text, src = t2, "embedded tags"
+    if not text or not has_timestamps(text):
+        ck = CACHE / "lyrics" / (meta["key"] + ".json")
+        try:
+            cached = json.loads(ck.read_text("utf-8"))
+        except Exception:
+            cached = None
+        if cached is not None and cached.get("text") is None and time.time() - ck.stat().st_mtime > 7 * 86400:
+            cached = None  # retry old misses after a week
+        if cached is None:
+            got = lrclib(meta["artist"], meta["title"], meta["album"], length)
+            cached = {"text": got}
+            try:  # misses are cached too, so we don't hammer lrclib on every play
+                ck.parent.mkdir(parents=True, exist_ok=True)
+                ck.write_text(json.dumps(cached), "utf-8")
+            except OSError:
+                pass
+        if cached.get("text") and (has_timestamps(cached["text"]) or not text):
+            text, src = cached["text"], "lrclib"
+    if not text or not text.strip():
+        return {"kind": "none", "lines": [], "src": ""}
+    if has_timestamps(text):
+        lines = parse_lrc(text, length)
+        if lines:
+            return {"kind": "synced", "lines": lines, "src": src, "raw": text, "length": length}
+    return {"kind": "plain", "lines": parse_plain(re.sub(r"\[[^\]]*\]", "", text)), "src": src}
+
+
+# ───────────────────────────── artwork ─────────────────────────────
+def load_art(meta):
+    """-> (bytes, mime) or None"""
+    url, path = meta["art"], path_from_url(meta["url"])
+    if url:
+        try:
+            p = path_from_url(url)
+            data = p.read_bytes() if p else http_get(url, 6)
+            if data:
+                return data, ("image/png" if data[:4] == b"\x89PNG" else "image/jpeg")
+        except Exception:
+            pass
+    if path and path.exists():
+        try:
+            import mutagen
+            f = mutagen.File(path)
+            tags = getattr(f, "tags", None)
+            if tags is not None and hasattr(tags, "getall") and tags.getall("APIC"):
+                a = tags.getall("APIC")[0]
+                return a.data, a.mime or "image/jpeg"
+            if tags is not None and "covr" in tags:
+                c = tags["covr"][0]
+                return bytes(c), ("image/png" if bytes(c)[:4] == b"\x89PNG" else "image/jpeg")
+            if getattr(f, "pictures", None):
+                return f.pictures[0].data, f.pictures[0].mime
+        except Exception:
+            pass
+        for name in ("cover", "folder", "front", "album", "Cover", "Folder"):
+            for ext in ("jpg", "jpeg", "png"):
+                c = path.parent / f"{name}.{ext}"
+                if c.exists():
+                    return c.read_bytes(), "image/png" if ext == "png" else "image/jpeg"
+    return None
+
+
+# ───────────────────────────── player state ─────────────────────────────
+IGNORE = ["lyricview"]  # our own MPRIS name; emptied when --mpris-name is used
+
+
+class State:
+    def __init__(self, player=None):
+        self.player = player
+        self.lock = threading.Lock()
+        self.active = False
+        self.status, self.pos, self.t = "Stopped", 0.0, time.time()
+        self.meta, self.key = {}, ""
+        self.lyrics, self.lyr_ev = None, threading.Event()
+        self.art, self.art_done, self.art_ev = None, False, threading.Event()
+        self.last_client = 0.0
+
+    def cmd(self, *args):
+        sel = ["-p", self.player] if self.player else (["--ignore-player", IGNORE[0]] if IGNORE else [])  # never follow ourselves
+        return ["playerctl"] + sel + list(args)
+
+    def ctl(self, *args):
+        try:
+            subprocess.run(self.cmd(*args), capture_output=True, timeout=3)
+        except Exception:
+            pass
+
+    def refresh(self):
+        try:
+            r = subprocess.run(self.cmd("metadata", "--format", FMT), capture_output=True, text=True, timeout=3)
+            f = r.stdout.rstrip("\n").split(SEP) if r.returncode == 0 else []
+        except FileNotFoundError:
+            sys.exit("playerctl not found - install it: sudo pacman -S playerctl")
+        except Exception:
+            f = []
+        if len(f) < 9:
+            with self.lock:
+                self.active = False
+            return
+        status, player, artist, title, album, length, url, art, pos = f
+
+        def num(x, div=1e6):
+            try:
+                return float(x) / div
+            except ValueError:
+                return 0.0
+        length_s = num(length)
+        key = hashlib.md5(f"{artist}|{title}|{album}|{int(length_s)}".encode()).hexdigest()[:16]
+        new = None
+        with self.lock:
+            self.active, self.status, self.pos, self.t = True, status, num(pos), time.time()
+            if key != self.key:
+                self.key = key
+                self.meta = {"key": key, "artist": artist, "title": title, "album": album, "length": length_s,
+                             "url": url, "art": art, "player": player}
+                self.lyrics, self.art, self.art_done = None, None, False
+                self.lyr_ev, self.art_ev = threading.Event(), threading.Event()
+                new = (self.meta, self.lyr_ev, self.art_ev, key)
+        if new:  # cover and lyrics load independently: a slow lyrics lookup must never delay the cover
+            threading.Thread(target=self._load_art, args=(new[0], new[2], new[3]), daemon=True).start()
+            threading.Thread(target=self._load_lyr, args=(new[0], new[1], new[3]), daemon=True).start()
+
+    def _load_lyr(self, meta, ev, key):
+        try:
+            lyr = load_lyrics(meta)
+        except Exception:
+            lyr = {"kind": "none", "lines": [], "src": ""}
+        with self.lock:
+            if self.key == key:
+                self.lyrics = lyr
+        ev.set()
+
+    def _load_art(self, meta, ev, key):
+        art = None
+        try:
+            art = load_art(meta)
+        except Exception:
+            pass
+        with self.lock:
+            if self.key == key:
+                self.art, self.art_done = art, True
+        ev.set()
+
+    def poll_loop(self):
+        while True:
+            self.refresh()
+            idle = time.time() - self.last_client > 10
+            time.sleep(4.0 if idle else 1.0)  # browser extrapolates between polls, so 1s is plenty (was 0.5s)
+
+    def snapshot(self):
+        with self.lock:
+            self.last_client = time.time()
+            pos = self.pos + (time.time() - self.t if self.status == "Playing" else 0)
+            ln = self.meta.get("length", 0)
+            if ln and pos > ln:  # never run past the end of the track
+                pos = ln
+            return {"active": self.active, "status": self.status, "pos": round(pos, 3), "key": self.key,
+                    "title": self.meta.get("title", ""), "artist": self.meta.get("artist", ""),
+                    "album": self.meta.get("album", ""), "length": self.meta.get("length", 0),
+                    "player": self.meta.get("player", "")}
+
+
+# ───────────────────────────── http ─────────────────────────────
+def make_handler(state):
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _send(self, code, body, ctype):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _json(self, obj, code=200):
+            self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+
+        def do_GET(self):
+            u = urllib.parse.urlparse(self.path)
+            q = urllib.parse.parse_qs(u.query)
+            if u.path == "/":
+                self._send(200, INDEX.encode(), "text/html; charset=utf-8")
+            elif u.path == "/state":
+                self._json(state.snapshot())
+            elif u.path == "/lyrics":
+                with state.lock:
+                    ev, key = state.lyr_ev, state.key
+                ev.wait(12)
+                with state.lock:
+                    lyr = state.lyrics if state.key == key else None
+                self._json(lyr or {"kind": "none", "lines": [], "src": ""})
+            elif u.path == "/art":
+                with state.lock:
+                    ev = state.art_ev
+                ev.wait(12)
+                with state.lock:
+                    art = state.art
+                if art:
+                    self._send(200, art[0], art[1])
+                else:
+                    self._send(404, b"", "text/plain")
+            else:
+                self._send(404, b"", "text/plain")
+
+        def do_POST(self):
+            u = urllib.parse.urlparse(self.path)
+            q = urllib.parse.parse_qs(u.query)
+            if u.path == "/ctl/playpause":
+                state.ctl("play-pause")
+            elif u.path == "/ctl/next":
+                state.ctl("next")
+            elif u.path == "/ctl/previous":
+                state.ctl("previous")
+            elif u.path == "/ctl/seek":
+                try:
+                    state.ctl("position", f"{max(0.0, float(q.get('pos', ['0'])[0])):.3f}")
+                except ValueError:
+                    pass
+            state.refresh()
+            self._json({"ok": True})
+    return H
+
+
+# ───────────────────────────── launcher ─────────────────────────────
+def launch_browser(url, windowed):
+    prof = CACHE / "browser"
+    for exe in ("chromium", "chromium-browser", "google-chrome-stable", "google-chrome", "brave", "brave-browser", "vivaldi", "microsoft-edge-stable"):
+        path = shutil.which(exe)
+        if path:
+            args = [path, f"--app={url}", f"--user-data-dir={prof}", "--no-first-run", "--no-default-browser-check",
+                    "--disable-features=Translate", "--autoplay-policy=no-user-gesture-required"]
+            if not windowed:
+                args.append("--start-fullscreen")
+            return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ff = shutil.which("firefox")
+    if ff:
+        ffp = CACHE / "firefox-profile"
+        ffp.mkdir(parents=True, exist_ok=True)
+        args = [ff, "--no-remote", "--profile", str(ffp)] + ([url] if windowed else ["--kiosk", url])
+        return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="lyricview", description="Fullscreen word-by-word lyrics for your MPRIS player.")
+    ap.add_argument("-p", "--player", help="only follow this player (e.g. lollypop, mpv, spotify)")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--windowed", action="store_true")
+    ap.add_argument("--no-browser", action="store_true")
+    a = ap.parse_args()
+    if not shutil.which("playerctl"):
+        sys.exit("playerctl not found - install it: sudo pacman -S playerctl")
+    state = State(a.player)
+    state.refresh()
+    threading.Thread(target=state.poll_loop, daemon=True).start()
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(state))
+    except OSError:
+        sys.exit(f"port {a.port} is busy - is lyricview already running? (or use --port)")
+    srv.daemon_threads = True
+    url = f"http://127.0.0.1:{a.port}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    print(f"lyricview on {url}")
+    proc = None if a.no_browser else launch_browser(url, a.windowed)
+    if proc is None and not a.no_browser:
+        print("no chromium/firefox found - open the URL above yourself")
+    elif proc is not None:
+        print("opened a window - if it didn't appear, open the URL above yourself")
+    try:  # keep serving until Ctrl-C, or until the page has been closed for a minute
+        seen = False
+        while True:
+            time.sleep(2)
+            idle = time.time() - state.last_client
+            seen = seen or (state.last_client > 0 and idle < 5)
+            if seen and idle > 60:
+                break
+    except KeyboardInterrupt:
+        pass
+
+
+INDEX = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>lyricview</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--c1:108,92,231;--c2:0,184,148}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#050507;color:#fff;overflow:hidden;
+  font-family:"Inter","SF Pro Display","Cantarell","Noto Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+body.idle{cursor:none}
+.bg{position:fixed;inset:-15%;background-size:cover;background-position:center;opacity:0;
+  filter:blur(80px) saturate(1.7) brightness(.5);transition:opacity 1.4s ease;will-change:opacity}
+.bg.show{opacity:1}
+#tint{position:fixed;inset:-10%;pointer-events:none;animation:drift 28s ease-in-out infinite alternate;
+  background:radial-gradient(60% 55% at 15% 25%,rgba(var(--c1),.5),transparent 70%),
+             radial-gradient(55% 50% at 90% 85%,rgba(var(--c2),.42),transparent 70%);transition:background 1.2s}
+@keyframes drift{to{transform:translate3d(-3%,2.5%,0) scale(1.08)}}
+#vig{position:fixed;inset:0;pointer-events:none;background:radial-gradient(120% 90% at 50% 40%,transparent 40%,rgba(0,0,0,.55))}
+#app{position:relative;height:100%;display:grid;grid-template-columns:minmax(300px,36vw) 1fr;gap:4vw;padding:6vh 5vw}
+#side{display:flex;flex-direction:column;justify-content:center;gap:3.2vh;min-width:0}
+#art{width:min(30vw,54vh);aspect-ratio:1;border-radius:clamp(14px,1.6vw,26px);position:relative;
+  transition:transform .8s cubic-bezier(.2,.9,.2,1),box-shadow .8s;transform:scale(1);
+  box-shadow:0 40px 90px -25px rgba(0,0,0,.8),0 0 140px -35px rgba(var(--c1),.9)}
+body.paused #art{transform:scale(.9)}
+#cover{width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block;background:#15151b;opacity:0;transition:opacity .6s}
+#cover.ok{opacity:1}
+#meta{max-width:min(30vw,54vh)}
+#title{font-size:clamp(20px,2vw,34px);font-weight:800;letter-spacing:-.02em;line-height:1.15;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+#artist{font-size:clamp(15px,1.3vw,22px);font-weight:600;opacity:.75;margin-top:.5vh}
+#album{font-size:clamp(12px,1vw,16px);opacity:.45;margin-top:.4vh;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#prog{width:min(30vw,54vh);display:flex;align-items:center;gap:12px;font-size:12px;opacity:.7;font-variant-numeric:tabular-nums}
+#bar{flex:1;height:4px;border-radius:4px;background:rgba(255,255,255,.18);overflow:hidden}
+#fill{display:block;height:100%;width:0;background:#fff;border-radius:4px}
+#ctrl{display:flex;gap:26px;align-items:center;transition:opacity .5s}
+body.idle #ctrl{opacity:0}
+#ctrl button{background:none;border:0;color:#fff;opacity:.75;cursor:pointer;display:grid;place-items:center;transition:opacity .2s,transform .2s}
+#ctrl button:hover{opacity:1;transform:scale(1.12)}
+#ctrl svg{width:30px;height:30px;fill:currentColor}
+#ctrl #pp svg{width:44px;height:44px}
+#pp .pl{display:none} body.paused #pp .pl{display:block} body.paused #pp .pa{display:none}
+#stage{position:relative;height:100%;overflow:hidden;
+  -webkit-mask-image:linear-gradient(transparent 0,#000 13%,#000 78%,transparent 100%);
+          mask-image:linear-gradient(transparent 0,#000 13%,#000 78%,transparent 100%)}
+#lyrics{position:absolute;left:0;right:0;top:0;will-change:transform;transition:transform .85s cubic-bezier(.2,.9,.2,1)}
+#lyrics.swap{opacity:0}
+#lyrics{transition:transform .85s cubic-bezier(.2,.9,.2,1),opacity .4s}
+.line{padding:1.15vh 1vw 1.15vh 0;font-size:clamp(28px,4vw,68px);font-weight:800;line-height:1.13;letter-spacing:-.028em;
+  opacity:.3;transform:scale(.93);transform-origin:left center;filter:blur(var(--bl,0px));cursor:pointer;
+  transition:opacity .6s,transform .7s cubic-bezier(.2,.9,.2,1),filter .6s;transition-delay:var(--d,0ms)}
+.line:hover{opacity:.6}
+.line.on{opacity:1;transform:scale(1);filter:none}
+.line.past{opacity:.2}
+.w{display:inline-block;white-space:pre;--p:0;color:transparent;
+  background:linear-gradient(90deg,#fff 40%,rgba(255,255,255,.4) 60%);background-size:250% 100%;
+  background-position:calc(100% - var(--p)*100%) 0;-webkit-background-clip:text;background-clip:text;
+  transition:transform .35s ease,filter .35s ease}
+.w.cur{transform:translateY(-.045em);filter:drop-shadow(0 0 .32em rgba(255,255,255,.4))}
+.gap{height:7vh;display:flex;align-items:center;gap:1.1vw;filter:none!important}
+.dot{width:1.1vw;height:1.1vw;min-width:12px;min-height:12px;border-radius:50%;background:#fff;opacity:.25;transform:scale(.8)}
+.plain .line{font-size:clamp(18px,2vw,32px);font-weight:600;letter-spacing:-.01em;opacity:.85;transform:none;filter:none;cursor:default}
+#msg{position:absolute;inset:0;display:none;place-items:center;text-align:center;font-size:clamp(18px,2vw,30px);font-weight:600;opacity:.55;padding:0 6vw}
+body.nolyrics #msg{display:grid}
+body.empty #app{opacity:0}
+#empty{position:fixed;inset:0;display:none;place-items:center;text-align:center;font-size:clamp(20px,2.4vw,36px);font-weight:700;opacity:.6}
+body.empty #empty{display:grid}
+#hint{position:fixed;bottom:2.5vh;left:0;right:0;text-align:center;font-size:12px;letter-spacing:.04em;opacity:0;transition:opacity 1s;pointer-events:none}
+#hint.show{opacity:.45}
+@media (max-aspect-ratio:1/1){#app{grid-template-columns:1fr;grid-template-rows:auto 1fr}#side{flex-direction:row;align-items:center}
+  #art{width:22vw}#meta,#prog{display:none}}
+</style></head>
+<body class="paused idle">
+<div class="bg" id="bgA"></div><div class="bg" id="bgB"></div><div id="tint"></div><div id="vig"></div>
+<div id="app">
+  <aside id="side">
+    <div id="art"><img id="cover" alt=""></div>
+    <div id="meta"><h1 id="title"></h1><h2 id="artist"></h2><p id="album"></p></div>
+    <div id="prog"><span id="tcur">0:00</span><div id="bar"><i id="fill"></i></div><span id="tend">0:00</span></div>
+    <div id="ctrl">
+      <button id="prev" title="Previous (P)"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12 18 6v12z"/></svg></button>
+      <button id="pp" title="Play/Pause (Space)"><svg class="pa" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg><svg class="pl" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+      <button id="next" title="Next (N)"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18V6l8.5 6z"/></svg></button>
+    </div>
+  </aside>
+  <main id="stage"><div id="lyrics"></div><div id="msg"></div></main>
+</div>
+<div id="empty">Nothing playing<br><small style="font-weight:500;opacity:.7">start a track in Lollypop (or any MPRIS player)</small></div>
+<div id="hint">Space · ←/→ seek · N/P track · [ ] timing · F fullscreen · click a line to jump</div>
+<script>
+(()=>{
+const $=s=>document.querySelector(s);
+const el={title:$('#title'),artist:$('#artist'),album:$('#album'),cover:$('#cover'),fill:$('#fill'),tcur:$('#tcur'),tend:$('#tend'),
+  ly:$('#lyrics'),stage:$('#stage'),msg:$('#msg')};
+let key='',L={kind:'none',lines:[]},lines=[],tops=[],cur=-2,raf=0,lastPos=-1,bgFlip=false,totalH=0;
+let off=parseFloat(localStorage.getItem('lv_off')||'0')||0;
+let B={pos:0,t:performance.now(),playing:false,len:0};
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
+const fmt=s=>{s=Math.max(0,Math.floor(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
+const now=()=>B.playing?B.pos+(performance.now()-B.t)/1000:B.pos;
+const post=(p)=>fetch(p,{method:'POST'}).catch(()=>{});
+
+/* ---------- palette from artwork ---------- */
+function palette(img){
+  try{
+    const c=document.createElement('canvas');c.width=c.height=24;
+    const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(img,0,0,24,24);
+    const d=x.getImageData(0,0,24,24).data,bk=Array.from({length:12},()=>({w:0,r:0,g:0,b:0}));
+    for(let i=0;i<d.length;i+=4){
+      const r=d[i],g=d[i+1],b=d[i+2],mx=Math.max(r,g,b),mn=Math.min(r,g,b),s=mx?(mx-mn)/mx:0,v=mx/255;
+      if(v<.2)continue;
+      let h=0;if(mx!==mn){const dd=mx-mn;h=mx===r?((g-b)/dd)%6:mx===g?(b-r)/dd+2:(r-g)/dd+4;h=(h*60+360)%360}
+      const w=s*s*v+.01,o=bk[Math.floor(h/30)%12];o.w+=w;o.r+=r*w;o.g+=g*w;o.b+=b*w;
+    }
+    bk.sort((a,b)=>b.w-a.w);
+    const lift=o=>{let c=[o.r/o.w,o.g/o.w,o.b/o.w];const m=Math.max(...c);if(m<150)c=c.map(v=>v*150/Math.max(m,1));return c.map(Math.round).join(',')};
+    if(bk[0].w>0){
+      document.documentElement.style.setProperty('--c1',lift(bk[0]));
+      document.documentElement.style.setProperty('--c2',bk[1].w>bk[0].w*.25?lift(bk[1]):lift(bk[0]).split(',').reverse().join(','));
+    }
+  }catch(e){}
+}
+function setBackground(url){
+  const a=bgFlip?$('#bgA'):$('#bgB'),b=bgFlip?$('#bgB'):$('#bgA');bgFlip=!bgFlip;
+  a.style.backgroundImage=`url(${url})`;a.classList.add('show');b.classList.remove('show');
+}
+
+/* ---------- track + lyrics ---------- */
+function newTrack(s){
+  key=s.key;
+  el.title.textContent=s.title||'Unknown title';el.artist.textContent=s.artist;el.album.textContent=s.album;
+  el.tend.textContent=fmt(s.length);
+  document.title=`${s.artist} – ${s.title}`;
+  el.ly.classList.add('swap');
+  const url='/art?k='+key;el.cover.classList.remove('ok');
+  el.cover.onload=()=>{el.cover.classList.add('ok');palette(el.cover);setBackground(url)};
+  el.cover.onerror=()=>{el.cover.classList.remove('ok')};
+  el.cover.src=url;
+  const k=key;
+  fetch('/lyrics?k='+k).then(r=>r.json()).then(d=>{if(k===key){L=d;render()}}).catch(()=>{});
+}
+function render(){
+  el.ly.innerHTML='';lines=[];cur=-2;lastPos=-1;
+  document.body.classList.toggle('nolyrics',L.kind==='none');
+  el.stage.classList.toggle('plain',L.kind==='plain');
+  el.msg.textContent=L.kind==='none'?'No lyrics found for this track':'';
+  L.lines.forEach(ln=>{
+    const d=document.createElement('div');d.className='line'+(ln.gap?' gap':'');
+    if(ln.gap){d._dots=[0,1,2].map(()=>{const s=document.createElement('span');s.className='dot';d.appendChild(s);return s})}
+    else if(L.kind==='synced'){
+      d._ws=ln.words.map(w=>{const s=document.createElement('span');s.className='w';s.textContent=w.w+(w.s?' ':'');d.appendChild(s);s._f=0;return s});
+      d.onclick=()=>seekTo(ln.t);
+    }else d.textContent=ln.text||'\u00a0';
+    d._st='future';el.ly.appendChild(d);lines.push(d);
+  });
+  requestAnimationFrame(()=>{measure();el.ly.classList.remove('swap');setActive(L.kind==='synced'?-1:-1,true);ensureLoop()});
+}
+function measure(){
+  tops=lines.map(e=>e.offsetTop+e.offsetHeight/2);totalH=el.ly.offsetHeight;
+}
+function setWords(e,f){(e._ws||[]).forEach(s=>{s._f=f;s.style.setProperty('--p',f);s.classList.remove('cur')})}
+function setActive(i,force){
+  if(L.kind!=='synced'){return}
+  lines.forEach((e,j)=>{
+    const d=j-i,st=d<0?'past':d===0?'on':'future';
+    e.classList.toggle('on',d===0);e.classList.toggle('past',d<0);
+    e.style.setProperty('--bl',d===0||e.classList.contains('gap')?'0px':(Math.min(Math.abs(d),6)*.75)+'px');
+    e.style.setProperty('--d',d>0?Math.min(d,6)*45+'ms':'0ms');
+    if(e._st!==st||force){if(e._ws){if(st==='past')setWords(e,1);else if(st==='future')setWords(e,0)}
+      if(e._dots&&st!=='on')e._dots.forEach(x=>{x.style.opacity=.25;x.style.transform='scale(.8)'});e._st=st}
+  });
+  cur=i;
+  const y=el.stage.clientHeight*.36-(tops[Math.max(i,0)]||0);
+  el.ly.style.transform=`translateY(${y}px)`;
+}
+function activeIdx(p){
+  let lo=0,hi=L.lines.length-1,r=-1;
+  while(lo<=hi){const m=(lo+hi)>>1;if(L.lines[m].t<=p){r=m;lo=m+1}else hi=m-1}
+  return r;
+}
+function animate(i,p){
+  const ln=L.lines[i],e=lines[i];if(!ln||!e)return;
+  if(ln.gap){
+    const f=clamp((p-ln.t)/Math.max(ln.e-ln.t,.1),0,1);
+    e._dots.forEach((x,k)=>{const q=clamp(f*3-k,0,1),br=1+.12*Math.sin(p*3+k);x.style.opacity=.25+.75*q;x.style.transform=`scale(${(.8+.3*q)*br})`});
+    return;
+  }
+  let curSet=false;
+  ln.words.forEach((w,k)=>{
+    const f=p>=w.e?1:p<=w.t?0:(p-w.t)/(w.e-w.t),s=e._ws[k];
+    if(Math.abs(f-s._f)>.004||f!==s._f&&(f===0||f===1)){s._f=f;s.style.setProperty('--p',f)}
+    const isCur=f>0&&f<1&&!curSet;if(isCur)curSet=true;s.classList.toggle('cur',isCur);
+  });
+}
+function tick(){
+  raf=0;
+  const raw=now(),p=raw+off;
+  if(B.len>0){el.fill.style.width=(clamp(raw/B.len,0,1)*100)+'%';
+    const t=fmt(raw);if(el.tcur.textContent!==t)el.tcur.textContent=t}
+  if(L.kind==='synced'&&lines.length){
+    const i=activeIdx(p);if(i!==cur)setActive(i);
+    if(i>=0)animate(i,p);
+  }else if(L.kind==='plain'&&B.len>0){
+    const y=el.stage.clientHeight*.22-clamp(raw/B.len,0,1)*Math.max(0,totalH-el.stage.clientHeight*.55);
+    el.ly.style.transform=`translateY(${y}px)`;
+  }
+  if(B.playing)raf=requestAnimationFrame(tick);
+}
+function ensureLoop(){if(!raf)raf=requestAnimationFrame(tick)}
+
+/* ---------- polling ---------- */
+async function poll(){
+  try{
+    const s=await (await fetch('/state',{cache:'no-store'})).json();
+    document.body.classList.toggle('empty',!s.active);
+    if(s.active){
+      const playing=s.status==='Playing',changed=s.key!==key;
+      if(changed)newTrack(s);
+      if(changed||playing!==B.playing||Math.abs(now()-s.pos)>.3)B={pos:s.pos,t:performance.now(),playing,len:s.length};
+      B.len=s.length;
+      document.body.classList.toggle('paused',!playing);
+      ensureLoop();
+    }
+  }catch(e){}
+  setTimeout(poll,500);
+}
+function seekTo(t){B={...B,pos:Math.max(0,t),t:performance.now()};post('/ctl/seek?pos='+Math.max(0,t));ensureLoop()}
+
+/* ---------- input ---------- */
+$('#pp').onclick=()=>post('/ctl/playpause');$('#next').onclick=()=>post('/ctl/next');$('#prev').onclick=()=>post('/ctl/previous');
+addEventListener('keydown',e=>{
+  if(e.key===' '){e.preventDefault();post('/ctl/playpause')}
+  else if(e.key==='ArrowRight')seekTo(now()+5);else if(e.key==='ArrowLeft')seekTo(now()-5);
+  else if(e.key==='n'||e.key==='N')post('/ctl/next');else if(e.key==='p'||e.key==='P')post('/ctl/previous');
+  else if(e.key==='f'||e.key==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen().catch(()=>{})}
+  else if(e.key==='['||e.key===']'){off+=(e.key==='['?-.1:.1);localStorage.setItem('lv_off',off.toFixed(2));
+    $('#hint').textContent=`lyric timing ${off>=0?'+':''}${off.toFixed(1)}s`;$('#hint').classList.add('show');setTimeout(()=>$('#hint').classList.remove('show'),1500);ensureLoop()}
+});
+let idleT;const wake=()=>{document.body.classList.remove('idle');clearTimeout(idleT);idleT=setTimeout(()=>document.body.classList.add('idle'),3000)};
+addEventListener('mousemove',wake);addEventListener('keydown',wake);
+addEventListener('resize',()=>{measure();if(L.kind==='synced')setActive(cur,true);ensureLoop()});
+setTimeout(()=>{$('#hint').classList.add('show');setTimeout(()=>$('#hint').classList.remove('show'),5000)},1200);
+poll();
+})();
+</script></body></html>
+"""
+
+if __name__ == "__main__":
+    main()

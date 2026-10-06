@@ -1,0 +1,3171 @@
+#!/usr/bin/env python3
+"""lyricview - native, GPU-rendered fullscreen lyrics with word-by-word animation (Qt Quick).
+
+Follows whatever your MPRIS player is playing (Lollypop, mpv, Spotify, ...).
+Lyrics: sidecar .lrc -> embedded tags (musicD writes both) -> lrclib.net (cached).
+Needs: pyside6, playerctl  (sudo pacman -S pyside6 playerctl).  Optional: python-mutagen.
+
+  lyricview                 fullscreen        lyricview -p lollypop   follow only that player
+  lyricview --windowed      normal window     lyricview --lite        weak GPU: no drift/mask effects
+
+Keys:  Space play/pause · ←/→ seek 5s · N/P next/prev · [ ] lyric timing ∓100ms · , . word spread
+       F fullscreen · Q quit · click a line to jump · click the bar to seek
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "lyricview"
+SEP = "\x1f"
+FMT = SEP.join(["{{status}}", "{{playerName}}", "{{artist}}", "{{title}}", "{{album}}",
+                "{{mpris:length}}", "{{xesam:url}}", "{{mpris:artUrl}}", "{{position}}"])
+UA = "lyricview/1.0"
+
+
+# ───────────────────────────── lyrics parsing ─────────────────────────────
+TS = re.compile(r"\[(\d+):(\d+(?:[.:]\d+)?)\]")
+WTS = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
+SPREAD = 1.0  # >1 stretches estimated word timing, <1 shortens
+CJK = "\u2e80-\u9fff\uac00-\ud7af\uff00-\uffef"
+TOKEN = re.compile(rf"([{CJK}]|[^\s{CJK}]+)(\s*)")
+
+
+def _t(m, s):
+    return int(m) * 60 + float(s.replace(":", "."))
+
+
+def has_timestamps(text):
+    return len(TS.findall(text or "")) >= 2
+
+
+def build_words(body, t, end):
+    """Split a lyric line into words with start/end times. Uses real <mm:ss.xx> word tags when present."""
+    if WTS.search(body):
+        parts = re.split(r"<(\d+):(\d+(?:\.\d+)?)>", body)
+        stamps = [(_t(parts[i], parts[i + 1]), parts[i + 2]) for i in range(1, len(parts) - 2, 3)]
+        if parts[0].strip():  # enhanced LRC: the first word has no <tag> - it starts at the line's own [mm:ss.xx]
+            stamps.insert(0, (t, parts[0]))
+        words = []
+        for k, (ts, txt) in enumerate(stamps):
+            te = stamps[k + 1][0] if k + 1 < len(stamps) else min(end, ts + 1.6)  # last word: don't crawl over a long gap
+            w = txt.strip()
+            if w:
+                words.append({"t": round(ts, 3), "e": round(max(te, ts + 0.05), 3), "w": w,
+                              "s": txt.endswith(" ") and k + 1 < len(stamps)})
+        if words:
+            return words
+        body = WTS.sub("", body)
+    toks = [(m.group(1), bool(m.group(2))) for m in TOKEN.finditer(body.strip())]
+    if not toks:
+        return []
+    chars = sum(len(w) for w, _ in toks)
+    # Singing time: a line normally fills (almost) its whole slot up to the next line, so slow songs
+    # aren't rushed; only long instrumental gaps are capped. SPREAD (Qt app: , and . keys) scales it.
+    gap = max(0.3, end - t)
+    cap = max(4.5, 0.17 * chars + 1.0)
+    dur = min(max(0.5, min(gap * 0.9, cap) * SPREAD), max(0.4, gap - 0.05))
+    weights = [2.5 if re.match(rf"[{CJK}]", w) else len(w) + 1.2 for w, _ in toks]
+    total, acc, words = sum(weights), 0.0, []
+    for (w, sp), wt in zip(toks, weights):
+        ws, we = t + dur * acc / total, t + dur * (acc + wt) / total
+        acc += wt
+        words.append({"t": round(ws, 3), "e": round(we, 3), "w": w, "s": sp})
+    words[-1]["s"] = False
+    return words
+
+
+def parse_lrc(text, length=None):
+    offset, raw = 0.0, []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        mo = re.match(r"\[offset:\s*([+-]?\d+)\]", ln, re.I)
+        if mo:
+            offset = int(mo.group(1)) / 1000
+            continue
+        stamps = TS.findall(ln)
+        if stamps:
+            body = TS.sub("", ln).strip()
+            raw += [(max(0.0, _t(a, b) - offset), body) for a, b in stamps]
+    raw.sort(key=lambda x: x[0])
+    lines = []
+    for i, (t, body) in enumerate(raw):
+        if not body:
+            continue
+        end = raw[i + 1][0] if i + 1 < len(raw) else (length if length and length > t + 1 else t + 5)
+        end = max(end, t + 0.3)
+        words = build_words(body, t, end)
+        if not words:
+            continue
+        lines.append({"t": round(t, 3), "e": round(end, 3), "words": words, "gap": False})
+    # instrumental gaps -> animated dots
+    out = []
+    if lines and lines[0]["t"] > 6:
+        out.append({"t": 0.5, "e": round(lines[0]["t"] - 0.4, 3), "words": [], "gap": True})
+    for i, ln in enumerate(lines):
+        out.append(ln)
+        sung_end = ln["words"][-1]["e"]
+        nxt = lines[i + 1]["t"] if i + 1 < len(lines) else None
+        if nxt and nxt - sung_end > 6:
+            out.append({"t": round(sung_end + 0.5, 3), "e": round(nxt - 0.4, 3), "words": [], "gap": True})
+    return out
+
+
+def parse_plain(text):
+    return [{"text": ln.strip()} for ln in (text or "").splitlines()]
+
+
+# ───────────────────────────── lyrics sources ─────────────────────────────
+def http_get(url, timeout=8):
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def path_from_url(url):
+    if url and url.startswith("file://"):
+        return Path(urllib.parse.unquote(urllib.parse.urlparse(url).path))
+    return None
+
+
+def tag_lyrics(path):
+    try:
+        import mutagen
+        f = mutagen.File(path)
+        if f is None:
+            return None
+        tags = f.tags
+        if tags is None:
+            return None
+        if hasattr(tags, "getall"):  # ID3
+            us = tags.getall("USLT")
+            if us:
+                return str(us[0].text)
+        for k in ("\xa9lyr", "lyrics", "LYRICS", "UNSYNCEDLYRICS", "unsyncedlyrics"):
+            if k in tags:
+                v = tags[k]
+                v = v[0] if isinstance(v, list) else v
+                return str(v)
+    except Exception:
+        pass
+    return None
+
+
+def lrclib(artist, title, album, length):
+    base, t = "https://lrclib.net/api/", re.sub(r"\s*[\(\[]\s*(?:feat|ft|with)\b[^\)\]]*[\)\]]", "", title, flags=re.I).strip() or title
+    plain = None
+    if album and length:
+        try:
+            d = json.loads(http_get(base + "get?" + urllib.parse.urlencode(
+                {"artist_name": artist, "track_name": t, "album_name": album, "duration": int(round(length))}), 6))
+            if d.get("syncedLyrics"):
+                return d["syncedLyrics"]
+            plain = d.get("plainLyrics")
+        except Exception:
+            pass
+    for params in ({"track_name": t, "artist_name": artist}, {"q": f"{artist} {t}"}):
+        try:
+            items = json.loads(http_get(base + "search?" + urllib.parse.urlencode(params), 6))
+        except Exception:
+            continue
+        good = [i for i in items if isinstance(i, dict) and (not length or not i.get("duration") or abs(i["duration"] - length) <= 6)]
+        good.sort(key=lambda i: abs((i.get("duration") or length or 0) - (length or 0)))
+        for i in good:
+            if i.get("syncedLyrics"):
+                return i["syncedLyrics"]
+        plain = plain or next((i["plainLyrics"] for i in good if i.get("plainLyrics")), None)
+    return plain
+
+
+def load_lyrics(meta):
+    """-> {'kind': synced|plain|none, 'lines': [...], 'src': str}"""
+    length = meta["length"]
+    path = path_from_url(meta["url"])
+    text, src = None, ""
+    if path:
+        for cand in (path.with_suffix(".lrc"), path.with_suffix(".LRC")):
+            if cand.exists():
+                try:
+                    text, src = cand.read_text("utf-8", "replace"), ".lrc file"
+                    break
+                except OSError:
+                    pass
+        if not text or not has_timestamps(text):
+            t2 = tag_lyrics(path) if path.exists() else None
+            if t2 and (has_timestamps(t2) or not text):
+                text, src = t2, "embedded tags"
+    if not text or not has_timestamps(text):
+        ck = CACHE / "lyrics" / (meta["key"] + ".json")
+        try:
+            cached = json.loads(ck.read_text("utf-8"))
+        except Exception:
+            cached = None
+        if cached is not None and cached.get("text") is None and time.time() - ck.stat().st_mtime > 7 * 86400:
+            cached = None  # retry old misses after a week
+        if cached is None:
+            got = lrclib(meta["artist"], meta["title"], meta["album"], length)
+            cached = {"text": got}
+            try:  # misses are cached too, so we don't hammer lrclib on every play
+                ck.parent.mkdir(parents=True, exist_ok=True)
+                ck.write_text(json.dumps(cached), "utf-8")
+            except OSError:
+                pass
+        if cached.get("text") and (has_timestamps(cached["text"]) or not text):
+            text, src = cached["text"], "lrclib"
+    wl = cached_wordlevel(meta)  # a word-by-word version found on an earlier play wins over line-level ones
+    if wl and not re.search(r"<\d+:\d+(?:\.\d+)?>", text or ""):
+        text, src = wl, "word-level (cached)"
+    if not text or not text.strip():
+        return {"kind": "none", "lines": [], "src": ""}
+    if has_timestamps(text):
+        lines = parse_lrc(text, length)
+        if lines:
+            return {"kind": "synced", "lines": lines, "src": src, "raw": text, "length": length,
+                    "wordlevel": bool(re.search(r"<\d+:\d+(?:\.\d+)?>", text))}
+    return {"kind": "plain", "lines": parse_plain(re.sub(r"\[[^\]]*\]", "", text)), "src": src}
+
+
+# ───────────────────────────── artwork ─────────────────────────────
+def load_art(meta):
+    """-> (bytes, mime) or None"""
+    url, path = meta["art"], path_from_url(meta["url"])
+    if url:
+        try:
+            p = path_from_url(url)
+            data = p.read_bytes() if p else http_get(url, 6)
+            if data:
+                return data, ("image/png" if data[:4] == b"\x89PNG" else "image/jpeg")
+        except Exception:
+            pass
+    if path and path.exists():
+        try:
+            import mutagen
+            f = mutagen.File(path)
+            tags = getattr(f, "tags", None)
+            if tags is not None and hasattr(tags, "getall") and tags.getall("APIC"):
+                a = tags.getall("APIC")[0]
+                return a.data, a.mime or "image/jpeg"
+            if tags is not None and "covr" in tags:
+                c = tags["covr"][0]
+                return bytes(c), ("image/png" if bytes(c)[:4] == b"\x89PNG" else "image/jpeg")
+            if getattr(f, "pictures", None):
+                return f.pictures[0].data, f.pictures[0].mime
+        except Exception:
+            pass
+        for name in ("cover", "folder", "front", "album", "Cover", "Folder"):
+            for ext in ("jpg", "jpeg", "png"):
+                c = path.parent / f"{name}.{ext}"
+                if c.exists():
+                    return c.read_bytes(), "image/png" if ext == "png" else "image/jpeg"
+    return None
+
+
+# ───────────────────────────── player state ─────────────────────────────
+IGNORE = ["lyricview"]  # our own MPRIS name; emptied when --mpris-name is used
+
+
+_FLEN = {}
+
+
+def file_length(url):
+    """Song length from the file itself, for players that don't report one (cached)."""
+    p = path_from_url(url) if url else None
+    if not p:
+        return 0.0
+    if p not in _FLEN:
+        try:
+            import mutagen
+            f = mutagen.File(p)
+            _FLEN[p] = float(f.info.length) if f is not None else 0.0
+        except Exception:
+            _FLEN[p] = 0.0
+    return _FLEN[p]
+
+
+class State:
+    def __init__(self, player=None):
+        self.player = player
+        self.lock = threading.Lock()
+        self.active = False
+        self.status, self.pos, self.t = "Stopped", 0.0, time.time()
+        self.meta, self.key = {}, ""
+        self.lyrics, self.lyr_ev = None, threading.Event()
+        self.art, self.art_done, self.art_ev = None, False, threading.Event()
+        self.last_client = 0.0
+        self.track_t0, self.settle = 0.0, 0.0
+        self.on_lyrics = None  # callback(key, lyrics) when word-level lyrics arrive after the first ones
+
+    def cmd(self, *args):
+        sel = ["-p", self.player] if self.player else (["--ignore-player", IGNORE[0]] if IGNORE else [])  # never follow ourselves
+        return ["playerctl"] + sel + list(args)
+
+    def ctl(self, *args):
+        try:
+            subprocess.run(self.cmd(*args), capture_output=True, timeout=3)
+        except Exception:
+            pass
+
+    def refresh(self):
+        try:
+            r = subprocess.run(self.cmd("metadata", "--format", FMT), capture_output=True, encoding="utf-8", errors="replace", timeout=3)
+            f = r.stdout.rstrip("\n").split(SEP) if r.returncode == 0 else []
+        except FileNotFoundError:
+            sys.exit("playerctl not found - install it: sudo pacman -S playerctl")
+        except Exception:
+            f = []
+        if len(f) < 9:
+            with self.lock:
+                self.active = False
+            return
+        status, player, artist, title, album, length, url, art, pos = f
+
+        def num(x, div=1e6):
+            try:
+                return float(x) / div
+            except ValueError:
+                return 0.0
+        length_s = num(length) or file_length(url)
+        key = hashlib.md5(f"{artist}|{title}|{album}|{url}".encode()).hexdigest()[:16]  # not the length: it may arrive late
+        new = None
+        with self.lock:
+            now, p = time.time(), num(pos)
+            if key != self.key:  # a new song: a position that is still the previous song's must not leak in
+                self.track_t0, self.settle = now, now + 1.5
+                if p > 3:
+                    p = 0.0
+            elif now < self.settle and p > (now - self.track_t0) + 3:
+                p = now - self.track_t0
+            if length_s and p > length_s:
+                p = length_s
+            self.active, self.status, self.pos, self.t = True, status, p, now
+            if self.meta and key == self.key and self.meta.get("length") != length_s:
+                self.meta["length"] = length_s
+            if key != self.key:
+                self.key = key
+                self.meta = {"key": key, "artist": artist, "title": title, "album": album, "length": length_s,
+                             "url": url, "art": art, "player": player}
+                self.lyrics, self.art, self.art_done = None, None, False
+                self.lyr_ev, self.art_ev = threading.Event(), threading.Event()
+                new = (self.meta, self.lyr_ev, self.art_ev, key)
+        if new:  # cover and lyrics load independently: a slow lyrics lookup must never delay the cover
+            threading.Thread(target=self._load_art, args=(new[0], new[2], new[3]), daemon=True).start()
+            threading.Thread(target=self._load_lyr, args=(new[0], new[1], new[3]), daemon=True).start()
+
+    def _load_lyr(self, meta, ev, key):
+        try:
+            lyr = load_lyrics(meta)
+        except Exception:
+            lyr = {"kind": "none", "lines": [], "src": ""}
+        with self.lock:
+            if self.key == key:
+                self.lyrics = lyr
+        ev.set()
+        try:  # then look for word-by-word lyrics; swap them in live if found
+            up = upgrade_lyrics(meta, lyr or {})
+        except Exception:
+            up = None
+        if up:
+            with self.lock:
+                ok = self.key == key
+                if ok:
+                    self.lyrics = up
+            if ok and self.on_lyrics:
+                self.on_lyrics(key, up)
+
+    def _load_art(self, meta, ev, key):
+        art = None
+        try:
+            art = load_art(meta)
+        except Exception:
+            pass
+        with self.lock:
+            if self.key == key:
+                self.art, self.art_done = art, True
+        ev.set()
+
+    def poll_loop(self):
+        while True:
+            self.refresh()
+            idle = time.time() - self.last_client > 10
+            time.sleep(4.0 if idle else 1.0)  # browser extrapolates between polls, so 1s is plenty (was 0.5s)
+
+    def snapshot(self):
+        with self.lock:
+            self.last_client = time.time()
+            pos = self.pos + (time.time() - self.t if self.status == "Playing" else 0)
+            ln = self.meta.get("length", 0)
+            if ln and pos > ln:  # never run past the end of the track
+                pos = ln
+            return {"active": self.active, "status": self.status, "pos": round(pos, 3), "key": self.key,
+                    "title": self.meta.get("title", ""), "artist": self.meta.get("artist", ""),
+                    "album": self.meta.get("album", ""), "length": self.meta.get("length", 0),
+                    "player": self.meta.get("player", "")}
+
+
+
+# ───────────────────────────── word-level lyrics (same sources as musicD) ─────────────────────────────
+import unicodedata
+
+
+def _wl_get(url, timeout=8, headers=None):
+    req = urllib.request.Request(url, headers={"User-Agent": "lyricview/2", **(headers or {})})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _wl_json(url, timeout=8, headers=None):
+    return json.loads(_wl_get(url, timeout, headers).decode("utf-8"))
+
+
+def _wl_tokens(s):
+    s = unicodedata.normalize("NFKD", s or "").lower()
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return set(re.sub(r"[^\w\s]", " ", s).split())
+
+
+def _wl_clean(t):
+    return re.sub(r"\s*[\(\[]\s*(?:official|lyrics?|audio|video|hd|4k|remaster(?:ed)?)[^\)\]]*[\)\]]", "", t or "", flags=re.I).strip()
+
+
+_WL_TAG = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
+
+
+def _wl_level(text):
+    if not text:
+        return ""
+    if _WL_TAG.search(text):
+        return "word"
+    return "line" if re.search(r"^\s*\[\d+:\d+", text, re.M) else "plain"
+
+
+def _wl_stamp(sec):
+    m = int(sec // 60)
+    return f"{m:02d}:{sec - 60 * m:05.2f}"
+
+
+def _wl_enh(lines):
+    """[(line_start, [(word_start, text)])] -> enhanced LRC (what lyricview reads)."""
+    return "\n".join(f"[{_wl_stamp(ls)}]" + "".join(f"<{_wl_stamp(ws)}>{wt}" for ws, wt in words) for ls, words in lines)
+
+
+def _wl_yrc(text):
+    """NetEase word-level format:  [startMs,durMs](wordStartMs,wordDurMs,0)word ..."""
+    lines = []
+    for raw in (text or "").splitlines():
+        m = re.match(r"^\[(\d+),\d+\](.*)$", raw)
+        if not m:
+            continue
+        words = [(int(a) / 1000, w) for a, w in re.findall(r"\((\d+),\d+,\d+\)(.*?)(?=\(\d+,\d+,\d+\)|$)", m.group(2), re.S)]
+        words = [(t, w) for t, w in words if w != ""]
+        if words:
+            lines.append((int(m.group(1)) / 1000, words))
+    return _wl_enh(lines) if lines else None
+
+
+def _wl_ttime(v):
+    v = v.strip()
+    if v.endswith("ms"):
+        return float(v[:-2]) / 1000
+    if v.endswith("s"):
+        return float(v[:-1])
+    sec = 0.0
+    for p in v.split(":"):
+        sec = sec * 60 + float(p)
+    return sec
+
+
+def _wl_ttml(ttml):
+    """Apple-style TTML with <span begin=..> per word/syllable -> enhanced LRC."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(ttml.strip())
+    except ET.ParseError:
+        return None
+    local = lambda e: e.tag.rsplit("}", 1)[-1]
+    lines = []
+    for p in root.iter():
+        if local(p) != "p":
+            continue
+        words = []
+        for sp in p.iter():
+            if local(sp) != "span" or len(sp) or not sp.get("begin") or not (sp.text or "").strip():
+                continue
+            txt = sp.text
+            if sp.tail and (sp.tail[:1].isspace() or sp.tail.strip()):
+                txt = txt.rstrip() + " "
+            words.append((_wl_ttime(sp.get("begin")), txt.replace("\n", " ")))
+        if words:
+            lines.append((_wl_ttime(p.get("begin")) if p.get("begin") else words[0][0], words))
+    return _wl_enh(lines) if lines else None
+
+
+def _wl_plausible(text, duration):
+    stamps = [int(m) * 60 + float(sec) for m, sec in re.findall(r"^\[(\d+):(\d+(?:\.\d+)?)\]", text, re.M)]
+    if len(stamps) < 3:
+        return False
+    return not duration or max(stamps) <= duration + 15
+
+
+def _wl_src_netease(artist, title, album, dur):
+    h = {"Referer": "https://music.163.com/", "User-Agent": "Mozilla/5.0"}
+    j = _wl_json("https://music.163.com/api/search/get/web?" + urllib.parse.urlencode(
+        {"s": f"{artist} {title}".strip(), "type": 1, "offset": 0, "limit": 10, "total": "true"}), 8, h)
+    tt, aa = _wl_tokens(_wl_clean(title)), _wl_tokens(artist)
+    for song in (j.get("result") or {}).get("songs") or []:
+        st, sa = _wl_tokens(song.get("name", "")), _wl_tokens(" ".join(a.get("name", "") for a in song.get("artists") or []))
+        if not tt or len(tt & st) / len(tt) < 0.6 or (aa and not (aa & sa)):
+            continue
+        if dur and song.get("duration") and abs(song["duration"] / 1000 - dur) > 4:
+            continue
+        lj = _wl_json(f"https://music.163.com/api/song/lyric?id={song['id']}&lv=1&kv=1&tv=-1&yv=1", 8, h)
+        got = _wl_yrc((lj.get("yrc") or {}).get("lyric"))
+        if got:
+            return got
+    return None
+
+
+def _wl_src_betterlyrics(artist, title, album, dur):
+    q = {"s": title, "a": artist}
+    if album:
+        q["al"] = album
+    if dur:
+        q["d"] = int(round(dur))
+    raw = _wl_get("https://lyrics-api.boidu.dev/getLyrics?" + urllib.parse.urlencode(q), 10).decode("utf-8", "replace").strip()
+    if raw.startswith("{"):  # JSON wrapper
+        j = json.loads(raw)
+        raw = (j.get("ttml") or j.get("lyrics") or "") if isinstance(j, dict) else ""
+    return _wl_ttml(raw) if raw.startswith("<") else None
+
+
+def _wl_src_syncedlyrics(artist, title, album, dur):
+    try:
+        import syncedlyrics
+    except ImportError:
+        return None
+    for prov in ("Musixmatch", "NetEase"):
+        txt = syncedlyrics.search(f"{title} {artist}", enhanced=True, providers=[prov])
+        if txt and _wl_level(txt) == "word":
+            return txt
+    return None
+
+
+_WL_SOURCES = (("NetEase", _wl_src_netease), ("BetterLyrics", _wl_src_betterlyrics), ("syncedlyrics", _wl_src_syncedlyrics))
+
+
+def _wl_variants(artist, title):
+    t0 = _wl_clean(title)
+    t1 = re.sub(r"\s*[\(\[]\s*(?:feat|ft|with)\b[^\)\]]*[\)\]]", "", t0, flags=re.I).strip()
+    t2 = re.sub(r"\s*-\s*(?:\d{4}\s*)?(?:remaster(?:ed)?|radio edit|single version|album version|mono|stereo).*$", "", t1, flags=re.I).strip()
+    out = []
+    for t in (title, t1, t2):
+        if t and (artist, t) not in out:
+            out.append((artist, t))
+    return out
+
+
+def _wl_retry(fn, tries=3, delay=0.7):
+    """Retry only on errors (network); an empty answer means 'not there' and is not retried."""
+    for k in range(tries):
+        try:
+            return fn()
+        except Exception:
+            if k + 1 < tries:
+                time.sleep(delay * (k + 1))
+    return None
+
+
+
+_wl_miss = {}
+
+
+def wl_fetch(artist, title, album, length, budget=15):
+    deadline = time.time() + budget
+    for _name, fn in _WL_SOURCES:
+        for a, t in _wl_variants(artist, title):
+            if time.time() > deadline:
+                return None
+            got = _wl_retry(lambda: fn(a, t, album, length), tries=2)
+            if got and _wl_level(got) == "word" and _wl_plausible(got, length):
+                return got
+    return None
+
+
+def upgrade_lyrics(meta, lyr):
+    """Lyrics that aren't word-by-word are looked up again on every play. -> a better lyrics dict, or None."""
+    if lyr.get("kind") == "synced" and lyr.get("wordlevel"):
+        return None
+    if time.time() - _wl_miss.get(meta["key"], 0) < 120:  # skipping through songs shouldn't hammer the services
+        return None
+    text = wl_fetch(meta["artist"], meta["title"], meta["album"], meta["length"])
+    if not text:
+        _wl_miss[meta["key"]] = time.time()
+        return None
+    try:
+        ck = CACHE / "lyrics" / (meta["key"] + ".wl.json")
+        ck.parent.mkdir(parents=True, exist_ok=True)
+        ck.write_text(json.dumps({"text": text}), "utf-8")
+    except OSError:
+        pass
+    lines = parse_lrc(text, meta["length"])
+    return {"kind": "synced", "lines": lines, "src": "word-level", "raw": text, "length": meta["length"], "wordlevel": True} if lines else None
+
+
+def cached_wordlevel(meta):
+    try:
+        return json.loads((CACHE / "lyrics" / (meta["key"] + ".wl.json")).read_text("utf-8")).get("text")
+    except Exception:
+        return None
+
+# ───────────────────────────── own player: library, shuffle, queue, MPRIS ─────────────────────────────
+import importlib.util
+import random
+import signal
+
+try:
+    import PySide6  # noqa: F401
+except ImportError:
+    sys.exit("lyricview needs PySide6 (Qt for Python), which isn't installed.\n\n"
+             "  Arch / CachyOS / Manjaro:  sudo pacman -S pyside6 playerctl qt6-multimedia python-mutagen python-gobject\n"
+             "  (it must be the system python3 - not a venv / pyenv one)\n\n"
+             "No Qt? The browser version needs only playerctl and a browser:  lyricview-web")
+
+from PySide6.QtCore import Property, QObject, QRectF, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPainterPath
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickWindow  # noqa: F401  (registers the Quick window type)
+
+AUDIO_EXT = {".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav", ".aac", ".wma", ".mp4"}
+
+
+def _num(s):
+    m = re.match(r"\d+", str(s or ""))
+    return int(m.group()) if m else 0
+
+
+def external_players():
+    """MPRIS players other than ourselves (Lollypop, mpv, ...), asked straight from D-Bus - no process spawned."""
+    ignore = IGNORE[0] if IGNORE else None
+    names = None
+    try:
+        import gi
+        gi.require_version("Gio", "2.0")
+        from gi.repository import Gio, GLib
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        r = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames", None,
+                          GLib.VariantType("(as)"), Gio.DBusCallFlags.NONE, 1500, None)
+        names = [n[len("org.mpris.MediaPlayer2."):] for n in r.unpack()[0] if n.startswith("org.mpris.MediaPlayer2.")]
+    except Exception:
+        try:
+            names = subprocess.run(["playerctl", "-l"], capture_output=True, encoding="utf-8", errors="replace", timeout=3).stdout.split()
+        except Exception:
+            names = []
+    return [p for p in names if p.split(".")[0] != ignore]
+
+
+class Library:
+    """Scans the music folder (mutagen tags, cached by mtime+size) and indexes albums and artists."""
+
+    def __init__(self, root):
+        self.root = Path(root).expanduser()
+        self.cache = CACHE / "library.json"
+        self.tracks, self.albums, self.artists = [], {}, {}
+        self.ready, self.count, self.pending, self.by_path, self._sigs = False, 0, None, {}, None
+
+    @staticmethod
+    def _read(p):
+        title = artist = album = aart = year = ""
+        tno = disc = 0
+        length = 0.0
+        try:
+            import mutagen
+            f = mutagen.File(p, easy=True)
+            if f is not None:
+                length = float(getattr(f.info, "length", 0) or 0)
+                t = f.tags or {}
+
+                def g(k):
+                    v = t.get(k)
+                    return str(v[0]).strip() if v else ""
+                title, artist, album, aart = g("title"), g("artist"), g("album"), g("albumartist")
+                tno, disc, year = _num(g("tracknumber")), _num(g("discnumber")), g("date")[:4]
+        except Exception:
+            pass
+        pp = Path(p)  # fallback for untagged files: Artist/Album/Title.ext (the musicD layout)
+        return {"path": p, "title": title or pp.stem, "artist": artist or (pp.parent.parent.name if len(pp.parts) > 2 else "Unknown Artist"),
+                "album": album or pp.parent.name, "aartist": aart or artist or (pp.parent.parent.name if len(pp.parts) > 2 else "Unknown Artist"),
+                "no": tno, "disc": disc, "len": length, "year": year}
+
+    def load_cache(self):
+        """Instant start from the last scan (stale entries are skipped at play time)."""
+        try:
+            data = json.loads(self.cache.read_text("utf-8"))
+            ok = {p: v for p, v in data.items() if os.path.exists(p)}
+            recs = [v[1] for v in ok.values()]
+            if recs:
+                self._index(recs)
+                self._sigs = {p: v[0] for p, v in ok.items()}
+        except Exception:
+            pass
+
+    def scan(self, progress=None):
+        try:
+            cached = json.loads(self.cache.read_text("utf-8"))
+        except Exception:
+            cached = {}
+        fresh, recs, n = {}, [], 0
+        for dp, dn, fn in os.walk(self.root):
+            dn[:] = sorted(d for d in dn if not d.startswith("."))
+            for f in sorted(fn):
+                if os.path.splitext(f)[1].lower() not in AUDIO_EXT:
+                    continue
+                p = os.path.join(dp, f)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                sig = [int(st.st_mtime), st.st_size]
+                c = cached.get(p)
+                rec = c[1] if c and c[0] == sig else self._read(p)
+                fresh[p] = [sig, rec]
+                recs.append(rec)
+                n += 1
+                if progress and n % 100 == 0:
+                    progress(n)
+        sigs = {p: v[0] for p, v in fresh.items()}
+        self.pending = None if sigs == self._sigs else recs  # applied on the UI thread (apply_pending), never mid-playback
+        self._sigs = sigs
+        try:
+            CACHE.mkdir(parents=True, exist_ok=True)
+            tmp = self.cache.with_suffix(".tmp")
+            tmp.write_text(json.dumps(fresh), "utf-8")  # ascii-escaped: odd filenames can't break the cache
+            os.replace(tmp, self.cache)
+        except OSError:
+            pass
+
+    def apply_pending(self):
+        if self.pending is not None:
+            self._index(self.pending)
+            self.pending = None
+
+    def _index(self, recs):
+        albums = {}
+        for t in recs:
+            albums.setdefault((t["aartist"].lower(), t["album"].lower()), []).append(t)
+        tracks, alb, art = [], {}, {}
+        for aid, (key, ts) in enumerate(sorted(albums.items())):
+            ts.sort(key=lambda t: (t["disc"], t["no"], t["title"].lower()))
+            idxs = []
+            for t in ts:
+                t["i"] = len(tracks)
+                idxs.append(t["i"])
+                tracks.append(t)
+            a = {"id": aid, "name": ts[0]["album"], "artist": ts[0]["aartist"], "year": next((t["year"] for t in ts if t["year"]), ""), "tracks": idxs}
+            alb[aid] = a
+            art.setdefault(ts[0]["aartist"].lower(), {"name": ts[0]["aartist"], "albums": []})["albums"].append(aid)
+        for k, (_, v) in enumerate(sorted(art.items())):
+            v["id"] = k
+        self.tracks, self.albums = tracks, alb
+        self.artists = {v["id"]: v for v in art.values()}
+        self.count, self.ready = len(tracks), bool(tracks)
+        self.by_path = {t["path"]: t["i"] for t in tracks}
+
+    def artist_tracks(self, artist_id):
+        a = self.artists.get(artist_id)
+        if not a:
+            return []
+        albs = sorted(a["albums"], key=lambda i: (self.albums[i]["year"] or "9999", self.albums[i]["name"].lower()))
+        return [t for i in albs for t in self.albums[i]["tracks"]]
+
+    def album_list(self):
+        return [{"id": a["id"], "name": a["name"], "sub": a["artist"] + (f" · {a['year']}" if a["year"] else ""), "n": len(a["tracks"])}
+                for a in sorted(self.albums.values(), key=lambda a: (a["artist"].lower(), a["year"] or "9999", a["name"].lower()))]
+
+    def artist_list(self):
+        return [{"id": a["id"], "name": a["name"], "sub": f"{len(a['albums'])} album{'s' if len(a['albums']) != 1 else ''}",
+                 "n": sum(len(self.albums[i]["tracks"]) for i in a["albums"])}
+                for a in sorted(self.artists.values(), key=lambda a: a["name"].lower())]
+
+
+def repair_audio(path):
+    """Re-encode to a clean mp3 (drops attached pictures, fixes odd timestamps) for files QtMultimedia can't demux."""
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        return None
+    st = os.stat(path)
+    out = CACHE / "fixed" / (hashlib.md5(f"{path}|{st.st_mtime_ns}".encode()).hexdigest()[:16] + ".mp3")
+    if out.exists():
+        return str(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run([ff, "-v", "error", "-y", "-i", path, "-vn", "-map_metadata", "-1", "-c:a", "libmp3lame", "-q:a", "2", str(out)],
+                       capture_output=True, timeout=180)
+    for old in sorted(out.parent.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)[60:]:
+        old.unlink(missing_ok=True)
+    return str(out) if r.returncode == 0 and out.exists() and out.stat().st_size > 1000 else None
+
+
+class Shuffler:
+    """Random album -> random song of it -> crossed off; next time a random album again (the same album may
+    come back while it still has songs left). Played songs are remembered by path, so rescans and songs you
+    pick yourself stay crossed off; when everything has been played the list starts over."""
+
+    def __init__(self, lib):
+        self.lib, self.left, self.played = lib, {}, set()
+
+    def _pool(self):
+        t = self.lib.tracks
+        pool = {aid: [i for i in a["tracks"] if t[i]["path"] not in self.played] for aid, a in self.lib.albums.items()}
+        return {k: v for k, v in pool.items() if v}
+
+    def mark(self, i):
+        """Cross a song off (it was played, however it got started)."""
+        self.played.add(self.lib.tracks[i]["path"])
+        for aid in list(self.left):
+            if i in self.left[aid]:
+                self.left[aid].remove(i)
+            if not self.left[aid]:
+                del self.left[aid]
+
+    def next(self):
+        if not self.left:
+            self.left = self._pool()
+            if not self.left:  # everything has been played: start over
+                self.played.clear()
+                self.left = self._pool()
+        if not self.left:
+            return None
+        aid = random.choice(list(self.left))
+        i = self.left[aid][random.randrange(len(self.left[aid]))]
+        self.mark(i)
+        return i
+
+
+
+# ───── online mode: search + stream from YouTube Music (ytmusicapi for search/radio, yt-dlp for the audio URL)
+class _NoLog:
+    def debug(self, m): pass
+    def info(self, m): pass
+    def warning(self, m): pass
+    def error(self, m): pass
+
+
+_YTM_API, _STREAMS, _FAKE = None, {}, bool(os.environ.get("LYRICVIEW_FAKE_ONLINE"))  # _FAKE: offline test double
+
+
+def online_available():
+    return _FAKE or (importlib.util.find_spec("ytmusicapi") is not None and importlib.util.find_spec("yt_dlp") is not None)
+
+
+def _ytm():
+    global _YTM_API
+    if _YTM_API is None:
+        from ytmusicapi import YTMusic
+        _YTM_API = YTMusic()
+    return _YTM_API
+
+
+def _sq(url):
+    return re.sub(r"=w\d+-h\d+.*$", "=w600-h600-l90-rj", url) if "googleusercontent" in url else url
+
+
+def _secs(s):
+    try:
+        return float(sum(int(p) * 60 ** k for k, p in enumerate(reversed(str(s).split(":")))))
+    except ValueError:
+        return 0.0
+
+
+def _item(vid, title, artists, album, length, thumbs):
+    return {"id": vid, "title": title or "", "artist": (artists[0] if artists else "Unknown"), "artists": ", ".join(artists),
+            "album": album or "", "len": float(length or 0), "art": _sq(thumbs[-1]["url"]) if thumbs else ""}
+
+
+def yt_search(query, limit=12):
+    if _FAKE:
+        return [_item(f"fake{i}", f"{query.title()} Song {i}", ["Fake Artist"], "Fake Album", 30 + i, []) for i in range(1, 6)]
+    out = []
+    for r in _ytm().search(query, filter="songs", limit=limit):
+        if r.get("videoId"):
+            out.append(_item(r["videoId"], r.get("title"), [a["name"] for a in r.get("artists") or [] if a.get("name")],
+                             (r.get("album") or {}).get("name"), r.get("duration_seconds"), r.get("thumbnails") or []))
+    return out
+
+
+def yt_radio(vid, limit=25):
+    if _FAKE:
+        return [_item(f"radio{i}", f"Similar Song {i}", ["Radio Artist"], "Radio Album", 25 + i, []) for i in range(1, 6)]
+    wp = _ytm().get_watch_playlist(videoId=vid, radio=True, limit=limit)
+    return [_item(t["videoId"], t.get("title"), [a["name"] for a in t.get("artists") or [] if a.get("name")],
+                  (t.get("album") or {}).get("name"), _secs(t.get("length")), t.get("thumbnail") or [])
+            for t in wp.get("tracks") or [] if t.get("videoId") and t["videoId"] != vid]
+
+
+def resolve_stream(vid):
+    """Direct audio URL for a video (yt-dlp, no download). Cached for a while - URLs stay valid for hours."""
+    if _FAKE:
+        return "http://fake.invalid/" + vid
+    c = _STREAMS.get(vid)
+    if c and time.time() - c[1] < 1200:
+        return c[0]
+    import yt_dlp
+    opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True, "logger": _NoLog(),
+            "format": "bestaudio[ext=m4a]/bestaudio/best", "socket_timeout": 15}
+    with yt_dlp.YoutubeDL(opts) as y:
+        info = y.extract_info("https://www.youtube.com/watch?v=" + vid, download=False)
+    url = info.get("url") or next((f["url"] for f in reversed(info.get("formats") or []) if f.get("url") and f.get("acodec") != "none"), "")
+    if not url:
+        raise RuntimeError("no audio stream")
+    _STREAMS[vid] = (url, time.time())
+    return url
+
+
+# ───── playback engines (QtMultimedia for real, a timer-based stand-in for tests)
+class QtEngine(QObject):
+    ended, failed, stateChanged = Signal(), Signal(str), Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+        self.M = QMediaPlayer
+        self.p, self.out = QMediaPlayer(), QAudioOutput()
+        self.p.setAudioOutput(self.out)
+        self.p.mediaStatusChanged.connect(lambda s: self.ended.emit() if s == QMediaPlayer.MediaStatus.EndOfMedia else None)
+        self.p.playbackStateChanged.connect(self._ps)
+        self.p.errorOccurred.connect(lambda e, msg: self.failed.emit(msg or "playback error"))
+
+    def _ps(self, st):
+        names = {self.M.PlaybackState.PlayingState: "Playing", self.M.PlaybackState.PausedState: "Paused"}
+        self.stateChanged.emit(names.get(st, "Stopped"))
+
+    def load(self, path): self.p.setSource(QUrl.fromLocalFile(path))
+    def load_url(self, url, length=0.0): self.p.setSource(QUrl(url))
+    def play(self): self.p.play()
+    def pause(self): self.p.pause()
+    def position(self): return self.p.position() / 1000.0
+    def seek(self, sec): self.p.setPosition(int(max(0, sec) * 1000))
+    def set_volume(self, v): self.out.setVolume(max(0.0, min(1.0, v)))
+
+
+class NullEngine(QObject):
+    """No audio: advances a clock in real time (LYRICVIEW_ENGINE=null, used by the tests)."""
+    ended, failed, stateChanged = Signal(), Signal(str), Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.state, self.base, self.t0, self.dur = "Stopped", 0.0, time.time(), 0.0
+        self.speed = float(os.environ.get("LYRICVIEW_NULL_SPEED", "1"))
+        self.tm = QTimer(self)
+        self.tm.setInterval(50)
+        self.tm.timeout.connect(self._tick)
+        self.tm.start()
+
+    def _tick(self):
+        if self.state == "Playing" and self.dur and self.position() >= self.dur:
+            self.state = "Stopped"
+            self.base = self.dur
+            self.stateChanged.emit("Stopped")
+            self.ended.emit()
+
+    def load(self, path):
+        self.base, self.t0, self.state = 0.0, time.time(), "Stopped"
+        self.dur = next((t["len"] for t in getattr(self, "tracks", []) if t["path"] == path), 0) or 30.0
+        if os.environ.get("LYRICVIEW_FAIL_FIRST") and "/fixed/" not in path and path not in self.__dict__.setdefault("_bad", set()):
+            self._bad.add(path)
+            self.dur = 30.0
+            QTimer.singleShot(60, lambda: self.failed.emit("Demuxing failed"))
+
+    def load_url(self, url, length=0.0):
+        self.base, self.t0, self.state, self.dur = 0.0, time.time(), "Stopped", length or 30.0
+
+    def play(self): self.t0, self.state = time.time(), "Playing"; self.stateChanged.emit("Playing")
+    def pause(self): self.base, self.state = self.position(), "Paused"; self.stateChanged.emit("Paused")
+    def position(self): return self.base + ((time.time() - self.t0) * self.speed if self.state == "Playing" else 0)
+    def seek(self, sec): self.base, self.t0 = max(0.0, sec), time.time()
+    def set_volume(self, v): pass
+
+
+# ───── MPRIS server (Gio), so playerctl / polybar can see and control what we play
+MPRIS_XML = """<node>
+ <interface name="org.mpris.MediaPlayer2">
+  <method name="Raise"/><method name="Quit"/>
+  <property name="CanQuit" type="b" access="read"/><property name="CanRaise" type="b" access="read"/>
+  <property name="HasTrackList" type="b" access="read"/><property name="Identity" type="s" access="read"/>
+  <property name="SupportedUriSchemes" type="as" access="read"/><property name="SupportedMimeTypes" type="as" access="read"/>
+ </interface>
+ <interface name="org.mpris.MediaPlayer2.Player">
+  <method name="Next"/><method name="Previous"/><method name="Pause"/><method name="PlayPause"/><method name="Stop"/><method name="Play"/>
+  <method name="Seek"><arg direction="in" name="Offset" type="x"/></method>
+  <method name="SetPosition"><arg direction="in" name="TrackId" type="o"/><arg direction="in" name="Position" type="x"/></method>
+  <method name="OpenUri"><arg direction="in" name="Uri" type="s"/></method>
+  <signal name="Seeked"><arg name="Position" type="x"/></signal>
+  <property name="PlaybackStatus" type="s" access="read"/><property name="Rate" type="d" access="read"/>
+  <property name="Metadata" type="a{sv}" access="read"/><property name="Volume" type="d" access="readwrite"/>
+  <property name="Position" type="x" access="read"/><property name="MinimumRate" type="d" access="read"/>
+  <property name="MaximumRate" type="d" access="read"/><property name="CanGoNext" type="b" access="read"/>
+  <property name="CanGoPrevious" type="b" access="read"/><property name="CanPlay" type="b" access="read"/>
+  <property name="CanPause" type="b" access="read"/><property name="CanSeek" type="b" access="read"/>
+  <property name="CanControl" type="b" access="read"/>
+ </interface>
+</node>"""
+MPRIS_PATH, MPRIS_NAME = "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.lyricview"
+
+
+class Mpris:
+    def __init__(self, on_cmd, name="lyricview"):
+        self.on_cmd = on_cmd  # called from the GLib thread: on_cmd(name, arg)
+        self.name = "org.mpris.MediaPlayer2." + name
+        self.status, self.meta, self.pos_us, self.t, self.vol = "Stopped", {}, 0, time.time(), 1.0
+        self.conn = self.loop = self.owner = None
+
+    def start(self):
+        try:
+            import gi
+            gi.require_version("Gio", "2.0")
+            from gi.repository import Gio, GLib
+        except Exception as e:
+            print(f"lyricview: playerctl/polybar can't see this player - python-gobject is missing ({e})", file=sys.stderr)
+            return False
+        self.Gio, self.GLib = Gio, GLib
+        self.info = Gio.DBusNodeInfo.new_for_xml(MPRIS_XML)
+        threading.Thread(target=self._run, daemon=True).start()
+        return True
+
+    def _run(self):
+        self.loop = self.GLib.MainLoop()
+        self.owner = self.Gio.bus_own_name(self.Gio.BusType.SESSION, self.name, self.Gio.BusNameOwnerFlags.NONE,
+                                           self._acquired, None,
+                                           lambda c, n: print(f"lyricview: could not take the MPRIS name {n} (another player or lyricview already uses it?)", file=sys.stderr))
+        self.loop.run()
+
+    def stop(self):
+        loop, owner = self.loop, self.owner  # capture: the callback runs later, after we clear the fields
+        if loop:
+            self.GLib.idle_add(lambda: (self.Gio.bus_unown_name(owner), loop.quit(), False)[-1])
+            self.loop, self.conn = None, None
+
+    def _acquired(self, conn, name):
+        self.conn = conn
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # Gio.DBusConnection.register_object is deprecated but still the portable call
+            for iface in self.info.interfaces:
+                conn.register_object(MPRIS_PATH, iface, self._call, self._get, None)
+
+    def _call(self, conn, sender, path, iface, method, params, inv):
+        a = params.unpack()
+        if method in ("Next", "Previous", "Pause", "PlayPause", "Stop", "Play", "Quit"):
+            self.on_cmd(method, 0.0)
+        elif method == "Seek":
+            self.on_cmd("Seek", a[0] / 1e6)
+        elif method == "SetPosition":
+            self.on_cmd("SetPosition", a[1] / 1e6)
+        inv.return_value(self.GLib.Variant("()", ()))
+
+    def _pos(self):
+        return self.pos_us + ((time.time() - self.t) * 1e6 if self.status == "Playing" else 0)
+
+    def _meta_variant(self):
+        V, m = self.GLib.Variant, self.meta
+        if not m:
+            return V("a{sv}", {})
+        d = {"mpris:trackid": V("o", "/org/lyricview/track/" + m["key"]), "mpris:length": V("x", int(m["length"] * 1e6)),
+             "xesam:title": V("s", m["title"]), "xesam:album": V("s", m["album"]), "xesam:artist": V("as", [m["artist"]]),
+             "xesam:url": V("s", m["url"])}
+        if m.get("art"):
+            d["mpris:artUrl"] = V("s", m["art"])
+        return V("a{sv}", d)
+
+    def _get(self, conn, sender, path, iface, prop):
+        V = self.GLib.Variant
+        if iface == "org.mpris.MediaPlayer2":
+            return {"CanQuit": V("b", True), "CanRaise": V("b", False), "HasTrackList": V("b", False), "Identity": V("s", "lyricview"),
+                    "SupportedUriSchemes": V("as", ["file"]), "SupportedMimeTypes": V("as", ["audio/mpeg", "audio/mp4", "audio/flac", "audio/ogg"])}.get(prop)
+        return {"PlaybackStatus": V("s", self.status), "Rate": V("d", 1.0), "MinimumRate": V("d", 1.0), "MaximumRate": V("d", 1.0),
+                "Metadata": self._meta_variant(), "Volume": V("d", self.vol), "Position": V("x", int(self._pos())),
+                "CanGoNext": V("b", True), "CanGoPrevious": V("b", True), "CanPlay": V("b", True), "CanPause": V("b", True),
+                "CanSeek": V("b", True), "CanControl": V("b", True)}.get(prop)
+
+    def update(self, status=None, meta=None, pos=None, vol=None, seeked=False):
+        """Called from the Qt thread whenever something changes."""
+        changed = []
+        if status is not None and status != self.status:
+            self.status, _ = status, changed.append("PlaybackStatus")
+        if meta is not None:
+            self.meta, _ = meta, changed.append("Metadata")
+        if vol is not None and vol != self.vol:
+            self.vol, _ = vol, changed.append("Volume")
+        if pos is not None:
+            self.pos_us, self.t = int(pos * 1e6), time.time()
+        if self.loop and (changed or seeked):
+            self.GLib.idle_add(self._emit, changed, seeked)
+
+    def _emit(self, changed, seeked):
+        if not self.conn:
+            return False
+        V = self.GLib.Variant
+        props = {}
+        for k in changed:
+            props[k] = {"PlaybackStatus": lambda: V("s", self.status), "Metadata": self._meta_variant, "Volume": lambda: V("d", self.vol)}[k]()
+        try:
+            if props:
+                self.conn.emit_signal(None, MPRIS_PATH, "org.freedesktop.DBus.Properties", "PropertiesChanged",
+                                      V("(sa{sv}as)", ("org.mpris.MediaPlayer2.Player", props, [])))
+            if seeked:
+                self.conn.emit_signal(None, MPRIS_PATH, "org.mpris.MediaPlayer2.Player", "Seeked", V("(x)", (int(self._pos()),)))
+        except Exception:
+            pass
+        return False
+
+
+class OwnPlayer(QObject):
+    """Plays the library itself: queue first, otherwise the random album/song shuffle."""
+    mprisCmd = Signal(str, float)
+    streamReady = Signal(int, str)
+    repaired = Signal(int, str)
+    radioReady = Signal(str, str)
+
+    def __init__(self, bridge, lib, engine, volume, mpris_name="lyricview"):
+        super().__init__()
+        self.b, self.lib, self.shuf = bridge, lib, Shuffler(lib)
+        self.eng = engine
+        if isinstance(engine, NullEngine):
+            engine.tracks = lib.tracks
+        self.queue, self.history, self.cur, self.status, self.meta = [], [], None, "Stopped", {}
+        self.vol = volume
+        self.eng.set_volume(volume)
+        self.eng.ended.connect(self.next)
+        self.eng.stateChanged.connect(self._state)
+        self.eng.failed.connect(self._failed)
+        self.mpris = Mpris(lambda n, a: self.mprisCmd.emit(n, a), mpris_name)
+        self.mprisCmd.connect(self._on_mpris)
+        self.tick = QTimer(self)
+        self.tick.setInterval(250)
+        self.tick.timeout.connect(self._tick)
+        self._fails = 0
+        self._gen, self.radio, self.radio_seed, self.radio_failed, self._want_radio = 0, [], None, False, False
+        self.streamReady.connect(self._on_stream)
+        self.repaired.connect(self._on_repaired)
+        self._repaired, self._fail_gen = False, -1
+        self.radioReady.connect(self._on_radio)
+
+    # ---- library rescans re-number tracks, so remember them by path
+    def _enc(self, x):
+        if isinstance(x, dict) and x.get("group"):
+            return dict(x, tracks=[y for y in (self._enc(t) for t in x["tracks"]) if y is not None])
+        if isinstance(x, dict):
+            return x
+        return self.lib.tracks[x]["path"] if isinstance(x, int) and x < len(self.lib.tracks) else None
+
+    def _dec(self, x):
+        if isinstance(x, dict) and x.get("group"):
+            return dict(x, tracks=[y for y in (self._dec(t) for t in x["tracks"]) if y is not None])
+        if isinstance(x, dict):
+            return x
+        return self.lib.by_path.get(x)
+
+    def snapshot(self):
+        return (self._enc(self.cur) if self.cur is not None else None, [e for e in map(self._enc, self.queue) if e is not None],
+                [e for e in map(self._enc, self.history) if e is not None])
+
+    def restore(self, snap):
+        cur, q, h = snap
+        self.cur = self._dec(cur) if cur is not None else None
+        self.queue, self.history = [e for e in map(self._dec, q) if e is not None], [e for e in map(self._dec, h) if e is not None]
+        self.shuf.left = {}
+        if isinstance(self.eng, NullEngine):
+            self.eng.tracks = self.lib.tracks
+
+    # ---- lifecycle
+    def activate(self):
+        if not self.mpris.start():
+            self.b.toast.emit("polybar/playerctl can't see this player (python-gobject missing)")
+        self.tick.start()
+        if self.cur is None:
+            self.next()
+        else:  # coming back from "follow": put the UI back on this track, then resume the sound
+            self.b.ownResume()
+            self.mpris.update(status="Playing", meta=self.meta, pos=self.eng.position(), seeked=True)
+            self.eng.play()
+        self._push()
+
+    def deactivate(self):
+        self.tick.stop()
+        if self.status == "Playing":
+            self.eng.pause()
+        self.mpris.stop()
+
+    # ---- transport
+    def play(self, i, record=True):
+        if isinstance(i, dict):
+            return self._play_online(i, record)
+        if i is None or not self.lib.tracks:
+            self.b.toast.emit("your music folder has no songs yet")
+            return
+        t = self.lib.tracks[i]
+        if not os.path.exists(t["path"]):
+            self._fails += 1
+            return self.next() if self._fails < 20 else None
+        if record and self.cur is not None:
+            self.history.append(self.cur)
+            del self.history[:-200]
+        self._fails = 0
+        self._gen += 1
+        self._repaired = False
+        self.shuf.mark(i)
+        self.cur = i
+        self.eng.load(t["path"])
+        self.eng.play()
+        self.meta = {"key": hashlib.md5(t["path"].encode()).hexdigest()[:16], "artist": t["artist"], "title": t["title"],
+                     "album": t["album"], "length": t["len"], "url": QUrl.fromLocalFile(t["path"]).toString(), "art": ""}
+        self.status = "Playing"
+        self.b.ownTrack(self.meta)
+        self.mpris.update(status="Playing", meta=self.meta, pos=0.0, seeked=True)
+
+    def next(self):
+        if self.queue:
+            return self.play(self._pop_queue())
+        if self.radio:
+            return self.play(self.radio.pop(0))
+        if isinstance(self.cur, dict) and not self.radio_failed:  # streaming: wait for YouTube Music's radio
+            self._want_radio = True
+            self.b.toast.emit("finding something similar…")
+            return
+        self.play(self.shuf.next())
+
+    # ---- online
+    def _play_online(self, it, record=True):
+        if record and self.cur is not None:
+            self.history.append(self.cur)
+            del self.history[:-200]
+        self._gen += 1
+        gen, self.cur, self._want_radio = self._gen, it, False
+        self.meta = {"key": "yt" + hashlib.md5(it["id"].encode()).hexdigest()[:14], "artist": it["artist"], "title": it["title"],
+                     "album": it["album"], "length": it["len"], "url": "https://music.youtube.com/watch?v=" + it["id"], "art": it.get("art", "")}
+        self.eng.pause()          # silent until the stream URL is ready; the lyric clock stays at 0 meanwhile
+        self.status = "Paused"
+        self.b.ownTrack(self.meta)
+        self.b.ownStatus(False)
+        self.b.sync.emit(0.0, False)
+        self.mpris.update(status="Paused", meta=self.meta, pos=0.0, seeked=True)
+        threading.Thread(target=self._resolve, args=(it["id"], gen), daemon=True).start()
+        if len(self.radio) < 3 and self.radio_seed != it["id"]:
+            self.radio_seed, self.radio_failed = it["id"], False
+            threading.Thread(target=self._radio_job, args=(it["id"],), daemon=True).start()
+
+    def _resolve(self, vid, gen):
+        try:
+            url = resolve_stream(vid)
+        except Exception:
+            url = ""
+        self.streamReady.emit(gen, url)
+
+    def _on_stream(self, gen, url):
+        if gen != self._gen:
+            return  # you skipped on while it was loading
+        if not url:
+            self.b.toast.emit("couldn't stream this one - skipping")
+            return QTimer.singleShot(300, self.next)
+        self.eng.load_url(url, self.cur.get("len", 0) if isinstance(self.cur, dict) else 0)
+        self.eng.play()
+
+    def _radio_job(self, vid):
+        try:
+            tracks = yt_radio(vid)
+        except Exception:
+            tracks = []
+        self.radioReady.emit(vid, json.dumps(tracks))
+
+    def _on_radio(self, vid, js):
+        if vid != self.radio_seed:
+            return
+        seen = {x["id"] for x in [self.cur] + self.history[-30:] if isinstance(x, dict)}
+        self.radio = [t for t in json.loads(js) if t["id"] not in seen]
+        self.radio_failed = not self.radio
+        if self._want_radio:
+            self._want_radio = False
+            self.next()
+
+    def prev(self):
+        if self.eng.position() > 3 or not self.history:
+            return self.seek(0)
+        self.play(self.history.pop(), record=False)
+
+    def toggle(self):
+        if self.status == "Playing":
+            self.eng.pause()
+        else:
+            self.eng.play()
+
+    def seek(self, sec):
+        self.eng.seek(sec)
+        self.mpris.update(pos=sec, seeked=True)
+        self.b.sync.emit(float(sec), self.status == "Playing")
+
+    def set_volume(self, v):
+        self.vol = max(0.0, min(1.0, v))
+        self.eng.set_volume(self.vol)
+        self.mpris.update(vol=self.vol)
+        return self.vol
+
+    # ---- queue: entries are a song, an online song, or a group (an album/artist that can be expanded and re-ordered)
+    @staticmethod
+    def _entry(items, name, sub):
+        items = list(items)
+        return {"group": True, "name": name or "Selection", "sub": sub or "", "tracks": items} if len(items) > 1 else (items[0] if items else None)
+
+    def play_now(self, idxs, name=None, sub=None):
+        if idxs:
+            e = self._entry(idxs[1:], name, sub)
+            self.queue = [e] if e is not None else []
+            self.play(idxs[0])
+
+    def enqueue(self, idxs, name=None, sub=None):
+        e = self._entry(idxs, name, sub)
+        if e is not None:
+            self.queue.append(e)
+
+    def _pop_queue(self):
+        e = self.queue[0]
+        if isinstance(e, dict) and e.get("group"):
+            t = e["tracks"].pop(0)
+            if not e["tracks"]:
+                self.queue.pop(0)
+            return t
+        return self.queue.pop(0)
+
+    def _row(self, t):
+        if isinstance(t, dict):
+            return {"name": t["title"], "sub": f"{t['artists']} · stream"}
+        x = self.lib.tracks[t]
+        return {"name": x["title"], "sub": f"{x['artist']} · {x['album']}"}
+
+    def queue_rows(self):
+        rows = []
+        for e in self.queue:
+            if isinstance(e, dict) and e.get("group"):
+                rows.append({"name": e["name"], "sub": e["sub"], "group": True, "n": len(e["tracks"]), "kids": [self._row(t) for t in e["tracks"]]})
+            else:
+                rows.append(self._row(e))
+        return rows
+
+    def _box(self, path):
+        return self.queue if len(path) == 1 else self.queue[path[0]]["tracks"]
+
+    def queue_move(self, path, delta):
+        box, i = self._box(path), path[-1]
+        j = i + delta
+        if 0 <= i < len(box) and 0 <= j < len(box):
+            box[i], box[j] = box[j], box[i]
+            return True
+        return False
+
+    def queue_remove(self, path):
+        box, i = self._box(path), path[-1]
+        if 0 <= i < len(box):
+            del box[i]
+            if len(path) == 2 and not box:
+                del self.queue[path[0]]
+
+    def queue_play(self, path):
+        i = path[0]
+        if not (0 <= i < len(self.queue)):
+            return
+        e = self.queue[i]
+        if len(path) == 2 and isinstance(e, dict) and e.get("group") and path[1] < len(e["tracks"]):
+            t, e["tracks"] = e["tracks"][path[1]], e["tracks"][path[1] + 1:]
+            self.queue = self.queue[i:] if e["tracks"] else self.queue[i + 1:]
+        elif isinstance(e, dict) and e.get("group"):
+            t = e["tracks"].pop(0)
+            self.queue = self.queue[i:] if e["tracks"] else self.queue[i + 1:]
+        else:
+            t, self.queue = e, self.queue[i + 1:]
+        self.play(t)
+
+    # ---- engine events
+    def _state(self, st):
+        if st == "Stopped" and self.status == "Playing":
+            return  # transient: end of media is followed by next()
+        self.status = st
+        self.mpris.update(status=st, pos=self.eng.position())
+        self.b.ownStatus(st == "Playing")
+
+    def _failed(self, msg):
+        if self._fail_gen == self._gen:
+            return  # the backend reports the same failure several times
+        self._fail_gen = self._gen
+        if isinstance(self.cur, int) and not self._repaired and shutil.which("ffmpeg"):
+            self._repaired, gen, path = True, self._gen, self.lib.tracks[self.cur]["path"]
+            self.b.toast.emit("this file confuses the player - fixing it…")
+            return threading.Thread(target=lambda: self.repaired.emit(gen, self._safe_repair(path)), daemon=True).start()
+        self.b.toast.emit(f"can't play this file ({msg[:60]}) - skipping")
+        QTimer.singleShot(400, self.next)
+
+    @staticmethod
+    def _safe_repair(path):
+        try:
+            return repair_audio(path) or ""
+        except Exception:
+            return ""
+
+    def _on_repaired(self, gen, path):
+        if gen != self._gen:
+            return
+        if not path:
+            self.b.toast.emit("can't play this file - skipping")
+            return QTimer.singleShot(400, self.next)
+        self._fail_gen = -1
+        self.eng.load(path)
+        self.eng.play()
+
+    def _tick(self):
+        pos = self.eng.position()
+        self.b.sync.emit(float(pos), self.status == "Playing")
+        self.mpris.update(pos=pos)
+
+    def _push(self):
+        self.b.sync.emit(float(self.eng.position()), self.status == "Playing")
+
+    def _on_mpris(self, name, arg):
+        if name == "Next": self.next()
+        elif name == "Previous": self.prev()
+        elif name == "Play": self.eng.play()
+        elif name in ("Pause", "Stop"): self.eng.pause()
+        elif name == "PlayPause": self.toggle()
+        elif name == "Seek": self.seek(self.eng.position() + arg)
+        elif name == "SetPosition": self.seek(arg)
+        elif name == "Quit": QGuiApplication.quit()
+
+# ───────────────────────────── native app (Qt Quick, GPU rendered) ─────────────────────────────
+ART = CACHE / "art"
+OFFSET_FILE = CACHE / "offset.json"
+
+
+def palette(tiny):
+    """Two accent colours from a tiny thumbnail (saturation/brightness weighted hue buckets)."""
+    bk = [[0.0, 0.0, 0.0, 0.0] for _ in range(12)]
+    for y in range(tiny.height()):
+        for x in range(tiny.width()):
+            c = tiny.pixelColor(x, y)
+            r, g, b = c.red(), c.green(), c.blue()
+            mx, mn = max(r, g, b), min(r, g, b)
+            v = mx / 255
+            if v < 0.2:
+                continue
+            s = (mx - mn) / mx if mx else 0
+            w = s * s * v + 0.01
+            o = bk[(max(c.hsvHue(), 0) // 30) % 12]
+            o[0] += w; o[1] += r * w; o[2] += g * w; o[3] += b * w
+    bk.sort(key=lambda o: -o[0])
+    if bk[0][0] <= 0:
+        return "#6c5ce7", "#00b894"
+
+    def lift(o):
+        cs = [o[1] / o[0], o[2] / o[0], o[3] / o[0]]
+        m = max(cs)
+        if m < 150:
+            cs = [v * 150 / max(m, 1) for v in cs]
+        return "#%02x%02x%02x" % tuple(min(255, int(v)) for v in cs)
+    c1 = lift(bk[0])
+    return c1, (lift(bk[1]) if bk[1][0] > bk[0][0] * 0.25 else c1)
+
+
+def make_card(img, S=600, pad=60):
+    """Rounded cover with a soft shadow baked into a transparent PNG (S + 2*pad square)."""
+    C, sm, ig = S + 2 * pad, Qt.TransformationMode.SmoothTransformation, Qt.AspectRatioMode.IgnoreAspectRatio
+    f = 10.0
+    small = QImage(int(C / f), int(C / f), QImage.Format.Format_ARGB32_Premultiplied)
+    small.fill(Qt.GlobalColor.transparent)
+    p = QPainter(small)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(0, 0, 0, 185))
+    p.drawRoundedRect(QRectF(pad / f, pad / f + 3.4, S / f, S / f), S * 0.05 / f, S * 0.05 / f)
+    p.end()
+    out = QImage(C, C, QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+    p.drawImage(0, 0, small.scaled(C, C, ig, sm))
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(pad, pad, S, S), S * 0.05, S * 0.05)
+    p.setClipPath(path)
+    p.drawImage(pad, pad, img.scaled(S, S, ig, sm))
+    p.end()
+    return out
+
+
+def process_art(data, key):
+    """Cover bytes -> square cover file, soft blurred background file, two accent colours."""
+    img = QImage.fromData(data)
+    if img.isNull():
+        return None
+    side = min(img.width(), img.height())
+    sq = img.copy((img.width() - side) // 2, (img.height() - side) // 2, side, side)
+    sm, ig = Qt.TransformationMode.SmoothTransformation, Qt.AspectRatioMode.IgnoreAspectRatio
+    art = sq.scaled(720, 720, ig, sm) if side > 720 else sq
+    tiny = sq.scaled(20, 20, ig, sm)
+    bg = tiny.scaled(320, 320, ig, sm).scaled(40, 40, ig, sm).scaled(480, 480, ig, sm)  # cheap, GPU-free blur
+    ART.mkdir(parents=True, exist_ok=True)
+    pa, pb, pc, pm = ART / f"{key}.jpg", ART / f"{key}-bg.jpg", ART / f"{key}-card.png", ART / f"{key}-mid.jpg"
+    art.save(str(pa), "JPG", 92)
+    bg.save(str(pb), "JPG", 88)
+    sq.scaled(112, 112, ig, sm).scaled(700, 700, ig, sm).save(str(pm), "JPG", 88)  # recognisable but soft: the "backdrop" cover
+    make_card(sq).save(str(pc), "PNG")
+    c1, c2 = palette(tiny)
+    u = lambda p: QUrl.fromLocalFile(str(p)).toString()
+    return {"art": u(pa), "bg": u(pb), "card": u(pc), "mid": u(pm), "c1": c1, "c2": c2}
+
+
+def prune_art(keep=300):
+    try:
+        files = sorted(list(ART.glob("*.jpg")) + list(ART.glob("*.png")), key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files[keep * 4:]:
+            p.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+class Bridge(QObject):
+    metaChanged = Signal()
+    lyricsChanged = Signal()
+    artChanged = Signal()
+    tuneChanged = Signal()
+    modeChanged = Signal()
+    libChanged = Signal()
+    sync = Signal(float, bool)
+    toast = Signal(str)
+    _libdone = Signal()
+    searchDone = Signal(str)
+    thumbsReady = Signal()
+    dlChanged = Signal(str)
+    _modeReq = Signal(str)
+    _thumbs = Signal()
+    _dlsig = Signal(str)
+    _srch = Signal(int, str)
+    _meta = Signal(str)  # worker thread -> UI thread
+    _lyr = Signal(str)
+    _art = Signal(str)
+
+    def __init__(self, state, args):
+        super().__init__()
+        self.st, self.a = state, args
+        self.wake = threading.Event()
+        self._fproc = None
+        self.st.on_lyrics = lambda key, lyr: self._lyr.emit(json.dumps(lyr, ensure_ascii=False)) if self._mode == "follow" else None
+        self.lib = Library(args.music or os.environ.get("MUSICD_DIR") or Path.home() / "Music")
+        self.own, self._mode, self._own_key, self._scanning, self._engine_err = None, "follow", None, False, ""
+        self._wk = [None, None]  # follow worker: last meta / last key
+        self._set_file = CACHE / "settings.json"
+        try:
+            self._settings = json.loads(self._set_file.read_text())
+        except Exception:
+            self._settings = {}
+        self._meta_d = {"active": False, "playing": False, "title": "", "artist": "", "album": "", "length": 0.0}
+        self._kind, self._lyr_json, self._src, self._raw, self._length = "none", "[]", "", None, 0.0
+        self._art_d = {"art": "", "bg": "", "c1": "#6c5ce7", "c2": "#00b894"}
+        self._own_ui = None
+        self._cfg = {"windowed": bool(args.windowed or args.screenshot), "lite": bool(args.lite), "controls": bool(args.controls),
+                     "wstyle": int(self._settings.get("wstyle", 0)),
+                     "font": args.font or os.environ.get("LYRICVIEW_FONT") or ""}
+        try:
+            self._offset = float(json.loads(OFFSET_FILE.read_text())["offset"])
+        except Exception:
+            self._offset = 0.0
+        self._meta.connect(self._on_meta)
+        self._lyr.connect(self._on_lyr)
+        self._art.connect(self._on_art)
+        self._libdone.connect(self._on_libdone)
+        self._srch.connect(self._on_srch)
+        self._modeReq.connect(lambda m: self.setMode(m))
+        self._thumbs.connect(self.thumbsReady.emit)
+        self._dlsig.connect(self.dlChanged.emit)
+        self._wordlevel, self._auto, self._auto_t, self._gone, self._thumb_busy, self._dl, self._dl_id = False, True, 0.0, 0, False, [], 0
+        self._sgen, self._sr = 0, {}
+
+    # ---- properties read by QML
+    @Property("QVariantMap", notify=metaChanged)
+    def meta(self): return self._meta_d
+
+    @Property("QVariantMap", notify=artChanged)
+    def artInfo(self): return self._art_d
+
+    @Property(str, notify=lyricsChanged)
+    def lyrics(self): return self._lyr_json
+
+    @Property(str, notify=lyricsChanged)
+    def kind(self): return self._kind
+
+    @Property(bool, notify=lyricsChanged)
+    def wordLevel(self): return self._wordlevel
+
+    @Property(float, notify=tuneChanged)
+    def offset(self): return self._offset
+
+    @Property("QVariantMap", constant=True)
+    def cfg(self): return self._cfg
+
+    @Property(str, notify=modeChanged)
+    def mode(self): return self._mode
+
+    @Property("QVariantMap", notify=libChanged)
+    def libInfo(self): return {"ready": self.lib.ready, "count": self.lib.count, "scanning": self._scanning,
+                               "dir": str(self.lib.root), "engineErr": self._engine_err, "online": online_available()}
+
+    # ---- start-up: pick the mode, build the library in the background
+    def start(self):
+        eng = None
+        if os.environ.get("LYRICVIEW_ENGINE") == "null":
+            eng = NullEngine()
+        else:
+            try:
+                eng = QtEngine()
+            except Exception as e:  # QtMultimedia missing
+                self._engine_err = f"{type(e).__name__}: {e}"[:120]
+        if eng:
+            self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self.a.mpris_name)
+        self.lib.load_cache()
+        self.lib.apply_pending()
+        self._scanning = True
+        self.libChanged.emit()
+        threading.Thread(target=self._scan, daemon=True).start()
+        self._start_thumbs()
+        threading.Thread(target=self.run_worker, daemon=True).start()
+        a = self.a
+        self._auto = not (a.player or a.follow or a.own)  # unless forced, we follow Lollypop (and co.) whenever one is running
+        want = "follow" if (a.player or a.follow) else "own" if a.own else ("follow" if external_players() else "own")
+        self.setMode(want, announce=False)
+        self._rescan_timer = QTimer(self)
+        self._rescan_timer.setInterval(30000)
+        self._rescan_timer.timeout.connect(self._rescan)
+        self._rescan_timer.start()
+
+    def _scan(self):
+        try:
+            self.lib.scan()
+        except Exception as e:
+            print(f"lyricview: library scan failed: {e!r}", file=sys.stderr)
+        self._libdone.emit()
+
+    @Slot()
+    def rescan(self):
+        self._rescan(announce=True)
+
+    def _rescan(self, announce=False):
+        if self._scanning:
+            return
+        self._scanning = True
+        if announce:
+            self.toast.emit("rescanning your music…")
+        threading.Thread(target=self._scan, daemon=True).start()
+
+    def _on_libdone(self):
+        changed = self.lib.pending is not None
+        if changed:
+            snap = self.own.snapshot() if self.own else None
+            self.lib.apply_pending()
+            if self.own:
+                self.own.restore(snap)
+            self._start_thumbs()
+        self._scanning = False
+        if changed:
+            self.libChanged.emit()
+        if self._mode == "own" and self.own and self.own.cur is None and self.lib.ready:
+            self.own.activate()
+
+    def setMode(self, m, announce=True):
+        if m == "own":
+            if not self.own:
+                self.toast.emit("can't play audio here - install qt6-multimedia (" + (self._engine_err or "unavailable") + ")")
+                return
+            self._mode = "own"
+            self._kill_follow()  # no helper process while we play our own music
+            self.modeChanged.emit()
+            if self.lib.ready:
+                self.own.activate()
+            if announce:
+                self.toast.emit("your library · shuffling" if self.lib.ready else "scanning your music folder…")
+        else:
+            if self._mode == "own":  # remember what the screen showed, so coming back isn't a black screen
+                self._own_ui = (dict(self._meta_d), self._kind, self._lyr_json, self._src, self._raw, self._length, dict(self._art_d))
+            if self.own:
+                self.own.deactivate()
+            self._mode = "follow"
+            self._wk = [None, None]
+            self.modeChanged.emit()
+            self.wake.set()
+            if announce:
+                ext = external_players()
+                self.toast.emit(f"following {ext[0].split('.')[0]}" if ext else "following other players (none running)")
+
+    @Slot()
+    def toggleMode(self):
+        self._auto = False  # you chose: stop switching on our own
+        self.setMode("follow" if self._mode == "own" else "own")
+
+    # ---- own-player callbacks (UI thread)
+    def ownTrack(self, meta):
+        self._own_key = meta["key"]
+        self._meta_d = {"active": True, "playing": True, "key": meta["key"], "title": meta["title"], "artist": meta["artist"],
+                        "album": meta["album"], "length": float(meta["length"] or 0)}
+        self.metaChanged.emit()
+        self._on_lyr(json.dumps({"kind": "loading", "lines": []}))
+        threading.Thread(target=self._own_assets, args=(dict(meta),), daemon=True).start()
+
+    def ownResume(self):
+        u = self._own_ui
+        if not u:
+            return
+        self._meta_d, self._kind, self._lyr_json, self._src, self._raw, self._length, self._art_d = u
+        self._meta_d = dict(self._meta_d, active=True, playing=True)
+        self._own_key = self._meta_d.get("key")
+        self.metaChanged.emit()
+        self.lyricsChanged.emit()
+        self.artChanged.emit()
+
+    def ownStatus(self, playing):
+        if self._mode == "own" and self._meta_d.get("playing") != playing:
+            self._meta_d = dict(self._meta_d, playing=playing)
+            self.metaChanged.emit()
+
+    def _own_assets(self, meta):
+        key = meta["key"]
+        threading.Thread(target=self._own_art, args=(meta,), daemon=True).start()
+        try:
+            lyr = load_lyrics(meta)
+        except Exception:
+            lyr = None
+        if self._own_key == key:
+            self._lyr.emit(json.dumps(lyr or {"kind": "none", "lines": [], "src": ""}, ensure_ascii=False))
+        try:  # not word-by-word? look again, every play
+            up = upgrade_lyrics(meta, lyr or {})
+        except Exception:
+            up = None
+        if up and self._own_key == key:
+            self._lyr.emit(json.dumps(up, ensure_ascii=False))
+
+    def _own_art(self, meta):
+        try:
+            art = load_art(meta)
+            info = process_art(art[0], meta["key"]) if art else None
+        except Exception:
+            info = None
+        if info and self._own_key == meta["key"]:
+            self._art.emit(json.dumps(info))
+            if self.own:
+                self.own.mpris.update(meta=dict(self.own.meta, art=info["art"]))
+
+    # ---- picker data for the keyboard overlays: albums / artists (cover grids) and songs, with drill-down
+    def _thumb_path(self, a):
+        return CACHE / "thumbs" / (hashlib.md5(f"{a['artist']}|{a['name']}".lower().encode()).hexdigest()[:16] + ".jpg")
+
+    def _thumb_url(self, a):
+        p = self._thumb_path(a)
+        return QUrl.fromLocalFile(str(p)).toString() if p.exists() else ""
+
+    def _start_thumbs(self):
+        if self._thumb_busy or not self.lib.ready:
+            return
+        self._thumb_busy = True
+        threading.Thread(target=self._thumb_job, daemon=True).start()
+
+    def _thumb_job(self):
+        made = 0
+        try:
+            sm, ig = Qt.TransformationMode.SmoothTransformation, Qt.AspectRatioMode.IgnoreAspectRatio
+            (CACHE / "thumbs").mkdir(parents=True, exist_ok=True)
+            for a in list(self.lib.albums.values()):
+                p = self._thumb_path(a)
+                if p.exists() or not a["tracks"]:
+                    continue
+                try:
+                    art = load_art({"url": QUrl.fromLocalFile(self.lib.tracks[a["tracks"][0]]["path"]).toString(), "art": ""})
+                    img = QImage.fromData(art[0]) if art else QImage()
+                    if img.isNull():
+                        p.write_bytes(b"")  # remember "no cover" ...
+                        p.unlink()
+                        continue
+                    s = min(img.width(), img.height())
+                    img.copy((img.width() - s) // 2, (img.height() - s) // 2, s, s).scaled(300, 300, ig, sm).save(str(p), "JPG", 85)
+                    made += 1
+                    if made % 6 == 0:
+                        self._thumbs.emit()
+                except Exception:
+                    continue
+        finally:
+            self._thumb_busy = False
+            if made:
+                self._thumbs.emit()
+
+    @Slot(str, result=str)
+    def pickerData(self, spec):
+        """spec: albums | artists | songs | albums:artist:ID | songs:album:ID"""
+        kind, _, rest = spec.partition(":")
+        lib = self.lib
+        if kind == "albums":
+            ids = None
+            if rest.startswith("artist:") and int(rest[7:]) in lib.artists:
+                ids = set(lib.artists[int(rest[7:])]["albums"])
+            rows = [dict(r, thumb=self._thumb_url(lib.albums[r["id"]])) for r in lib.album_list() if ids is None or r["id"] in ids]
+        elif kind == "artists":
+            rows = []
+            for r in lib.artist_list():
+                first = lib.albums[lib.artists[r["id"]]["albums"][0]] if lib.artists[r["id"]]["albums"] else None
+                rows.append(dict(r, thumb=self._thumb_url(first) if first else ""))
+        else:  # songs
+            if rest.startswith("album:") and int(rest[6:]) in lib.albums:
+                idxs = lib.albums[int(rest[6:])]["tracks"]
+            else:
+                idxs = sorted(range(len(lib.tracks)), key=lambda i: (lib.tracks[i]["title"].lower(), lib.tracks[i]["artist"].lower()))
+            rows = [{"id": i, "name": lib.tracks[i]["title"], "sub": f"{lib.tracks[i]['artist']} · {lib.tracks[i]['album']}", "n": 0,
+                     "dur": f"{int(lib.tracks[i]['len'] // 60)}:{int(lib.tracks[i]['len'] % 60):02d}" if lib.tracks[i]["len"] else ""} for i in idxs]
+        return json.dumps(rows, ensure_ascii=False)
+
+    @Slot(str, int, bool)
+    def pick(self, kind, ident, queue_only):
+        if not self.own or not self.lib.ready:
+            return
+        lib, name, sub = self.lib, None, None
+        if kind == "albums" and ident in lib.albums:
+            idxs, name, sub = list(lib.albums[ident]["tracks"]), lib.albums[ident]["name"], lib.albums[ident]["artist"]
+        elif kind == "artists" and ident in lib.artists:
+            idxs, name, sub = lib.artist_tracks(ident), lib.artists[ident]["name"], "all songs"
+        elif kind == "songs" and 0 <= ident < len(lib.tracks):
+            idxs = [ident]
+        else:
+            return
+        if not idxs:
+            return
+        if self._mode != "own":
+            self._auto = False
+            self.setMode("own", announce=False)
+        n = len(idxs)
+        if queue_only:
+            self.own.enqueue(idxs, name, sub)
+            self.toast.emit(f"queued {name or lib.tracks[idxs[0]]['title']}" + (f" · {n} songs" if n > 1 else ""))
+        else:
+            self.own.play_now(idxs, name, sub)
+            self.toast.emit(f"playing {n} song{'s' if n != 1 else ''}, then shuffle" if n > 1 else "playing · shuffle after")
+
+    # ---- online: search and stream
+    @Slot(str)
+    def search(self, query):
+        self._sgen += 1
+        gen = self._sgen
+        if not online_available():
+            self._srch.emit(gen, json.dumps({"rows": [], "error": "needs ytmusicapi and yt-dlp:  sudo pacman -S python-ytmusicapi yt-dlp"}))
+            return
+
+        def job():
+            try:
+                self._srch.emit(gen, json.dumps({"rows": yt_search(query), "error": ""}))
+            except Exception as e:
+                self._srch.emit(gen, json.dumps({"rows": [], "error": f"search failed ({type(e).__name__}) - are you online?"}))
+        threading.Thread(target=job, daemon=True).start()
+
+    def _on_srch(self, gen, js):
+        if gen != self._sgen:
+            return
+        d = json.loads(js)
+        self._sr = {r["id"]: r for r in d["rows"]}
+        rows = [{"id": r["id"], "name": r["title"], "sub": f"{r['artists']}" + (f" · {r['album']}" if r["album"] else ""),
+                 "dur": f"{int(r['len'] // 60)}:{int(r['len'] % 60):02d}" if r["len"] else ""} for r in d["rows"]]
+        self.searchDone.emit(json.dumps({"rows": rows, "error": d["error"]}, ensure_ascii=False))
+
+    @Slot(str, bool)
+    def pickOnline(self, vid, queue_only):
+        it = self._sr.get(vid)
+        if not it or not self.own:
+            return
+        if self._mode != "own":
+            self.setMode("own", announce=False)
+        if queue_only:
+            self.own.queue.append(it)
+            self.toast.emit(f"queued · {it['title']}")
+        else:
+            self.own.queue, self.own.radio = [], []
+            self.own.play(it)
+            self.toast.emit("streaming · similar songs will follow")
+
+    @Slot(result=str)
+    def queueData(self):
+        return json.dumps(self.own.queue_rows() if self.own else [], ensure_ascii=False)
+
+    @Slot(str)
+    def queuePlay(self, path):
+        if self.own:
+            self.own.queue_play(json.loads(path))
+
+    @Slot(str)
+    def queueRemove(self, path):
+        if self.own:
+            self.own.queue_remove(json.loads(path))
+
+    @Slot(str, int, result=bool)
+    def queueMove(self, path, delta):
+        return bool(self.own and self.own.queue_move(json.loads(path), delta))
+
+    @Slot()
+    def queueClear(self):
+        if self.own:
+            self.own.queue = []
+            self.toast.emit("queue cleared")
+
+    # ---- interactive downloads through musicD
+    def _musicd(self):
+        p = os.environ.get("LYRICVIEW_MUSICD") or shutil.which("musicD")
+        if not p and Path(__file__).with_name("musicD").exists():
+            p = str(Path(__file__).with_name("musicD"))
+        return p
+
+    def _dl_push(self):
+        self._dlsig.emit(json.dumps(self._dl[-6:], ensure_ascii=False))
+
+    @Slot(str, str, str)
+    def dlStart(self, vid, title, sub):
+        self._dl_run("https://music.youtube.com/watch?v=" + vid, title, sub)
+
+    @Slot(str)
+    def dlLink(self, url):
+        self._dl_run(url.strip(), url.strip()[:60], "link")
+
+    def _dl_run(self, url, title, sub):
+        exe = self._musicd()
+        self._dl_id += 1
+        job = {"id": self._dl_id, "title": title, "sub": sub, "state": "queued", "note": ""}
+        self._dl.append(job)
+        if not exe:
+            job.update(state="failed", note="musicD not found - put it in your PATH")
+            return self._dl_push()
+        self._dl_push()
+        threading.Thread(target=self._dl_thread, args=(exe, url, job), daemon=True).start()
+
+    def _dl_thread(self, exe, url, job):
+        env = dict(os.environ, MUSICD_DIR=str(self.lib.root), NO_COLOR="1")
+        try:
+            p = subprocess.Popen([exe, "song", "-l", url, "-j", "1"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 encoding="utf-8", errors="replace", env=env)
+            job["state"] = "starting"
+            self._dl_push()
+            for line in p.stdout:
+                s = line.strip()
+                if "Downloading" in s:
+                    job.update(state="downloading", note="")
+                elif "Embedding" in s:
+                    job.update(state="tagging", note="")
+                elif s.startswith("✔"):
+                    job.update(state="done", note=s[1:].strip()[:80])
+                elif s.startswith("⤼"):
+                    job.update(state="done", note="already in your library")
+                elif s.startswith("✘"):
+                    job.update(state="failed", note=s[1:].strip()[:90])
+                self._dl_push()
+            p.wait()
+            if job["state"] not in ("done", "failed"):
+                job.update(state="failed" if p.returncode else "done", note=job["note"] or ("musicD exited with an error" if p.returncode else ""))
+        except Exception as e:
+            job.update(state="failed", note=f"{type(e).__name__}: {e}"[:90])
+        self._dl_push()
+        if job["state"] == "done":
+            self.toast.emit(f"downloaded · {job['title']}")
+            QTimer.singleShot(0, self._rescan)  # picks the new song up right away
+
+    def _save(self, key, val):
+        self._settings[key] = val
+        try:
+            CACHE.mkdir(parents=True, exist_ok=True)
+            self._set_file.write_text(json.dumps(self._settings))
+        except OSError:
+            pass
+
+    @Slot(str, int)
+    def saveSetting(self, key, val):
+        self._save(key, val)
+
+    @Slot(float)
+    def volume(self, delta):
+        if self._mode == "own" and self.own:
+            v = self.own.set_volume(self.own.vol + delta)
+            self._save("volume", v)
+            self.toast.emit(f"volume {round(v * 100)}%")
+        else:
+            threading.Thread(target=self.st.ctl, args=("volume", f"{abs(delta):.2f}{'+' if delta > 0 else '-'}"), daemon=True).start()
+            self.toast.emit("volume " + ("up" if delta > 0 else "down"))
+
+    # ---- worker thread -> UI thread
+    def _on_meta(self, js):
+        self._meta_d = json.loads(js)
+        self.metaChanged.emit()
+
+    def _on_lyr(self, js):
+        d = json.loads(js)
+        self._kind, self._src, self._wordlevel = d["kind"], d.get("src", ""), bool(d.get("wordlevel"))
+        self._raw, self._length = d.get("raw"), d.get("length") or 0.0
+        self._lyr_json = json.dumps(d["lines"], ensure_ascii=False)
+        self.lyricsChanged.emit()
+
+    def _on_art(self, js):
+        self._art_d = json.loads(js)
+        self.artChanged.emit()
+
+    def _kill_follow(self):
+        p, self._fproc = self._fproc, None
+        if p and p.poll() is None:
+            p.terminate()
+
+    def _follow(self):
+        """playerctl --follow prints a line on every track/status change. Runs only in follow mode and can't outlive us."""
+        def die_with_parent():
+            try:
+                import ctypes
+                ctypes.CDLL("libc.so.6").prctl(1, 15)  # PR_SET_PDEATHSIG, SIGTERM
+            except Exception:
+                pass
+        while True:
+            if self._mode != "follow":
+                time.sleep(0.5)
+                continue
+            try:
+                self._fproc = subprocess.Popen(self.st.cmd("--follow", "metadata", "--format", "{{status}}{{title}}"),
+                                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, encoding="utf-8", errors="replace",
+                                               preexec_fn=die_with_parent)
+                for _ in self._fproc.stdout:
+                    self.wake.set()
+            except Exception:
+                pass
+            finally:
+                self._kill_follow()
+            time.sleep(1.0)
+
+    def run_worker(self):
+        threading.Thread(target=self._follow, daemon=True).start()
+        last_err = ""
+        while True:
+            try:
+                self._worker_step()
+            except Exception as e:  # a bad byte or a flaky player must never kill the loop
+                msg = f"{type(e).__name__}: {e}"
+                if msg != last_err:
+                    print(f"lyricview: follow loop recovered from {msg}", file=sys.stderr)
+                    last_err = msg
+                time.sleep(1.0)
+
+    def _auto_check(self):
+        if not self._auto or time.time() - self._auto_t < 3.0:
+            return
+        self._auto_t = time.time()
+        ext = external_players()
+        if self._mode == "own" and ext:
+            self._gone = 0
+            self._modeReq.emit("follow")
+        elif self._mode == "follow" and not ext and self.lib.ready:
+            self._gone += 1
+            if self._gone >= 2:
+                self._gone = 0
+                self._modeReq.emit("own")
+        else:
+            self._gone = 0
+
+    def _worker_step(self):
+        self._auto_check()
+        if self._mode != "follow":
+            self.wake.wait(1.0)
+            self.wake.clear()
+            return
+        last_meta, last_key = self._wk
+        self.st.refresh()
+        snap = self.st.snapshot()
+        meta = {"active": snap["active"], "playing": snap["status"] == "Playing", "key": snap["key"], "title": snap["title"],
+                "artist": snap["artist"], "album": snap["album"], "length": float(snap["length"] or 0)}
+        if meta != last_meta:
+            self._wk[0] = meta
+            self._meta.emit(json.dumps(meta))
+        key = snap["key"] if snap["active"] else None
+        if key != last_key:
+            self._wk[1] = key
+            self._lyr.emit(json.dumps({"kind": "loading", "lines": []}))
+            if key:
+                with self.st.lock:
+                    lev, aev = self.st.lyr_ev, self.st.art_ev
+                threading.Thread(target=self._lyr_job, args=(key, lev), daemon=True).start()
+                threading.Thread(target=self._art_job, args=(key, aev), daemon=True).start()
+        self.sync.emit(float(snap["pos"]), meta["playing"])
+        self.wake.wait(1.5)  # QML extrapolates between syncs; --follow wakes us instantly on any change
+        self.wake.clear()
+
+    def _lyr_job(self, key, ev):
+        ev.wait(25)
+        with self.st.lock:
+            if self.st.key != key:
+                return
+            lyr = self.st.lyrics
+        self._lyr.emit(json.dumps(lyr or {"kind": "none", "lines": [], "src": ""}, ensure_ascii=False))
+
+    def _art_job(self, key, ev):
+        ev.wait(15)
+        with self.st.lock:
+            if self.st.key != key:
+                return
+            art = self.st.art
+        if art:
+            try:
+                info = process_art(art[0], key)
+                if info:
+                    self._art.emit(json.dumps(info))
+            except Exception:
+                pass
+
+    # ---- slots called from QML
+    def _ctl_then_sync(self, *args):
+        self.st.ctl(*args)
+        self.st.refresh()
+        s = self.st.snapshot()
+        self.sync.emit(float(s["pos"]), s["status"] == "Playing")
+
+    def _follow_ctl(self, *args):
+        threading.Thread(target=self._ctl_then_sync, args=args, daemon=True).start()
+
+    @Slot()
+    def playPause(self):
+        self.own.toggle() if self._mode == "own" and self.own else self._follow_ctl("play-pause")
+
+    @Slot()
+    def next(self):
+        self.own.next() if self._mode == "own" and self.own else self._follow_ctl("next")
+
+    @Slot()
+    def prev(self):
+        self.own.prev() if self._mode == "own" and self.own else self._follow_ctl("previous")
+
+    @Slot(float)
+    def seek(self, sec):
+        self.own.seek(sec) if self._mode == "own" and self.own else self._follow_ctl("position", f"{max(0.0, sec):.3f}")
+
+    @Slot(float)
+    def adjustOffset(self, d):
+        self._offset = round(max(-5.0, min(5.0, self._offset + d)), 2)
+        try:
+            OFFSET_FILE.parent.mkdir(parents=True, exist_ok=True)
+            OFFSET_FILE.write_text(json.dumps({"offset": self._offset}))
+        except OSError:
+            pass
+        self.tuneChanged.emit()
+        self.toast.emit(f"lyric timing {self._offset:+.1f}s")
+
+    @Slot(float)
+    def adjustSpread(self, d):
+        global SPREAD
+        SPREAD = round(max(0.4, min(2.5, SPREAD + d)), 2)
+        if self._raw and self._kind == "synced":
+            self._lyr_json = json.dumps(parse_lrc(self._raw, self._length), ensure_ascii=False)
+            self.lyricsChanged.emit()
+        self.toast.emit(f"word spread ×{SPREAD:.2f}  ( , shorter   . longer )")
+
+
+QML = r"""
+import QtQuick
+import QtQuick.Window
+import QtQuick.Layouts
+import QtQuick.Shapes
+import QtQuick.Effects
+
+Window {
+    id: win
+    width: 1280; height: 720; visible: true; color: "#050507"
+    title: bridge.meta.title ? bridge.meta.artist + " – " + bridge.meta.title : "lyricview"
+    visibility: bridge.cfg.windowed ? Window.Windowed : Window.FullScreen
+
+    component Icon: Item {
+        id: ic
+        property string d
+        signal clicked()
+        width: 56; height: 56
+        Shape {
+            anchors.centerIn: parent; width: 24; height: 24; scale: 1.25
+            ShapePath { fillColor: ma.containsMouse ? "white" : Qt.rgba(1, 1, 1, 0.78); strokeWidth: -1; PathSvg { path: ic.d } }
+        }
+        MouseArea { id: ma; anchors.fill: parent; hoverEnabled: true; onClicked: ic.clicked() }
+    }
+
+    // two crossfading copies of the (pre-blurred) artwork
+    component ArtLayer: Item {
+        id: al
+        property bool flip: false
+        function setSource(u) {
+            var show = flip ? b : a, hide = flip ? a : b
+            flip = !flip
+            show.source = u; show.opacity = 1; hide.opacity = 0
+        }
+        function clear() { a.opacity = 0; b.opacity = 0 }
+        Image { id: a; anchors.fill: parent; smooth: true; asynchronous: true; opacity: 0; Behavior on opacity { NumberAnimation { duration: 1400 } } }
+        Image { id: b; anchors.fill: parent; smooth: true; asynchronous: true; opacity: 0; Behavior on opacity { NumberAnimation { duration: 1400 } } }
+    }
+
+    // soft colour cloud that wanders across the window
+    component Blob: Shape {
+        id: bl
+        property color col: "white"
+        property real fx: 0.5          // home position (fraction of window)
+        property real fy: 0.5
+        property real size: 0.9        // diameter relative to the window's long side
+        property int dur: 20000
+        property real dx: 0
+        property real dy: 0
+        readonly property real d: Math.max(win.width, win.height) * size
+        width: d; height: d
+        x: win.width * fx - d / 2 + dx
+        y: win.height * fy - d / 2 + dy
+        SequentialAnimation on dx {
+            loops: Animation.Infinite; running: !root.lite
+            NumberAnimation { to: win.width * 0.20; duration: bl.dur; easing.type: Easing.InOutSine }
+            NumberAnimation { to: -win.width * 0.20; duration: bl.dur; easing.type: Easing.InOutSine }
+        }
+        SequentialAnimation on dy {
+            loops: Animation.Infinite; running: !root.lite
+            NumberAnimation { to: -win.height * 0.22; duration: bl.dur * 1.37; easing.type: Easing.InOutSine }
+            NumberAnimation { to: win.height * 0.22; duration: bl.dur * 1.37; easing.type: Easing.InOutSine }
+        }
+        ShapePath {
+            strokeWidth: -1
+            fillGradient: RadialGradient {
+                centerX: bl.d / 2; centerY: bl.d / 2; centerRadius: bl.d / 2; focalX: bl.d / 2; focalY: bl.d / 2
+                GradientStop { position: 0.0; color: Qt.rgba(bl.col.r, bl.col.g, bl.col.b, 0.85) }
+                GradientStop { position: 0.55; color: Qt.rgba(bl.col.r, bl.col.g, bl.col.b, 0.28) }
+                GradientStop { position: 1.0; color: Qt.rgba(bl.col.r, bl.col.g, bl.col.b, 0) }
+            }
+            PathSvg { path: "M0,0 L" + bl.d + ",0 L" + bl.d + "," + bl.d + " L0," + bl.d + " Z" }
+        }
+    }
+
+    // the word being sung: dim base + 8 stacked clips -> a smooth gradient wipe, optional GPU glow
+    component SoftWipe: Item {
+        id: sw
+        property string word
+        property font fnt
+        property real p: 0
+        property real tw: 0
+        property real h: 0
+        property real edge: 20
+        property real glow: 0
+        width: tw; height: h
+        layer.enabled: sw.glow > 0 && !root.lite
+        layer.effect: MultiEffect { shadowEnabled: true; shadowColor: "white"; shadowOpacity: 0.55 * sw.glow; shadowBlur: 1.0; shadowScale: 1.0 }
+        Repeater {
+            model: 8
+            delegate: Item {
+                required property int index
+                clip: true; height: sw.h
+                width: Math.min(sw.tw, sw.tw * sw.p + sw.edge * (7 - index) / 8)
+                visible: width > 0
+                Text { text: sw.word; font: sw.fnt; color: Qt.rgba(1, 1, 1, 0.36) }
+            }
+        }
+    }
+
+    component GlowText: Item {
+        id: gt
+        property string text
+        property font fnt
+        property color col: "white"
+        property real glow: 1
+        width: m.implicitWidth; height: m.implicitHeight
+        layer.enabled: gt.glow > 0 && !root.lite
+        layer.effect: MultiEffect { shadowEnabled: true; shadowColor: gt.col; shadowOpacity: 0.75 * gt.glow; shadowBlur: 1.0 }
+        Text { visible: gt.glow > 0 && root.lite; text: gt.text; font: gt.fnt; color: gt.col; opacity: 0.16 * gt.glow; scale: 1.1; anchors.centerIn: m }
+        Text { visible: gt.glow > 0 && root.lite; text: gt.text; font: gt.fnt; color: gt.col; opacity: 0.09 * gt.glow; scale: 1.22; anchors.centerIn: m }
+        Text { id: m; text: gt.text; font: gt.fnt; color: gt.col }
+    }
+
+    component RainDrop: Item {
+        id: rd
+        property string word
+        property font fnt
+        property real fall: 0
+        property real after: 0
+        property real cx: 0
+        property real areaW: 600
+        property real areaH: 600
+        property real hit: 0.58
+        property real tilt: 0
+        width: gt2.width; height: gt2.height
+        visible: (fall > 0 || after > 0) && opacity > 0.01
+        x: Math.max(8, Math.min(areaW - width - 8, cx - width / 2))
+        y: -height + fall * (0.4 + 0.6 * fall) * (areaH * hit + height) + after * areaH * 0.07
+        rotation: tilt
+        opacity: after > 0 ? 1 - after : (fall < 0.12 ? fall / 0.12 : 1)
+        scale: after > 0 ? 1 + 0.22 * Math.sin(Math.min(1, after * 2.4) * Math.PI) : 0.88 + 0.12 * Math.min(1, fall * 3)
+        GlowText { id: gt2; text: rd.word; fnt: rd.fnt; glow: rd.visible ? (rd.after > 0 ? 1 : 0.45 + 0.4 * rd.fall) : 0 }
+        function go(t, size, xx, aw, ah, remMs) {
+            seq.stop(); word = t; areaW = aw; areaH = ah; cx = xx; tilt = (Math.random() - 0.5) * 12
+            fnt = Qt.font({ family: bridge.cfg.font ? bridge.cfg.font : Qt.application.font.family, pixelSize: Math.max(8, Math.round(size)), weight: Font.Black })
+            fall = 0; after = 0; fallAnim.duration = Math.max(150, remMs); seq.start()
+        }
+        function halt() { seq.stop(); fall = 0; after = 0 }
+        SequentialAnimation {
+            id: seq
+            NumberAnimation { id: fallAnim; target: rd; property: "fall"; from: 0; to: 1; easing.type: Easing.Linear }
+            NumberAnimation { target: rd; property: "after"; from: 0; to: 1; duration: 650; easing.type: Easing.OutQuad }
+        }
+        Connections { target: root; function onPlayingChanged() { if (seq.running) seq.paused = !root.playing } }
+    }
+
+    Item {
+        id: root
+        anchors.fill: parent
+        focus: true
+        readonly property bool lite: bridge.cfg.lite || GraphicsInfo.api === GraphicsInfo.Software
+
+        // ───── playback clock
+        property var lines: []
+        property real pos: 0
+        property real basePos: 0
+        property double baseT: Date.now()
+        property string curKey: ""
+        property bool playing: bridge.meta.playing === true
+        readonly property real offset: bridge.offset
+        readonly property real len: bridge.meta.length || 0
+        readonly property bool atEnd: len > 0 && pos >= len
+        readonly property string kind: bridge.kind
+
+        // ───── responsive layout: wide-short, normal and tall-narrow windows (scratchpads!)
+        readonly property bool portrait: win.width < win.height * 1.1
+        readonly property real pad: Math.round(Math.min(win.width, win.height) * 0.05)
+        readonly property real u: Math.min(win.height, win.width * 0.75)           // text unit
+        readonly property real sideW: portrait ? win.width - 2 * pad : Math.min(win.width * 0.34, win.height * 0.80)
+        readonly property real cardS: portrait ? Math.round(Math.min(win.width * 0.30, win.height * 0.20))
+                                               : Math.round(Math.min(sideW, win.height * 0.5))
+        readonly property real fs: Math.round(Math.max(18, Math.min(lv.width * 0.062, lv.height * 0.10, win.height * 0.062)))
+        readonly property font lyricFont: Qt.font({ family: bridge.cfg.font ? bridge.cfg.font : Qt.application.font.family,
+                                                    pixelSize: fs, weight: Font.ExtraBold })
+
+        property color c1: "#6c5ce7"
+        property color c2: "#00b894"
+        readonly property color c3: Qt.hsla((c1.hslHue + 0.14) % 1, Math.min(1, c1.hslSaturation + 0.1), Math.min(0.62, c1.hslLightness + 0.06), 1)
+        Behavior on c1 { ColorAnimation { duration: 1400 } }
+        Behavior on c2 { ColorAnimation { duration: 1400 } }
+        property bool idle: false
+
+        // ───── keyboard-only overlays (picker / queue / search / download / keybinds), word mode, backdrop
+        property string overlay: ""
+        property string pickKind: "albums"
+        property string drillSpec: ""
+        property string drillLabel: ""
+        property string filter: ""
+        property int sel: 0
+        property var items: []
+        property var shown: []
+        property var qOpen: ({})
+        property var dlJobs: []
+        property string searchNote: ""
+        property bool wordMode: false
+        property int wordStyle: Math.min(2, bridge.cfg.wstyle)
+        readonly property var styleNames: ["Stack", "Edit", "Rain"]
+        property bool backdrop: false
+        property bool controlsOn: bridge.cfg.controls
+        property var flat: []
+        property real pulse: 0
+        property int gridCols: 4
+        readonly property bool isGrid: overlay === "pick" && pickKind !== "songs"
+        readonly property var keymap: [
+            ["Space", "Play / pause"], ["← →", "Seek 5 s  (Shift: 30 s)"], ["↑ ↓", "Volume"], ["N   P", "Next / previous song"],
+            ["Tab", "Albums · artists · songs"], ["S", "Stream from YouTube Music"], ["D", "Download with musicD"], ["Q", "Queue"],
+            ["M", "Your library ⇄ follow other players"], ["W", "One word at a time"], ["T", "Word style (in word mode)"],
+            ["B", "Cover as backdrop, lyrics only"], ["C", "Show / hide the playback buttons"], ["[   ]", "Lyrics earlier / later"],
+            [",   .", "Word timing shorter / longer"], ["F", "Fullscreen"], ["Ctrl+R", "Rescan the music folder"],
+            ["Esc", "Close · leave fullscreen"], ["Ctrl+Q", "Quit"], ["F1", "This sheet"]]
+
+        function say(t) { toastText.text = t; toast.opacity = 1; toastTimer.restart() }
+        function punch() { pulseAnim.restart() }
+        function buildFlat(lines) {
+            var f = []
+            for (var i = 0; i < lines.length; i++) {
+                var L = lines[i]
+                if (L.gap || !L.words) continue
+                for (var k = 0; k < L.words.length; k++) {
+                    var w = L.words[k], t = w.w.trim()
+                    if (t !== "") f.push({ t: w.t, e: w.e, w: t, line: i, k: k, n: L.words.length })
+                }
+            }
+            return f
+        }
+        function flatIdx(p) {
+            var a = flat, lo = 0, hi = a.length - 1, r = -1
+            while (lo <= hi) { var m = (lo + hi) >> 1; if (a[m].t <= p) { r = m; lo = m + 1 } else hi = m - 1 }
+            return r
+        }
+        function loadPick() { items = JSON.parse(bridge.pickerData(drillSpec !== "" ? drillSpec : pickKind)); shown = items }
+        function openPick(kind, spec, label) {
+            overlay = "pick"; pickKind = kind; drillSpec = spec || ""; drillLabel = label || ""; filter = ""; sel = 0
+            loadPick()
+        }
+        function reloadQueue() {
+            var a = JSON.parse(bridge.queueData()), rows = []
+            for (var i = 0; i < a.length; i++) {
+                var e = a[i], g = e.group === true, open = g && qOpen[i] === true
+                rows.push({ name: e.name, sub: e.sub, group: g, n: e.n || 0, path: [i], depth: 0, open: open })
+                if (open) for (var j = 0; j < e.kids.length; j++)
+                    rows.push({ name: e.kids[j].name, sub: e.kids[j].sub, group: false, n: 0, path: [i, j], depth: 1, open: false })
+            }
+            items = rows; shown = rows; sel = Math.max(0, Math.min(sel, rows.length - 1))
+        }
+        function selectPath(p) {
+            for (var k = 0; k < shown.length; k++) {
+                var q = shown[k].path
+                if (q.length === p.length && q[0] === p[0] && (p.length === 1 || q[1] === p[1])) { sel = k; return }
+            }
+        }
+        function openOverlay(kind) {
+            if (kind === "pick") { openPick("albums"); return }
+            overlay = kind; filter = ""; sel = 0; searchNote = ""; items = []; shown = []
+            if (kind === "queue") reloadQueue()
+        }
+        function closeOverlay() { overlay = "" }
+        function refilter() {
+            var q = filter.toLowerCase().split(/\s+/).filter(function (x) { return x.length })
+            if (q.length === 0) shown = items
+            else shown = items.filter(function (it) {
+                var h = (it.name + " " + (it.sub || "")).toLowerCase()
+                for (var i = 0; i < q.length; i++) if (h.indexOf(q[i]) < 0) return false
+                return true
+            })
+            sel = 0
+        }
+        function typed() {
+            if (overlay === "search" || overlay === "download") {
+                if (filter.length < 2) { items = []; shown = []; searchNote = "" }
+                else { searchNote = "searching…"; searchTimer.restart() }
+            } else refilter()
+        }
+        function activate(queueOnly) {
+            if (overlay === "download" && filter.indexOf("http") === 0 && (!shown.length || filter.length > 20)) { bridge.dlLink(filter); filter = ""; items = []; shown = []; return }
+            if (!shown.length) return
+            var it = shown[sel]
+            if (overlay === "queue") { bridge.queuePlay(JSON.stringify(it.path)); closeOverlay(); return }
+            if (overlay === "download") { bridge.dlStart(it.id, it.name, it.sub); say("downloading · " + it.name); return }
+            if (overlay === "search") bridge.pickOnline(it.id, queueOnly)
+            else bridge.pick(pickKind, it.id, queueOnly)
+            if (!queueOnly) closeOverlay()
+        }
+        function drillIn() {
+            if (!shown.length) return
+            var it = shown[sel]
+            if (pickKind === "artists") openPick("albums", "albums:artist:" + it.id, it.name)
+            else if (pickKind === "albums") openPick("songs", "songs:album:" + it.id, it.name)
+        }
+        function drillOut() {
+            if (drillSpec.indexOf("songs:album:") === 0) openPick("albums")
+            else if (drillSpec.indexOf("albums:artist:") === 0) openPick("artists")
+        }
+        function moveSel(d) { sel = Math.max(0, Math.min(Math.max(0, shown.length - 1), sel + d)) }
+        function overlayKey(e, ctrl, shift) {
+            var k = e.key, it = shown.length ? shown[sel] : null
+            if (overlay === "help" || k === Qt.Key_Escape) { closeOverlay(); return }
+            if (overlay === "queue") {
+                if (shift && (k === Qt.Key_Up || k === Qt.Key_Down) && it) {
+                    var d = k === Qt.Key_Up ? -1 : 1, np = it.path.slice()
+                    if (bridge.queueMove(JSON.stringify(it.path), d)) {
+                        np[np.length - 1] += d
+                        if (it.depth === 0) { var a0 = qOpen[it.path[0]], b0 = qOpen[np[0]]; qOpen[it.path[0]] = b0; qOpen[np[0]] = a0 }
+                        reloadQueue(); selectPath(np)
+                    }
+                    return
+                }
+                if (k === Qt.Key_Right && it && it.group) { qOpen[it.path[0]] = true; reloadQueue(); return }
+                if (k === Qt.Key_Left && it) { var i0 = it.path[0]; if (qOpen[i0]) { qOpen[i0] = false; reloadQueue(); selectPath([i0]) } return }
+                if (k === Qt.Key_Delete || k === Qt.Key_Backspace) {
+                    if (shift) { bridge.queueClear(); qOpen = ({}); reloadQueue() }
+                    else if (it) { bridge.queueRemove(JSON.stringify(it.path)); qOpen = ({}); reloadQueue() }
+                    return
+                }
+            }
+            if (k === Qt.Key_Down) { moveSel(isGrid ? gridCols : 1); return }
+            if (k === Qt.Key_Up) { moveSel(isGrid ? -gridCols : -1); return }
+            if (isGrid && k === Qt.Key_Right && !ctrl) { moveSel(1); return }
+            if (isGrid && k === Qt.Key_Left && !ctrl) { moveSel(-1); return }
+            if (k === Qt.Key_PageDown) { moveSel(8); return }
+            if (k === Qt.Key_PageUp) { moveSel(-8); return }
+            if (k === Qt.Key_Return || k === Qt.Key_Enter) { activate(shift); return }
+            if (overlay === "pick") {
+                if (ctrl && k === Qt.Key_Right) { drillIn(); return }
+                if (ctrl && k === Qt.Key_Left) { drillOut(); return }
+                if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
+                    var order = ["albums", "artists", "songs"], n = (order.indexOf(pickKind) + (k === Qt.Key_Backtab ? 2 : 1)) % 3
+                    openPick(order[n]); return
+                }
+                if (k === Qt.Key_Backspace && filter === "" && drillSpec !== "") { drillOut(); return }
+            }
+            if (overlay === "queue") return
+            if (k === Qt.Key_Tab || k === Qt.Key_Backtab) return
+            if (k === Qt.Key_Backspace) { filter = filter.slice(0, -1); typed(); return }
+            if (e.text && e.text.length === 1 && e.text.charCodeAt(0) >= 32 && !ctrl) { filter += e.text; typed() }
+        }
+        function onKey(e) {
+            var ctrl = (e.modifiers & Qt.ControlModifier) !== 0, shift = (e.modifiers & Qt.ShiftModifier) !== 0
+            if (e.key === Qt.Key_F1) { if (overlay === "help") closeOverlay(); else openOverlay("help"); return }
+            if (overlay !== "") { overlayKey(e, ctrl, shift); return }
+            switch (e.key) {
+            case Qt.Key_Space: bridge.playPause(); break
+            case Qt.Key_Right: seekTo(pos + (shift ? 30 : 5)); break
+            case Qt.Key_Left: seekTo(pos - (shift ? 30 : 5)); break
+            case Qt.Key_Up: bridge.volume(0.05); break
+            case Qt.Key_Down: bridge.volume(-0.05); break
+            case Qt.Key_N: bridge.next(); break
+            case Qt.Key_P: bridge.prev(); break
+            case Qt.Key_Tab: openOverlay("pick"); break
+            case Qt.Key_S: openOverlay("search"); break
+            case Qt.Key_D: openOverlay("download"); break
+            case Qt.Key_Q: if (ctrl) Qt.quit(); else openOverlay("queue"); break
+            case Qt.Key_M: bridge.toggleMode(); break
+            case Qt.Key_B: backdrop = !backdrop; say(backdrop ? "cover backdrop · lyrics focus" : "normal view"); break
+            case Qt.Key_R: if (ctrl) bridge.rescan(); break
+            case Qt.Key_W:
+                wordMode = !wordMode
+                if (!wordMode) say("full lyrics")
+                else if (kind !== "synced") say("word mode needs synced lyrics - this song has none yet")
+                else if (!bridge.wordLevel) say("⚠ these lyrics aren't word-by-word - word timing is estimated")
+                else say("one word at a time · " + styleNames[wordStyle] + "  (T: style)")
+                break
+            case Qt.Key_T:
+                wordStyle = (wordStyle + (shift ? 2 : 1)) % 3; bridge.saveSetting("wstyle", wordStyle)
+                say("style: " + styleNames[wordStyle] + (wordMode ? "" : "  (shows in word mode - press W)")); break
+            case Qt.Key_C: controlsOn = !controlsOn; break
+            case Qt.Key_BracketLeft: bridge.adjustOffset(-0.1); break
+            case Qt.Key_BracketRight: bridge.adjustOffset(0.1); break
+            case Qt.Key_Comma: bridge.adjustSpread(-0.1); break
+            case Qt.Key_Period: bridge.adjustSpread(0.1); break
+            case Qt.Key_F: win.visibility = (win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen); break
+            case Qt.Key_Escape: if (win.visibility === Window.FullScreen) win.visibility = Window.Windowed; break
+            }
+            wake()
+        }
+
+        function findIdx(p) {
+            var a = lines, lo = 0, hi = a.length - 1, r = -1
+            while (lo <= hi) { var m = (lo + hi) >> 1; if (a[m].t <= p) { r = m; lo = m + 1 } else hi = m - 1 }
+            return r
+        }
+        readonly property int activeIdx: kind === "synced" ? findIdx(pos + offset) : -1
+        onActiveIdxChanged: if (!wordMode) punch()
+        function fmt(s) { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2) }
+        function seekTo(sec) { sec = Math.max(0, sec); basePos = sec; baseT = Date.now(); pos = sec; bridge.seek(sec) }
+        function wake() { idle = false; idleTimer.restart() }
+
+        Timer { id: searchTimer; interval: 450; onTriggered: if (root.overlay === "search" || root.overlay === "download") bridge.search(root.filter) }
+        NumberAnimation { id: pulseAnim; target: root; property: "pulse"; from: 1; to: 0; duration: 800; easing.type: Easing.OutCubic }
+        Timer { id: idleTimer; interval: 3000; running: true; onTriggered: root.idle = true }
+        FrameAnimation {
+            running: root.playing && !root.atEnd
+            onTriggered: {
+                var p = root.basePos + (Date.now() - root.baseT) / 1000
+                root.pos = root.len > 0 ? Math.min(p, root.len) : p
+            }
+        }
+
+        Connections {
+            target: bridge
+            function onLyricsChanged() {
+                root.lines = (bridge.kind === "synced" || bridge.kind === "plain") ? JSON.parse(bridge.lyrics) : []
+                root.flat = bridge.kind === "synced" ? root.buildFlat(root.lines) : []
+            }
+            function onThumbsReady() { if (root.overlay === "pick" && root.pickKind !== "songs") { var s0 = root.sel; root.loadPick(); root.sel = s0 } }
+            function onDlChanged(js) { root.dlJobs = JSON.parse(js) }
+            function onSync(p, playing) {
+                var cur = root.playing ? root.basePos + (Date.now() - root.baseT) / 1000 : root.basePos
+                if (playing !== root.playing || Math.abs(p - cur) > 0.25) { root.basePos = p; root.baseT = Date.now(); root.pos = p }
+            }
+            function onMetaChanged() {
+                var k = bridge.meta.key || ""
+                if (k !== root.curKey) {            // new track: restart the clock at once, don't wait for the next sync
+                    root.curKey = k
+                    root.basePos = 0; root.baseT = Date.now(); root.pos = 0
+                }
+                if (!bridge.meta.active) { artA.clear(); artB.clear() }
+            }
+            function onArtChanged() {
+                artA.setSource(bridge.artInfo.bg); artB.setSource(bridge.artInfo.bg)
+                root.c1 = bridge.artInfo.c1; root.c2 = bridge.artInfo.c2
+            }
+            function onSearchDone(js) {
+                var d = JSON.parse(js)
+                if (root.overlay !== "search" && root.overlay !== "download") return
+                root.items = d.rows; root.shown = d.rows; root.sel = 0
+                root.searchNote = d.error !== "" ? d.error : d.rows.length === 0 ? "nothing found" : ""
+            }
+            function onToast(t) { toastText.text = t; toast.opacity = 1; toastTimer.restart() }
+        }
+
+        Keys.onPressed: (e) => { root.onKey(e); e.accepted = true }
+        HoverHandler { onPointChanged: root.wake(); cursorShape: root.idle ? Qt.BlankCursor : Qt.ArrowCursor }
+
+        // ───── fluid background: two slowly counter-rotating blurred covers + wandering colour clouds
+        Item {
+            id: bg
+            anchors.fill: parent; clip: true
+            Rectangle { anchors.fill: parent; color: Qt.darker(root.c1, 5) }
+            Item {
+                id: spin1
+                anchors.centerIn: parent; width: Math.max(win.width, win.height) * 1.7; height: width
+                opacity: 0.9
+                NumberAnimation on rotation { from: 0; to: 360; duration: 150000; loops: Animation.Infinite; running: !root.lite }
+                ArtLayer { id: artA; anchors.fill: parent }
+            }
+            Item {
+                id: spin2
+                anchors.centerIn: parent; width: Math.max(win.width, win.height) * 1.5; height: width
+                opacity: 0.5; scale: 1.1
+                NumberAnimation on rotation { from: 360; to: 0; duration: 210000; loops: Animation.Infinite; running: !root.lite }
+                ArtLayer { id: artB; anchors.fill: parent }
+            }
+            Item {
+                id: clouds
+                anchors.fill: parent; opacity: 0.75
+                SequentialAnimation on scale {
+                    loops: Animation.Infinite; running: !root.lite
+                    NumberAnimation { to: 1.08; duration: 14000; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1.0; duration: 14000; easing.type: Easing.InOutSine }
+                }
+                Blob { col: root.c1; fx: 0.18; fy: 0.30; size: 0.95; dur: 19000 }
+                Blob { col: root.c2; fx: 0.82; fy: 0.22; size: 0.85; dur: 23000 }
+                Blob { col: root.c3; fx: 0.50; fy: 0.90; size: 1.00; dur: 29000 }
+                Blob { col: root.c1; fx: 0.92; fy: 0.85; size: 0.70; dur: 17000 }
+            }
+            Rectangle { anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.34) }
+            Rectangle {
+                anchors.fill: parent
+                gradient: Gradient {
+                    GradientStop { position: 0; color: Qt.rgba(0, 0, 0, 0.25) }
+                    GradientStop { position: 0.5; color: Qt.rgba(0, 0, 0, 0) }
+                    GradientStop { position: 1; color: Qt.rgba(0, 0, 0, 0.55) }
+                }
+            }
+        }
+
+        // ───── cover, title, progress, controls (beside the lyrics, or above them in tall windows)
+        GridLayout {
+            id: side
+            columns: root.portrait ? 2 : 1
+            columnSpacing: root.pad * 0.6
+            rowSpacing: root.portrait ? root.pad * 0.35 : win.height * 0.03
+            x: root.pad
+            y: root.portrait ? root.pad : Math.max(root.pad, (win.height - height) / 2)
+            width: root.sideW
+
+            Item {
+                id: card
+                Layout.preferredWidth: root.cardS; Layout.preferredHeight: root.cardS
+                Layout.alignment: Qt.AlignTop
+                scale: root.playing ? 1 : 0.94
+                Behavior on scale { NumberAnimation { duration: 700; easing.type: Easing.OutCubic } }
+                Rectangle { id: maskRect; anchors.fill: parent; radius: width * 0.05; color: "#15151b"; layer.enabled: true; visible: false }
+                Rectangle { anchors.fill: parent; radius: width * 0.05; color: "#15151b" }
+                Image {
+                    id: art; anchors.fill: parent; source: bridge.artInfo.art; fillMode: Image.PreserveAspectCrop
+                    sourceSize: Qt.size(720, 720); asynchronous: true; visible: root.lite
+                }
+                MultiEffect {
+                    anchors.fill: parent; source: art; maskEnabled: true; maskSource: maskRect; visible: !root.lite
+                    shadowEnabled: true; shadowColor: "black"; shadowOpacity: 0.55; shadowBlur: 1.0; shadowVerticalOffset: 22
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.alignment: root.portrait ? Qt.AlignVCenter : Qt.AlignTop
+                spacing: 4
+                Text { Layout.fillWidth: true; text: bridge.meta.title || ""; color: "white"; font.pixelSize: Math.round(root.u * 0.04)
+                       font.weight: Font.ExtraBold; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: bridge.meta.artist || ""; color: Qt.rgba(1, 1, 1, 0.78); font.pixelSize: Math.round(root.u * 0.027)
+                       font.weight: Font.DemiBold; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: bridge.meta.album || ""; color: Qt.rgba(1, 1, 1, 0.45); font.pixelSize: Math.round(root.u * 0.021); elide: Text.ElideRight }
+            }
+            Item {
+                Layout.fillWidth: true; Layout.preferredHeight: 30
+                Layout.columnSpan: root.portrait ? 2 : 1
+                Rectangle { width: parent.width; height: 4; radius: 2; y: 6; color: Qt.rgba(1, 1, 1, 0.2)
+                    Rectangle { height: parent.height; radius: 2; color: "white"; width: root.len > 0 ? parent.width * Math.max(0, Math.min(1, root.pos / root.len)) : 0 } }
+                Text { y: 14; text: root.fmt(root.pos); color: Qt.rgba(1, 1, 1, 0.6); font.pixelSize: 13 }
+                Text { y: 14; anchors.right: parent.right; text: root.len > 0 ? root.fmt(root.len) : "--:--"; color: Qt.rgba(1, 1, 1, 0.6); font.pixelSize: 13 }
+                MouseArea { x: 0; y: -6; width: parent.width; height: 24; enabled: root.controlsOn; onClicked: (m) => root.seekTo(root.len * m.x / width) }
+            }
+            Row {
+                visible: root.controlsOn
+                Layout.columnSpan: root.portrait ? 2 : 1
+                Layout.alignment: root.portrait ? Qt.AlignHCenter : Qt.AlignLeft
+                spacing: 8
+                Icon { d: "M19,5 L9,12 L19,19 Z M7,5 H4 V19 H7 Z"; onClicked: bridge.prev() }
+                Icon { d: root.playing ? "M6,4 H10 V20 H6 Z M14,4 H18 V20 H14 Z" : "M7,4 L20,12 L7,20 Z"; onClicked: bridge.playPause() }
+                Icon { d: "M5,5 L15,12 L5,19 Z M17,5 H20 V19 H17 Z"; onClicked: bridge.next() }
+            }
+        }
+
+        // ───── lyrics
+        ListView {
+            id: lv
+            x: root.portrait ? root.pad : side.x + root.sideW + root.pad * 1.3
+            y: root.portrait ? side.y + side.height + root.pad * 0.5 : 0
+            width: win.width - x - (root.portrait ? root.pad : root.pad * 1.3)
+            height: win.height - y
+            model: root.lines
+            opacity: root.wordMode && root.kind === "synced" ? 0 : 1
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 320 } }
+            clip: true; cacheBuffer: 3000
+            interactive: root.kind !== "synced"
+            currentIndex: Math.max(0, root.activeIdx)
+            highlightRangeMode: root.kind === "synced" ? ListView.StrictlyEnforceRange : ListView.NoHighlightRange
+            preferredHighlightBegin: height * 0.30
+            preferredHighlightEnd: height * 0.30 + 1
+            highlightMoveDuration: 650
+            highlightMoveVelocity: -1
+            delegate: Item {
+                id: row
+                required property int index
+                required property var modelData
+                readonly property bool synced: root.kind === "synced"
+                readonly property int dist: index - root.activeIdx
+                readonly property bool on: synced && dist === 0
+                readonly property bool isGap: modelData.gap === true
+                width: ListView.view ? ListView.view.width : 0
+                height: (isGap ? root.fs * 1.2 : (modelData.text !== undefined ? txt.height : flow.height)) + root.fs * 0.55
+                opacity: !synced ? 0.88 : on ? 1 : Math.max(0.1, 0.5 - 0.09 * Math.abs(dist))
+                scale: !synced || on ? 1 : 0.93
+                transformOrigin: Item.Left
+                Behavior on opacity { NumberAnimation { duration: 420 } }
+                Behavior on scale { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
+
+                Text {
+                    id: txt; visible: modelData.text !== undefined; width: parent.width * 0.94; y: root.fs * 0.27
+                    text: modelData.text === undefined ? "" : (modelData.text || " "); color: "white"; wrapMode: Text.WordWrap
+                    font.pixelSize: Math.round(root.fs * 0.8); font.weight: Font.Bold
+                }
+                Flow {
+                    id: flow; visible: !row.isGap && modelData.words !== undefined; width: parent.width * 0.94; y: root.fs * 0.27
+                    Repeater {
+                        model: row.modelData.words ? row.modelData.words : []
+                        delegate: Item {
+                            id: wd
+                            required property var modelData
+                            readonly property real tw: tm.advanceWidth
+                            readonly property real p: row.on
+                                ? Math.max(0, Math.min(1, (root.pos + root.offset - modelData.t) / Math.max(0.05, modelData.e - modelData.t)))
+                                : (row.dist < 0 ? 1 : 0)
+                            width: tw + (modelData.s ? root.fs * 0.28 : 0)
+                            height: root.fs * 1.28
+                            TextMetrics { id: tm; font: root.lyricFont; text: wd.modelData.w }
+                            Item {
+                                width: wd.tw; height: parent.height
+                                y: wd.p > 0 ? -root.fs * 0.05 : 0
+                                Behavior on y { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+                                Text { text: wd.modelData.w; font: root.lyricFont; color: Qt.rgba(1, 1, 1, 0.30) }
+                                Text { visible: wd.p >= 1; text: wd.modelData.w; font: root.lyricFont; color: "white" }
+                                Loader { active: wd.p > 0 && wd.p < 1; sourceComponent: wipeC }
+                                Component {
+                                    id: wipeC
+                                    SoftWipe { word: wd.modelData.w; fnt: root.lyricFont; p: wd.p; tw: wd.tw; h: wd.height; edge: root.fs * 0.5; glow: 0.7 }
+                                }
+                            }
+                        }
+                    }
+                }
+                Row {   // instrumental gap: three dots that fill up
+                    visible: row.isGap; spacing: root.fs * 0.35; y: root.fs * 0.3
+                    Repeater {
+                        model: 3
+                        delegate: Rectangle {
+                            required property int index
+                            readonly property real q: row.on
+                                ? Math.max(0, Math.min(1, ((root.pos + root.offset - row.modelData.t) / Math.max(0.1, row.modelData.e - row.modelData.t)) * 3 - index))
+                                : (row.dist < 0 ? 1 : 0)
+                            width: root.fs * 0.42; height: width; radius: width / 2; color: "white"
+                            opacity: 0.25 + 0.75 * q
+                            scale: (0.8 + 0.3 * q) * (row.on && q > 0 ? 1 + 0.1 * Math.sin(root.pos * 3 + index) : 1)
+                        }
+                    }
+                }
+                MouseArea { anchors.fill: parent; enabled: row.synced && !row.isGap; onClicked: root.seekTo(row.modelData.t - root.offset) }
+            }
+        }
+
+        Text {
+            visible: bridge.kind === "none" || bridge.kind === "loading"
+            x: lv.x; width: lv.width; y: lv.y + lv.height * 0.3
+            text: bridge.kind === "loading" ? "…" : "No lyrics found for this track"
+            color: Qt.rgba(1, 1, 1, 0.5); font.pixelSize: Math.round(root.u * 0.04); font.weight: Font.Bold; wrapMode: Text.WordWrap
+        }
+
+
+        // ───── word mode: one big word at a time - Pop / Glow / Rise / Rain (T cycles the style)
+        Item {
+            id: wv
+            x: lv.x; y: lv.y; width: lv.width; height: lv.height
+            opacity: root.wordMode && root.kind === "synced" ? 1 : 0
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 320 } }
+            readonly property int st: root.wordStyle
+            readonly property var line: root.activeIdx >= 0 ? root.lines[root.activeIdx] : null
+            readonly property bool isWords: line !== null && line.words !== undefined && line.words.length > 0
+            readonly property real tnow: root.pos + root.offset
+            readonly property int wi: {
+                if (!isWords) return -1
+                var w = line.words, r = -1
+                for (var k = 0; k < w.length; k++) { if (w[k].t <= tnow) r = k; else break }
+                return r
+            }
+            readonly property var word: wi >= 0 ? line.words[wi] : null
+            readonly property real p: word ? Math.max(0, Math.min(1, (tnow - word.t) / Math.max(0.05, word.e - word.t))) : 0
+            readonly property real bigPx: Math.max(8, Math.round(Math.min(root.fs * 3.0, height * 0.22)))
+            readonly property font bigFont: Qt.font({ family: bridge.cfg.font ? bridge.cfg.font : Qt.application.font.family, pixelSize: bigPx, weight: Font.Black })
+            readonly property string wkey: root.activeIdx + ":" + wi
+            property string shownText: ""
+            property string ghostText: ""
+            property real laneSeq: 0.3
+            property int rainIdx: 0
+            onWkeyChanged: {
+                ghostText = shownText
+                shownText = word ? word.w.trim() : ""
+                enter()
+                if (st === 3 && shownText !== "") rainSpawn(shownText)
+            }
+            onStChanged: { clearRain(); shownText = word ? word.w.trim() : ""; enter() }
+            function enter() {
+                bigWrap.yOff = 0; bigBox.opacity = 1; bigWrap.scale = 1
+                if (st === 0) { aScale.from = 0.84; aScale.to = 1; aScale.duration = 190; aScale.easing.type = Easing.OutBack; aScale.restart(); aFade.from = 0.15; aFade.to = 1; aFade.restart() }
+                else if (st === 1) { aScale.from = 0.93; aScale.to = 1; aScale.duration = 420; aScale.easing.type = Easing.OutCubic; aScale.restart(); aFade.from = 0.4; aFade.to = 1; aFade.restart() }
+                else if (st === 2) { aRise.from = bigPx * 0.75; aRise.to = 0; aRise.restart(); aFade.from = 0; aFade.to = 1; aFade.restart(); ghostAnim.restart() }
+            }
+            function rainSpawn(t) {
+                laneSeq = (laneSeq + 0.618034) % 1
+                var size = bigPx * (0.30 + 0.22 * Math.min(1, 6 / Math.max(3, t.length)))
+                var d = rainRep.itemAt(rainIdx % 16); if (d) d.go(t, size, width * (0.1 + 0.8 * laneSeq), width, height)
+                rainIdx++
+            }
+            function clearRain() { for (var i = 0; i < 16; i++) { var d = rainRep.itemAt(i); if (d) d.halt() } }
+            function esc(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") }
+            function html(words, cur) {
+                var s = ""
+                for (var i = 0; i < words.length; i++) {
+                    var c = i < cur ? "#cfcfd8" : i === cur ? "#ffffff" : "#6d6d78"
+                    s += "<font color='" + c + "'>" + esc(words[i].w) + "</font>" + (words[i].s ? " " : "")
+                }
+                return s
+            }
+            function plain(n) {
+                if (!n || n.gap || !n.words) return ""
+                var s = ""
+                for (var i = 0; i < n.words.length; i++) s += n.words[i].w + (n.words[i].s ? " " : "")
+                return s
+            }
+            NumberAnimation { id: aScale; target: bigWrap; property: "scale" }
+            NumberAnimation { id: aRise; target: bigWrap; property: "yOff"; duration: 340; easing.type: Easing.OutCubic }
+            NumberAnimation { id: aFade; target: bigBox; property: "opacity"; duration: 140 }
+
+            Item {   // the big word (Pop / Glow / Rise)
+                id: bigWrap
+                property real yOff: 0
+                width: parent.width; height: wv.bigPx * 1.4; y: parent.height * 0.24 + yOff
+                opacity: wv.word && wv.st !== 3 ? 1 : 0
+                Item {
+                    id: bigBox
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: tmBig.advanceWidth; height: parent.height
+                    scale: Math.min(1, (wv.width * 0.94) / Math.max(1, width))
+                    TextMetrics { id: tmBig; font: wv.bigFont; text: wv.word ? wv.word.w.trim() : "" }
+                    Text { text: tmBig.text; font: wv.bigFont; color: Qt.rgba(1, 1, 1, 0.26) }
+                    Text { visible: wv.p >= 1; text: tmBig.text; font: wv.bigFont; color: "white" }
+                    Loader { active: wv.p > 0 && wv.p < 1; sourceComponent: bigWipe }
+                    Component {
+                        id: bigWipe
+                        SoftWipe { word: tmBig.text; fnt: wv.bigFont; p: wv.p; tw: tmBig.advanceWidth; h: bigBox.height; edge: wv.bigPx * 0.5; glow: wv.st === 1 ? 1 : 0 }
+                    }
+                }
+            }
+            Text {   // Rise: the previous word floats away upwards
+                id: ghost
+                property real gy: 0
+                visible: wv.st === 2
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: bigWrap.y + gy; opacity: 0; color: "white"; font: wv.bigFont; text: wv.ghostText
+                scale: Math.min(1, (wv.width * 0.94) / Math.max(1, implicitWidth))
+                ParallelAnimation {
+                    id: ghostAnim
+                    NumberAnimation { target: ghost; property: "opacity"; from: 0.4; to: 0; duration: 420 }
+                    NumberAnimation { target: ghost; property: "gy"; from: 0; to: -wv.bigPx * 0.9; duration: 420; easing.type: Easing.OutCubic }
+                }
+            }
+            Item {   // Rain: words fall from the top and fade out as they reach the line
+                anchors.fill: parent; visible: wv.st === 3
+                Repeater { id: rainRep; model: 16; delegate: RainDrop {} }
+            }
+            Text {
+                id: ctx
+                x: parent.width * 0.05; width: parent.width * 0.9
+                y: wv.st === 3 ? wv.height * 0.70 : bigWrap.y + wv.bigPx * 1.7
+                Behavior on y { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
+                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; textFormat: Text.StyledText
+                font.pixelSize: Math.round(root.fs * 0.78); font.weight: Font.Bold
+                text: wv.isWords ? wv.html(wv.line.words, wv.wi) : ""
+            }
+            Text {
+                x: parent.width * 0.08; width: parent.width * 0.84; y: ctx.y + ctx.height + root.fs * 0.6
+                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; color: "white"; opacity: 0.26
+                font.pixelSize: Math.round(root.fs * 0.55); font.weight: Font.DemiBold
+                text: wv.plain(root.lines[root.activeIdx + 1])
+            }
+            Row {   // instrumental gap
+                visible: wv.line !== null && wv.line.gap === true
+                anchors.horizontalCenter: parent.horizontalCenter; y: parent.height * 0.34; spacing: root.fs * 0.5
+                Repeater {
+                    model: 3
+                    delegate: Rectangle {
+                        required property int index
+                        readonly property real q: wv.line && wv.line.gap
+                            ? Math.max(0, Math.min(1, ((wv.tnow - wv.line.t) / Math.max(0.1, wv.line.e - wv.line.t)) * 3 - index)) : 0
+                        width: root.fs * 0.6; height: width; radius: width / 2; color: "white"; opacity: 0.25 + 0.75 * q; scale: 0.8 + 0.3 * q
+                    }
+                }
+            }
+        }
+
+        // ───── nothing playing
+        Rectangle {
+            anchors.fill: parent; color: "#050507"; opacity: bridge.meta.active ? 0 : 1; visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 500 } }
+            Text { anchors.centerIn: parent; horizontalAlignment: Text.AlignHCenter; color: Qt.rgba(1, 1, 1, 0.6); font.pixelSize: Math.round(root.u * 0.04)
+                   font.weight: Font.Bold
+                   text: bridge.mode === "own"
+                         ? (bridge.libInfo.ready ? "" : bridge.libInfo.scanning ? "Scanning your music…" : "No songs found in\n" + bridge.libInfo.dir)
+                         : "Nothing playing\nstart a track in Lollypop, or press M to play your library" }
+        }
+
+
+        // ───── overlays - only ever shown by a key
+        Rectangle {
+            id: dim
+            anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.55)
+            opacity: root.overlay !== "" ? 1 : 0; visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 200 } }
+        }
+        Item {
+            id: panel
+            anchors.centerIn: parent
+            width: Math.min(win.width - 2 * root.pad, root.overlay === "help" ? 1000 : 920)
+            height: Math.min(win.height - 2 * root.pad, win.height * (root.overlay === "help" ? 0.84 : 0.82))
+            opacity: dim.opacity; visible: dim.visible; scale: 0.96 + 0.04 * dim.opacity
+            Rectangle { anchors.fill: parent; radius: 24; color: Qt.rgba(0.045, 0.045, 0.06, 0.97); border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.10) }
+            ColumnLayout {
+                anchors.fill: parent; anchors.margins: Math.max(18, root.pad * 0.6); spacing: root.pad * 0.3
+                RowLayout {
+                    Layout.fillWidth: true; spacing: root.pad * 0.5
+                    Text { text: ({ help: "Keybinds", queue: "Up next", search: "Stream", download: "Download", pick: "Library" })[root.overlay] || ""
+                           color: "white"; font.pixelSize: Math.round(root.u * 0.044); font.weight: Font.ExtraBold }
+                    Text { visible: root.drillSpec !== ""; Layout.fillWidth: true; text: "‹  " + root.drillLabel; color: Qt.rgba(1, 1, 1, 0.6); elide: Text.ElideRight
+                           font.pixelSize: Math.round(root.u * 0.03); font.weight: Font.DemiBold }
+                    Item { Layout.fillWidth: true; visible: root.drillSpec === "" }
+                    Repeater {
+                        model: root.overlay === "pick" ? ["albums", "artists", "songs"] : root.overlay === "search" ? ["YouTube Music"] : root.overlay === "download" ? ["musicD"] : []
+                        delegate: Text {
+                            required property string modelData
+                            readonly property bool on: root.overlay === "pick" ? root.pickKind === modelData : true
+                            text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
+                            color: on ? "white" : Qt.rgba(1, 1, 1, 0.38); font.pixelSize: Math.round(root.u * 0.028); font.weight: Font.Bold
+                            Rectangle { y: parent.height + 3; height: 2; radius: 1; color: root.c1; width: parent.on ? parent.width : 0; Behavior on width { NumberAnimation { duration: 180 } } }
+                        }
+                    }
+                }
+                Item {   // filter line
+                    Layout.fillWidth: true; Layout.preferredHeight: Math.round(root.u * 0.05)
+                    visible: root.overlay === "pick" || root.overlay === "search" || root.overlay === "download"
+                    Rectangle { anchors.fill: parent; radius: height / 2; color: Qt.rgba(1, 1, 1, 0.07) }
+                    Text { x: 18; anchors.verticalCenter: parent.verticalCenter; font.pixelSize: Math.round(root.u * 0.026); font.weight: Font.DemiBold
+                           color: root.filter === "" ? Qt.rgba(1, 1, 1, 0.35) : "white"
+                           text: root.filter !== "" ? root.filter : root.overlay === "search" ? "search songs on YouTube Music" : root.overlay === "download" ? "song name, or paste a link" : "type to filter" }
+                    Rectangle { visible: root.filter !== ""; x: 20 + fm.advanceWidth; anchors.verticalCenter: parent.verticalCenter; width: 2; height: parent.height * 0.5; color: root.c1
+                                SequentialAnimation on opacity { loops: Animation.Infinite; NumberAnimation { to: 0.1; duration: 500 } NumberAnimation { to: 1; duration: 500 } } }
+                    TextMetrics { id: fm; text: root.filter; font.pixelSize: Math.round(root.u * 0.026); font.weight: Font.DemiBold }
+                }
+                Item {
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    GridView {   // album / artist covers
+                        id: pgrid
+                        anchors.fill: parent; visible: root.isGrid; clip: true; model: root.isGrid ? root.shown : []
+                        property int cols: Math.max(2, Math.floor(width / (root.u * 0.27)))
+                        onColsChanged: root.gridCols = cols
+                        cellWidth: width / cols; cellHeight: cellWidth * 1.34
+                        currentIndex: root.sel
+                        onCurrentIndexChanged: positionViewAtIndex(currentIndex, GridView.Contain)
+                        delegate: Item {
+                            required property int index
+                            required property var modelData
+                            width: pgrid.cellWidth; height: pgrid.cellHeight
+                            Rectangle { anchors.fill: parent; anchors.margins: 4; radius: 14; visible: index === root.sel; color: Qt.rgba(root.c1.r, root.c1.g, root.c1.b, 0.38) }
+                            Column {
+                                anchors.fill: parent; anchors.margins: 10; spacing: 6
+                                Item {
+                                    width: parent.width; height: parent.width
+                                    Rectangle { anchors.fill: parent; radius: 10; color: "#1b1b24"; visible: th.status !== Image.Ready
+                                                Text { anchors.centerIn: parent; text: "♪"; color: Qt.rgba(1, 1, 1, 0.25); font.pixelSize: parent.width * 0.4 } }
+                                    Image { id: th; anchors.fill: parent; source: modelData.thumb || ""; fillMode: Image.PreserveAspectCrop; asynchronous: true; sourceSize: Qt.size(300, 300) }
+                                }
+                                Text { width: parent.width; text: modelData.name; color: "white"; elide: Text.ElideRight; font.pixelSize: Math.round(root.u * 0.024); font.weight: Font.DemiBold }
+                                Text { width: parent.width; text: modelData.sub || ""; color: Qt.rgba(1, 1, 1, 0.5); elide: Text.ElideRight; font.pixelSize: Math.round(root.u * 0.019) }
+                            }
+                        }
+                    }
+                    ListView {   // songs, queue, search, download results
+                        id: plist
+                        anchors.fill: parent; visible: root.overlay !== "help" && !root.isGrid; clip: true; model: root.isGrid ? [] : root.shown
+                        currentIndex: root.sel
+                        onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
+                        delegate: Item {
+                            required property int index
+                            required property var modelData
+                            width: ListView.view.width; height: Math.round(root.u * 0.08)
+                            Rectangle { anchors.fill: parent; anchors.margins: 2; radius: 14; visible: index === root.sel; color: Qt.rgba(root.c1.r, root.c1.g, root.c1.b, 0.38) }
+                            Column {
+                                anchors.left: parent.left; anchors.leftMargin: 16 + (modelData.depth || 0) * 28; anchors.right: cnt.left; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                Text { width: parent.width; elide: Text.ElideRight; color: "white"; font.pixelSize: Math.round(root.u * 0.029); font.weight: Font.DemiBold
+                                       text: (modelData.group ? (modelData.open ? "▾ " : "▸ ") : "") + modelData.name }
+                                Text { width: parent.width; text: modelData.sub || ""; color: Qt.rgba(1, 1, 1, 0.5); elide: Text.ElideRight; font.pixelSize: Math.round(root.u * 0.02) }
+                            }
+                            Text { id: cnt; anchors.right: parent.right; anchors.rightMargin: 18; anchors.verticalCenter: parent.verticalCenter
+                                   color: Qt.rgba(1, 1, 1, 0.45); font.pixelSize: Math.round(root.u * 0.022)
+                                   text: root.overlay === "queue" ? (modelData.group ? modelData.n + " songs" : (modelData.depth ? "" : (modelData.path ? "#" + (modelData.path[0] + 1) : ""))) : (modelData.dur || "") }
+                        }
+                    }
+                    GridLayout {   // keybind sheet
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; visible: root.overlay === "help"
+                        columns: win.width < 900 ? 1 : 2; columnSpacing: root.pad; rowSpacing: 0
+                        flow: GridLayout.TopToBottom; rows: win.width < 900 ? root.keymap.length : Math.ceil(root.keymap.length / 2)
+                        Repeater {
+                            model: root.keymap
+                            delegate: RowLayout {
+                                required property var modelData
+                                Layout.fillWidth: true; Layout.preferredHeight: Math.round(root.u * 0.051); spacing: 14
+                                Rectangle { Layout.preferredWidth: Math.round(root.u * 0.15); Layout.preferredHeight: Math.round(root.u * 0.04); radius: 9
+                                            color: Qt.rgba(1, 1, 1, 0.10); border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.14)
+                                            Text { anchors.centerIn: parent; text: modelData[0]; color: "white"; font.pixelSize: Math.round(root.u * 0.02); font.weight: Font.Bold } }
+                                Text { Layout.fillWidth: true; text: modelData[1]; color: Qt.rgba(1, 1, 1, 0.78); elide: Text.ElideRight
+                                       font.pixelSize: Math.round(root.u * 0.022); font.weight: Font.DemiBold }
+                            }
+                        }
+                    }
+                    Text {   // empty states
+                        anchors.centerIn: parent; width: parent.width * 0.8; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                        visible: root.shown.length === 0 && root.overlay !== "help"; color: Qt.rgba(1, 1, 1, 0.45); font.pixelSize: Math.round(root.u * 0.028)
+                        text: root.overlay === "queue" ? "The queue is empty.\nAdd albums or songs with Shift+Enter - then the shuffle carries on."
+                              : (root.overlay === "search" || root.overlay === "download") ? (root.searchNote !== "" ? root.searchNote : "Type a song or an artist")
+                              : bridge.libInfo.scanning && !bridge.libInfo.ready ? "Scanning your music…" : root.filter !== "" ? "Nothing matches" : "No songs found"
+                    }
+                }
+                Column {   // download progress
+                    visible: root.overlay === "download" && root.dlJobs.length > 0; Layout.fillWidth: true; spacing: 2
+                    Repeater {
+                        model: root.overlay === "download" ? root.dlJobs.slice(-3) : []
+                        delegate: Text {
+                            required property var modelData
+                            width: parent.width; elide: Text.ElideRight; font.pixelSize: Math.round(root.u * 0.022); font.weight: Font.DemiBold
+                            color: modelData.state === "failed" ? "#ff8a8a" : modelData.state === "done" ? "#9be39b" : Qt.rgba(1, 1, 1, 0.7)
+                            text: (modelData.state === "done" ? "✔ " : modelData.state === "failed" ? "✘ " : "↓ ") + modelData.title + "  ·  " + (modelData.note || modelData.state)
+                        }
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; color: Qt.rgba(1, 1, 1, 0.38)
+                    font.pixelSize: Math.round(root.u * 0.02); font.weight: Font.DemiBold
+                    text: root.overlay === "help" ? "In lists: type to filter · arrows move · Enter play · Shift+Enter queue · Tab next list · Ctrl+→ open (artist → albums, album → songs) · Ctrl+← back"
+                        : root.overlay === "queue" ? "↑ ↓ select · Shift+↑↓ move · → expand album · ← collapse · Enter play now · Del remove · Shift+Del clear · Esc"
+                        : root.overlay === "search" ? "type to search · ↑ ↓ · Enter stream now · Shift+Enter queue · Esc close"
+                        : root.overlay === "download" ? "type a song or paste a link · ↑ ↓ · Enter download · Esc close"
+                        : "arrows move · Enter play · Shift+Enter queue · Ctrl+→ open · Ctrl+← back · Tab albums/artists/songs · Esc"
+                }
+            }
+        }
+
+        // ───── toast + hint
+        Rectangle {
+            id: toast; opacity: 0; anchors.horizontalCenter: parent.horizontalCenter; y: parent.height - height - win.height * 0.05
+            width: Math.min(toastText.implicitWidth + 36, win.width - 20); height: toastText.height + 18; radius: height / 2; color: Qt.rgba(0, 0, 0, 0.55)
+            Behavior on opacity { NumberAnimation { duration: 250 } }
+            Text { id: toastText; anchors.centerIn: parent; width: parent.width - 28; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                   color: "white"; font.pixelSize: 16; font.weight: Font.DemiBold }
+            Timer { id: toastTimer; interval: 1600; onTriggered: toast.opacity = 0 }
+        }
+        Component.onCompleted: { forceActiveFocus(); toastText.text = "F1 · all keybinds"; toast.opacity = 1; toastTimer.interval = 3500; toastTimer.restart() }
+    }
+}
+"""
+
+
+def main_qt():
+    ap = argparse.ArgumentParser(prog="lyricview", description="Native fullscreen word-by-word lyrics for your MPRIS player.")
+    ap.add_argument("-p", "--player", help="only follow this player (e.g. lollypop, mpv, spotify)")
+    ap.add_argument("--own", action="store_true", help="start in your-own-library mode even if another player is running")
+    ap.add_argument("--follow", action="store_true", help="start by following other players")
+    ap.add_argument("--mpris-name", default="lyricview", metavar="NAME",
+                    help="name other programs (polybar, playerctl) see while playing your library, e.g. Lollypop")
+    ap.add_argument("--music", metavar="DIR", help="music folder (default ~/Music or $MUSICD_DIR)")
+    ap.add_argument("--controls", action="store_true", help="show the prev/play/next buttons from the start")
+    ap.add_argument("--windowed", action="store_true", help="don't start fullscreen")
+    ap.add_argument("--lite", action="store_true", help="no drifting background or card mask (for weak GPUs)")
+    ap.add_argument("--font", help="lyrics font family (default: your system font)")
+    ap.add_argument("--screenshot", metavar="FILE", help=argparse.SUPPRESS)
+    ap.add_argument("--size", metavar="WxH", help=argparse.SUPPRESS)
+    ap.add_argument("--keys", metavar="LIST", help=argparse.SUPPRESS)
+    a = ap.parse_args()
+    if not shutil.which("playerctl"):
+        sys.exit("playerctl not found - install it: sudo pacman -S playerctl")
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    if a.mpris_name != "lyricview":
+        IGNORE.clear()  # we may be pretending to be Lollypop: never hide the real one from ourselves
+    prune_art()
+    app = QGuiApplication(sys.argv)
+    app.setApplicationName("lyricview")
+    bridge = Bridge(State(a.player), a)
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("bridge", bridge)
+    engine.loadData(QML.encode("utf-8"), QUrl("file:///lyricview.qml"))
+    if not engine.rootObjects():
+        sys.exit("could not load the UI - is Qt Quick complete? (sudo pacman -S pyside6 qt6-declarative)")
+    bridge.start()
+    app.aboutToQuit.connect(bridge._kill_follow)
+    win = engine.rootObjects()[0]
+    if a.size:
+        win.resize(*[int(v) for v in a.size.lower().split("x")])
+    steps = [s for s in (a.keys or "").split(",") if s]
+    if steps:  # test hook: replay key presses, e.g. --keys Tab,Down,Return
+        from PySide6.QtTest import QTest
+
+        def press(i=0):
+            if i >= len(steps):
+                return
+            mods, name = Qt.KeyboardModifier.NoModifier, steps[i]
+            while "+" in name[1:]:
+                m, name = name.split("+", 1)
+                mods |= {"Shift": Qt.KeyboardModifier.ShiftModifier, "Ctrl": Qt.KeyboardModifier.ControlModifier}[m]
+            if name.startswith("wait"):
+                QTimer.singleShot(int(name[4:] or 500), lambda: press(i + 1))
+                return
+            if len(name) == 1:
+                QTest.keyClick(win, name, mods)
+            else:
+                QTest.keyClick(win, getattr(Qt.Key, "Key_" + name), mods)
+            QTimer.singleShot(350, lambda: press(i + 1))
+        QTimer.singleShot(2500, press)
+    if a.screenshot:
+        total = sum(int(s[4:] or 500) if s.startswith("wait") else 350 for s in steps)
+        QTimer.singleShot(3500 + total, lambda: (win.grabWindow().save(a.screenshot), app.quit()))
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main_qt()

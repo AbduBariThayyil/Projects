@@ -1,0 +1,1540 @@
+#!/usr/bin/env python3
+"""musicD - fast, accurate music downloader (YouTube Music -> tagged mp3/m4a)
+
+  musicD song <name...>              search and download the best *official* match
+  musicD song -m "a, b, c"           several songs in parallel
+  musicD song -l <url>               one link (album/playlist links are routed to album mode)
+  musicD album|playlist|list <url>   whole album / playlist
+
+         musicD lyrics [DIR]               upgrade lyrics of songs you already have (word-level if possible)
+Options: -f mp3|m4a   -j N   -p/--pick   --no-lyrics   --no-itunes
+         --country XX   --cookies-from-browser NAME
+Env:     MUSICD_DIR (default ~/Music)   MUSICD_COUNTRY (iTunes storefront, default US)
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import io
+import json
+import os
+import re
+import shutil
+import sys
+import threading
+import time
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from pathlib import Path
+
+VERSION = "2.0"
+UA = f"musicD/{VERSION}"
+MUSIC_DIR = Path(os.environ.get("MUSICD_DIR") or Path.home() / "Music")
+STATE_DIR = MUSIC_DIR / ".musicD"
+HOME = str(Path.home())
+
+
+# ───────────────────────────── console / formatting ─────────────────────────────
+class Console:
+    """Thread-safe output with one live status line pinned to the bottom."""
+
+    def __init__(self):
+        self.tty = sys.stdout.isatty()
+        self.color = self.tty and not os.environ.get("NO_COLOR")
+        self.lock = threading.RLock()
+        self._status = ""
+
+    def paint(self, code, s):
+        return f"\033[{code}m{s}\033[0m" if self.color else s
+
+    def green(self, s): return self.paint("32", s)
+    def yellow(self, s): return self.paint("33", s)
+    def red(self, s): return self.paint("31", s)
+    def dim(self, s): return self.paint("2", s)
+    def bold(self, s): return self.paint("1", s)
+    def cyan(self, s): return self.paint("36", s)
+
+    def status(self, s):
+        if not self.tty:
+            return
+        with self.lock:
+            cols = shutil.get_terminal_size((100, 20)).columns - 1
+            self._status = s[:cols]
+            sys.stdout.write("\r\033[2K" + self._status)
+            sys.stdout.flush()
+
+    def log(self, msg=""):
+        with self.lock:
+            if self.tty:
+                sys.stdout.write("\r\033[2K")
+            print(msg)
+            if self.tty and self._status:
+                sys.stdout.write(self._status)
+            sys.stdout.flush()
+
+
+def fmt_time(s):
+    if s is None:
+        return "?:??"
+    s = int(round(s))
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def fmt_size(n):
+    n = float(n or 0)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if n < 1024 or unit == "GiB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def bar(frac, width=22):
+    n = int(round(width * max(0.0, min(1.0, frac))))
+    return "━" * n + "─" * (width - n)
+
+
+def short_path(p):
+    p = str(p)
+    return "~" + p[len(HOME):] if p.startswith(HOME) else p
+
+
+class Progress:
+    """Overall progress for N tracks; each track reports a 0..1 fraction."""
+
+    def __init__(self, con, total=1):
+        self.con, self.total = con, total
+        self.part, self.counts = {}, Counter()
+        self.lock = threading.Lock()
+
+    def update(self, key, frac, extra=""):
+        with self.lock:
+            self.part[key] = frac
+            self._draw(extra)
+
+    def finish(self, key, kind):
+        with self.lock:
+            self.part.pop(key, None)
+            self.counts[kind] += 1
+            self._draw()
+
+    def _draw(self, extra=""):
+        finished = sum(self.counts.values())
+        frac = (finished + sum(self.part.values())) / max(self.total, 1)
+        c = self.counts
+        self.con.status(
+            f"[{bar(frac)}] {int(frac * 100):>3}%  {finished}/{self.total}  "
+            f"✔{c['done']} ⤼{c['skip']} ✘{c['fail']}  {extra}"
+        )
+
+    def clear(self):
+        self.con.status("")
+
+
+# ───────────────────────────── text helpers ─────────────────────────────
+def norm(s):
+    s = unicodedata.normalize("NFKD", s or "").lower()
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return re.sub(r"[^\w\s]", " ", s)
+
+
+def tokens(s):
+    return set(norm(s).split())
+
+
+_TITLE_NOISE = [
+    re.compile(r"\s*[\(\[]\s*(?:official\s*(?:music\s*)?(?:video|audio|lyrics?|lyric\s*video|visuali[sz]er)?"
+               r"|audio|lyrics?|lyric\s*video|4k|hd|remastered)\s*[\)\]]", re.I),
+    re.compile(r"\s*-\s*official\s*(?:music\s*)?(?:video|audio)", re.I),
+    re.compile(r"\s*\(video\)", re.I),
+]
+
+
+def clean_title(t):
+    t = t or ""
+    for rx in _TITLE_NOISE:
+        t = rx.sub("", t)
+    return t.strip()
+
+
+_WHOLE_ARTISTS = {
+    "tyler, the creator", "earth, wind & fire", "crosby, stills, nash & young",
+    "hall & oates", "simon & garfunkel", "florence + the machine", "sofi tukker",
+}
+
+
+def split_artists(raw):
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    if raw.lower() in _WHOLE_ARTISTS:
+        return [raw]
+    parts = re.split(r"\s*(?:,|&|;|×|\bfeat\.?|\bft\.?|\bfeaturing\b)\s*", raw, flags=re.I)
+    parts = [p.strip() for p in parts if p and p.strip()]
+    return parts or [raw]
+
+
+def clean_album(a):
+    a = (a or "").strip()
+    if not a or re.match(r"^(Mix|Playlist)\s*-", a, re.I):
+        return "Singles"
+    a = re.sub(r"^(?:Album|EP)\s*-\s*", "", a, flags=re.I).strip()
+    if re.search(r"\s-\s*Single$", a, re.I):
+        return "Singles"
+    a = re.sub(r"\s-\s*EP$", "", a, flags=re.I).strip()
+    return a or "Singles"
+
+
+def safe(s, fallback="Unknown"):
+    # '/' -> '_' keeps compatibility with the old script's library layout
+    s = re.sub(r"[\x00-\x1f]", "", (s or "").replace("/", "_")).strip().rstrip(".")
+    return s[:180] or fallback
+
+
+BAD_TOKENS = {"live", "remix", "cover", "karaoke", "instrumental", "slowed", "reverb", "sped",
+              "nightcore", "8d", "mashup", "tribute", "lofi", "boosted", "acoustic",
+              "unplugged", "demo", "reprise"}
+
+
+def bad_hits(toks, query_tokens=frozenset()):
+    """Variant words (live/remix/cover...) in toks, also catching plurals like 'covers'/'remixes'."""
+    q = set(query_tokens) | {t.rstrip("es").rstrip("s") for t in query_tokens}
+    hits = {t for t in toks if t in BAD_TOKENS or t.rstrip("s") in BAD_TOKENS or t.rstrip("es") in BAD_TOKENS}
+    return {t for t in hits if t not in q and t.rstrip("s") not in q}
+
+
+def variant_penalty(title_tokens, query_tokens):
+    return min(0.5, 0.25 * len(bad_hits(title_tokens, query_tokens)))
+
+
+# ───────────────────────────── data ─────────────────────────────
+class TrackError(Exception):
+    pass
+
+
+@dataclass
+class Canon:  # canonical metadata from the iTunes catalogue
+    title: str
+    artist: str
+    album: str = ""
+    year: str = ""
+    genre: str = ""
+    track: int = 0
+    tracks: int = 0
+    disc: int = 0
+    duration: float | None = None
+    art: str | None = None
+
+
+@dataclass
+class Cand:  # one downloadable candidate
+    vid: str
+    title: str
+    artists: list = field(default_factory=list)
+    album: str | None = None
+    duration: float | None = None
+    source: str = "yt"  # "ytm" (YouTube Music song result) | "yt" (plain YouTube)
+    channel: str = ""
+    atv: bool = False  # YT Music "official audio track"
+    thumb: str | None = None
+    url: str | None = None
+    score: float = 0.0
+    conf: float = 0.0
+
+    @property
+    def watch(self):
+        return self.url or f"https://www.youtube.com/watch?v={self.vid}"
+
+    @property
+    def is_topic(self):
+        return self.channel.endswith(" - Topic")
+
+    def label(self):
+        who = ", ".join(self.artists) or re.sub(r"\s*-\s*Topic$", "", self.channel) or "?"
+        return f"{who} — {self.title}"
+
+    def origin(self):
+        if self.atv:
+            return "YT Music · official audio track"
+        if self.source == "ytm":
+            return "YT Music · song result"
+        if self.is_topic:
+            return "YouTube · Topic channel (official audio)"
+        return f"YouTube · {self.channel or 'unknown channel'}"
+
+
+@dataclass
+class Meta:
+    title: str
+    artists: list
+    album: str = "Singles"
+    year: str = ""
+    genre: str = ""
+    track: int = 0
+    tracks: int = 0
+    disc: int = 0
+    duration: float | None = None
+
+    @property
+    def primary(self):
+        return self.artists[0] if self.artists else "Unknown Artist"
+
+
+@dataclass
+class Over:  # album/playlist overrides
+    album: str | None = None
+    track: int = 0
+    tracks: int = 0
+    disc: int = 1
+
+
+@dataclass
+class Result:
+    status: str  # done | skip | fail
+    label: str
+    path: Path | None = None
+    note: str = ""
+    size: int = 0
+    conf: float | None = None
+    secs: float = 0.0
+
+
+@dataclass
+class Fetched:
+    vid: str
+    meta: Meta
+    path: Path
+    work: Path
+    lyrics: str | None
+    synced: bool
+    cover: bytes | None
+    cover_src: str
+    conf: float | None
+    secs: float
+
+
+# ───────────────────────────── network helpers ─────────────────────────────
+def http_get(url, timeout=8, headers=None):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def http_json(url, timeout=8, headers=None):
+    return json.loads(http_get(url, timeout, headers).decode("utf-8"))
+
+
+def itunes_lookup(query, country="US"):
+    """Resolve a free-text query to canonical song metadata (title/artist/album/year/duration/art)."""
+    try:
+        url = "https://itunes.apple.com/search?" + urllib.parse.urlencode(
+            {"term": query, "media": "music", "entity": "song", "limit": 8, "country": country})
+        results = http_json(url, timeout=6).get("results", [])
+    except Exception:
+        return None
+    qt = tokens(query)
+    if not qt:
+        return None
+    best, best_s = None, 0.0
+    for r in results:
+        title, artist = r.get("trackName") or "", r.get("artistName") or ""
+        hay = tokens(f"{artist} {title}")
+        if not hay:
+            continue
+        s = len(qt & hay) / len(qt) - 0.15 * len(hay - qt) / len(hay) - variant_penalty(tokens(title), qt)
+        if s > best_s:
+            best, best_s = r, s
+    if not best or best_s < 0.7:
+        return None
+    art = best.get("artworkUrl100")
+    return Canon(
+        title=best.get("trackName") or "",
+        artist=best.get("artistName") or "",
+        album=best.get("collectionName") or "",
+        year=(best.get("releaseDate") or "")[:4],
+        genre=best.get("primaryGenreName") or "",
+        track=best.get("trackNumber") or 0,
+        tracks=best.get("trackCount") or 0,
+        disc=best.get("discNumber") or 0,
+        duration=(best.get("trackTimeMillis") or 0) / 1000 or None,
+        art=art.replace("100x100bb", "600x600bb") if art else None,
+    )
+
+
+def _squash(s):
+    return norm(s).replace(" ", "")
+
+
+def artist_ok(canon_artist, cand):
+    """Is the uploader/artist of this candidate the catalogue artist? (Titles don't count: covers name the original artist.)"""
+    if cand is None:
+        return True
+    names = list(cand.artists) or ([re.sub(r"\s*-\s*Topic$", "", cand.channel)] if cand.channel else [])
+    names = [_squash(n) for n in names if _squash(n)]
+    if not names:
+        return True  # unknown -> don't punish
+    for w in split_artists(canon_artist) or [canon_artist]:
+        w = _squash(w)
+        if w and any(w in n or (len(n) >= 4 and n in w) for n in names):
+            return True
+    return False
+
+
+def canon_matches(canon, title, duration, cand=None):
+    ct, xt = tokens(clean_title(canon.title)), tokens(clean_title(title))
+    if not ct or len(ct & xt) / len(ct) < 0.6:
+        return False
+    if canon.duration and duration and abs(canon.duration - duration) > 6:
+        return False
+    return artist_ok(canon.artist, cand)
+
+
+HAVE_YTM = importlib.util.find_spec("ytmusicapi") is not None
+_ytm_err = {"msg": ""}
+_ytm = None
+_ytm_lock = threading.Lock()
+
+
+def ytm_search(query, limit=8):
+    """YouTube Music 'songs' search (official audio tracks) via ytmusicapi. None if unavailable."""
+    global _ytm
+    if not HAVE_YTM:
+        return None
+    try:
+        with _ytm_lock:
+            if _ytm is None:
+                from ytmusicapi import YTMusic
+                _ytm = YTMusic()
+        res = _ytm.search(query, filter="songs", limit=limit)
+    except Exception as e:
+        _ytm_err["msg"] = f"{type(e).__name__}: {e}"[:140]
+        return None
+    out = []
+    for r in res or []:
+        vid = r.get("videoId")
+        if not vid:
+            continue
+        thumbs = r.get("thumbnails") or []
+        thumb = thumbs[-1]["url"] if thumbs else None
+        out.append(Cand(
+            vid=vid, title=r.get("title") or "",
+            artists=[a["name"] for a in (r.get("artists") or []) if a.get("name")],
+            album=(r.get("album") or {}).get("name"),
+            duration=r.get("duration_seconds"), source="ytm",
+            atv=r.get("videoType") == "MUSIC_VIDEO_TYPE_ATV", thumb=thumb,
+        ))
+    return out
+
+
+_search_err = {"msg": ""}
+
+
+def ytdlp_search(query, n=10):
+    import yt_dlp
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True,
+            "logger": _QuietLog()}
+    try:
+        with yt_dlp.YoutubeDL(opts) as y:
+            info = y.extract_info(f"ytsearch{n}:{query}", download=False)
+    except Exception as e:
+        _search_err["msg"] = _short_err(e)
+        return []
+    out = []
+    for e in (info or {}).get("entries") or []:
+        if e and e.get("id"):
+            out.append(Cand(vid=e["id"], title=e.get("title") or "", duration=e.get("duration"),
+                            channel=e.get("channel") or e.get("uploader") or ""))
+    return out
+
+
+def ytdlp_music_search(query, n=10):
+    """YouTube Music 'songs' search through yt-dlp itself (no extra dependency)."""
+    import yt_dlp
+    url = "https://music.youtube.com/search?" + urllib.parse.urlencode({"q": query}) + "#songs"
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True,
+            "logger": _QuietLog(), "playlistend": n}
+    try:
+        with yt_dlp.YoutubeDL(opts) as y:
+            info = y.extract_info(url, download=False)
+    except Exception:
+        return []
+    out = []
+    for e in (info or {}).get("entries") or []:
+        if e and e.get("id") and len(e["id"]) == 11:
+            out.append(Cand(vid=e["id"], title=e.get("title") or "", duration=e.get("duration"),
+                            channel=e.get("channel") or e.get("uploader") or ""))
+    return out
+
+
+def score_cand(c, qt, canon):
+    t_raw = tokens(c.title) | tokens(c.channel if c.source == "yt" and not c.is_topic else "")
+    hay = tokens(clean_title(c.title)) | tokens(" ".join(c.artists) or c.channel)
+    s = len(qt & hay) / max(len(qt), 1) - variant_penalty(t_raw, qt)
+    if c.source == "ytm":
+        s += 0.10 + (0.15 if c.atv else 0)
+    else:
+        if c.is_topic:
+            s += 0.35
+        elif "vevo" in c.channel.lower():
+            s += 0.10
+        if "lyric" in c.title.lower() and "lyric" not in qt:
+            s -= 0.10
+    if canon:
+        if c.duration and canon.duration:
+            d = abs(c.duration - canon.duration)
+            s += 0.4 if d <= 2 else 0.2 if d <= 5 else -0.5 if d > 10 else 0
+        if not artist_ok(canon.artist, c):
+            s -= 0.8
+        ct = tokens(clean_title(canon.title))
+        if ct:
+            s += 0.3 * len(ct & tokens(clean_title(c.title))) / len(ct)
+    ref = 1.25 + (0.7 if canon else 0)
+    return s, max(0.0, min(1.0, s / ref))
+
+
+def resolve(ctx, query):
+    """query -> (best candidate, canon metadata, ranked list). Raises TrackError.
+
+    With ytmusicapi, YouTube Music's own ranking decides WHICH song (it is popularity-aware, so a
+    title-only query gives the original, not a cover); iTunes only enriches the chosen track afterwards.
+    Without it, iTunes decides the artist first and plain YouTube results are verified against it."""
+    a = ctx.args
+    qt = tokens(query)
+    cands = ytm_search(query)
+    if cands:
+        for c in cands:
+            c.score, c.conf = score_cand(c, qt, None)
+        ranked = sorted(cands, key=lambda c: -c.score)  # stable: ties keep YouTube Music's order
+        best = ranked[0]
+        canon = None
+        if a.itunes and best.artists:
+            canon = itunes_lookup(f"{best.artists[0]} {best.title}", a.country)
+            if canon and not canon_matches(canon, best.title, best.duration, best):
+                canon = None
+        best.score, best.conf = score_cand(best, qt, canon)
+        return best, canon, ranked
+
+    if HAVE_YTM and _ytm_err["msg"]:
+        ctx.con.log(ctx.con.yellow(f"  ⚠ ytmusicapi failed ({_ytm_err['msg']}) — falling back to yt-dlp search"))
+    canon = itunes_lookup(query, a.country) if a.itunes else None
+    sq = f"{canon.artist} {canon.title}" if canon else query
+    cands = ytdlp_music_search(sq) or ytdlp_search(sq + " topic")
+    if not cands and canon:
+        cands = ytdlp_music_search(query) or ytdlp_search(query + " topic")
+    if not cands:
+        why = _search_err["msg"] or "network down, or yt-dlp needs updating"
+        raise TrackError(f"no search results ({why})")
+    for c in cands:
+        c.score, c.conf = score_cand(c, qt, canon)
+    ranked = sorted(cands, key=lambda c: -c.score)
+    return ranked[0], canon, ranked
+
+
+# ───────────────────────────── lyrics & cover ─────────────────────────────
+def _lrclib_pick(items, duration):
+    def ok(i):
+        return not duration or not i.get("duration") or abs(i["duration"] - duration) <= 6
+    good = [i for i in items if isinstance(i, dict) and ok(i)]
+    good.sort(key=lambda i: abs((i.get("duration") or duration or 0) - (duration or 0)))
+    for i in good:
+        if i.get("syncedLyrics"):
+            return i["syncedLyrics"], True
+    for i in good:
+        if i.get("plainLyrics"):
+            return i["plainLyrics"], False
+    return None
+
+
+def get_lyrics_lrclib(artist, title, album=None, duration=None):
+    """-> (text, is_synced) or None. Exact lrclib match first (needs album+duration), then search."""
+    base = "https://lrclib.net/api/"
+    t = re.sub(r"\s*[\(\[]\s*(?:feat|ft|with)\b[^\)\]]*[\)\]]", "", clean_title(title), flags=re.I).strip() or title
+    plain_fallback = None
+    if album and duration:
+        try:
+            d = http_json(base + "get?" + urllib.parse.urlencode(
+                {"artist_name": artist, "track_name": t, "album_name": album,
+                 "duration": int(round(duration))}), timeout=6)
+            if d.get("syncedLyrics"):
+                return d["syncedLyrics"], True
+            plain_fallback = (d["plainLyrics"], False) if d.get("plainLyrics") else None
+        except Exception:
+            pass
+    for params in ({"track_name": t, "artist_name": artist}, {"q": f"{artist} {t}"}):
+        try:
+            items = http_json(base + "search?" + urllib.parse.urlencode(params), timeout=6)
+        except Exception:
+            continue
+        got = _lrclib_pick(items if isinstance(items, list) else [items], duration)
+        if got:
+            if got[1] or not plain_fallback:
+                return got
+            return plain_fallback
+    return plain_fallback
+
+
+# ───────────── lyrics chain: word-level -> line-level -> plain text ─────────────
+# Word-level (enhanced LRC, <mm:ss.xx> before every word) comes from unofficial sources that can change or
+# disappear without notice: NetEase (YRC), BetterLyrics (Apple-style TTML) and, if installed, the
+# `syncedlyrics` package (Musixmatch/NetEase). Each is tried with several title variants and retried on
+# network errors. If none delivers, lrclib (line-synced), then plain text.
+LYRICS_BUDGET = 40  # seconds per song, all attempts together
+_WTAG = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
+LEVEL_NAME = {"word": "word-synced", "line": "line-synced", "plain": "plain"}
+
+
+def lyrics_level(text):
+    if not text:
+        return ""
+    if _WTAG.search(text):
+        return "word"
+    return "line" if re.search(r"^\s*\[\d+:\d+", text, re.M) else "plain"
+
+
+def _stamp(sec):
+    m = int(sec // 60)
+    return f"{m:02d}:{sec - 60 * m:05.2f}"
+
+
+def _to_enhanced(lines):
+    """[(line_start, [(word_start, text)])] -> enhanced LRC (what lyricview reads)."""
+    return "\n".join(f"[{_stamp(ls)}]" + "".join(f"<{_stamp(ws)}>{wt}" for ws, wt in words) for ls, words in lines)
+
+
+def parse_yrc(text):
+    """NetEase word-level format:  [startMs,durMs](wordStartMs,wordDurMs,0)word ..."""
+    lines = []
+    for raw in (text or "").splitlines():
+        m = re.match(r"^\[(\d+),\d+\](.*)$", raw)
+        if not m:
+            continue
+        words = [(int(a) / 1000, w) for a, w in re.findall(r"\((\d+),\d+,\d+\)(.*?)(?=\(\d+,\d+,\d+\)|$)", m.group(2), re.S)]
+        words = [(t, w) for t, w in words if w != ""]
+        if words:
+            lines.append((int(m.group(1)) / 1000, words))
+    return _to_enhanced(lines) if lines else None
+
+
+def _ttml_time(v):
+    v = v.strip()
+    if v.endswith("ms"):
+        return float(v[:-2]) / 1000
+    if v.endswith("s"):
+        return float(v[:-1])
+    sec = 0.0
+    for p in v.split(":"):
+        sec = sec * 60 + float(p)
+    return sec
+
+
+def parse_ttml(ttml):
+    """Apple-style TTML with <span begin=..> per word/syllable -> enhanced LRC."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(ttml.strip())
+    except ET.ParseError:
+        return None
+    local = lambda e: e.tag.rsplit("}", 1)[-1]
+    lines = []
+    for p in root.iter():
+        if local(p) != "p":
+            continue
+        words = []
+        for sp in p.iter():
+            if local(sp) != "span" or len(sp) or not sp.get("begin") or not (sp.text or "").strip():
+                continue
+            txt = sp.text
+            if sp.tail and (sp.tail[:1].isspace() or sp.tail.strip()):
+                txt = txt.rstrip() + " "
+            words.append((_ttml_time(sp.get("begin")), txt.replace("\n", " ")))
+        if words:
+            lines.append((_ttml_time(p.get("begin")) if p.get("begin") else words[0][0], words))
+    return _to_enhanced(lines) if lines else None
+
+
+def _plausible(text, duration):
+    stamps = [int(m) * 60 + float(sec) for m, sec in re.findall(r"^\[(\d+):(\d+(?:\.\d+)?)\]", text, re.M)]
+    if len(stamps) < 3:
+        return False
+    return not duration or max(stamps) <= duration + 15
+
+
+def _src_netease(artist, title, album, dur):
+    h = {"Referer": "https://music.163.com/", "User-Agent": "Mozilla/5.0"}
+    j = http_json("https://music.163.com/api/search/get/web?" + urllib.parse.urlencode(
+        {"s": f"{artist} {title}".strip(), "type": 1, "offset": 0, "limit": 10, "total": "true"}), 8, h)
+    tt, aa = tokens(clean_title(title)), tokens(artist)
+    for song in (j.get("result") or {}).get("songs") or []:
+        st, sa = tokens(song.get("name", "")), tokens(" ".join(a.get("name", "") for a in song.get("artists") or []))
+        if not tt or len(tt & st) / len(tt) < 0.6 or (aa and not (aa & sa)):
+            continue
+        if dur and song.get("duration") and abs(song["duration"] / 1000 - dur) > 4:
+            continue
+        lj = http_json(f"https://music.163.com/api/song/lyric?id={song['id']}&lv=1&kv=1&tv=-1&yv=1", 8, h)
+        got = parse_yrc((lj.get("yrc") or {}).get("lyric"))
+        if got:
+            return got
+    return None
+
+
+def _src_betterlyrics(artist, title, album, dur):
+    q = {"s": title, "a": artist}
+    if album:
+        q["al"] = album
+    if dur:
+        q["d"] = int(round(dur))
+    raw = http_get("https://lyrics-api.boidu.dev/getLyrics?" + urllib.parse.urlencode(q), 10).decode("utf-8", "replace").strip()
+    if raw.startswith("{"):  # JSON wrapper
+        j = json.loads(raw)
+        raw = (j.get("ttml") or j.get("lyrics") or "") if isinstance(j, dict) else ""
+    return parse_ttml(raw) if raw.startswith("<") else None
+
+
+def _src_syncedlyrics(artist, title, album, dur):
+    try:
+        import syncedlyrics
+    except ImportError:
+        return None
+    for prov in ("Musixmatch", "NetEase"):
+        txt = syncedlyrics.search(f"{title} {artist}", enhanced=True, providers=[prov])
+        if txt and lyrics_level(txt) == "word":
+            return txt
+    return None
+
+
+WORD_SOURCES = (("NetEase", _src_netease), ("BetterLyrics", _src_betterlyrics), ("syncedlyrics", _src_syncedlyrics))
+
+
+def _variants(artist, title):
+    t0 = clean_title(title)
+    t1 = re.sub(r"\s*[\(\[]\s*(?:feat|ft|with)\b[^\)\]]*[\)\]]", "", t0, flags=re.I).strip()
+    t2 = re.sub(r"\s*-\s*(?:\d{4}\s*)?(?:remaster(?:ed)?|radio edit|single version|album version|mono|stereo).*$", "", t1, flags=re.I).strip()
+    out = []
+    for t in (title, t1, t2):
+        if t and (artist, t) not in out:
+            out.append((artist, t))
+    return out
+
+
+def _retry(fn, tries=3, delay=0.7):
+    """Retry only on errors (network); an empty answer means 'not there' and is not retried."""
+    for k in range(tries):
+        try:
+            return fn()
+        except Exception:
+            if k + 1 < tries:
+                time.sleep(delay * (k + 1))
+    return None
+
+
+def get_lyrics(artist, title, album=None, duration=None):
+    """-> (text, is_synced) or None. Word-level first, then line-synced, then plain."""
+    deadline = time.time() + LYRICS_BUDGET
+    for _name, fn in WORD_SOURCES:
+        for a, t in _variants(artist, title):
+            if time.time() > deadline:
+                break
+            got = _retry(lambda: fn(a, t, album, duration))
+            if got and lyrics_level(got) == "word" and _plausible(got, duration):
+                return got, True
+    return get_lyrics_lrclib(artist, title, album, duration)
+
+
+def existing_lyrics(path):
+    side = path.with_suffix(".lrc")
+    if side.exists():
+        try:
+            return side.read_text("utf-8", "replace")
+        except OSError:
+            pass
+    try:
+        if path.suffix == ".mp3":
+            from mutagen.id3 import ID3
+            u = ID3(path).getall("USLT")
+            return u[0].text if u else ""
+        from mutagen.mp4 import MP4
+        v = (MP4(path).tags or {}).get("\xa9lyr")
+        return v[0] if v else ""
+    except Exception:
+        return ""
+
+
+def run_lyrics(ctx, folder):
+    """musicD lyrics [DIR]: upgrade lyrics of songs you already have (plain -> line -> word-level)."""
+    import mutagen
+    con, t0 = ctx.con, time.time()
+    rank = {"": 0, "plain": 1, "line": 2, "word": 3}
+    files = [p for p in sorted(Path(folder).expanduser().rglob("*")) if p.suffix.lower() in (".mp3", ".m4a") and ".musicD" not in p.parts]
+    todo = []
+    for p in files:
+        if rank[lyrics_level(existing_lyrics(p))] < 3 and time.time() - ctx.archive.data.get(f"nowl:{p}", 0) > 14 * 86400:
+            todo.append(p)
+    con.log(f"🔤 {len(files)} songs · {len(files) - len(todo)} already word-synced or checked recently · {len(todo)} to try")
+    prog, results = Progress(con, max(len(todo), 1)), []
+
+    def work(i, p):
+        try:
+            f = mutagen.File(p, easy=True)
+            t = f.tags or {}
+            g = lambda k: (t.get(k) or [""])[0].strip()
+            artist, title, album, dur = (g("albumartist") or g("artist")), g("title") or p.stem, g("album"), float(getattr(f.info, "length", 0) or 0)
+            old = existing_lyrics(p)
+            got = get_lyrics(artist.split(",")[0], title, album if album != "Singles" else None, dur or None)
+            if got and rank[lyrics_level(got[0])] > rank[lyrics_level(old)]:
+                embed_lyrics_only(p, got[0])
+                if got[1]:
+                    p.with_suffix(".lrc").write_text(got[0], "utf-8")
+                return Result("done", f"{artist} — {title}", p, f"{LEVEL_NAME.get(lyrics_level(old), 'none')} → {LEVEL_NAME[lyrics_level(got[0])]}")
+            ctx.archive.put(f"nowl:{p}", time.time())
+            return Result("skip", f"{artist} — {title}", p, "no better lyrics found")
+        except Exception as e:
+            return Result("fail", p.stem, p, f"{type(e).__name__}: {e}"[:100])
+
+    with ThreadPoolExecutor(max_workers=max(1, ctx.args.jobs)) as ex:
+        futs = {ex.submit(work, i, p): i for i, p in enumerate(todo)}
+        for fu in as_completed(futs):
+            r = fu.result()
+            results.append(r)
+            prog.finish(futs[fu], r.status)
+            if r.status != "skip":
+                con.log(format_result(ctx, r))
+    prog.clear()
+    summarize(ctx, results, t0)
+    return results
+
+
+def _square(data):
+    """Centre-crop to a square (YouTube thumbnails are 16:9). Needs Pillow; otherwise returns data as is."""
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(data))
+        w, h = im.size
+        if abs(w - h) < 4:
+            return data
+        s = min(w, h)
+        im = im.convert("RGB").crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s))
+        out = io.BytesIO()
+        im.save(out, "JPEG", quality=92)
+        return out.getvalue()
+    except Exception:
+        return data
+
+
+def get_cover(urls):
+    """urls: [(label, url)] -> (bytes, label) for the first usable JPEG/PNG, else None."""
+    for label, url in urls:
+        try:
+            data = http_get(url, timeout=8)
+        except Exception:
+            continue
+        if len(data) > 2000 and (data[:3] == b"\xff\xd8\xff" or data[:4] == b"\x89PNG"):
+            return (_square(data) if label == "YouTube" else data), label
+    return None
+
+
+def ytm_square(url):
+    return re.sub(r"=w\d+-h\d+.*$", "=w600-h600-l90-rj", url) if "googleusercontent" in url else url
+
+
+def cover_urls(canon_ok, canon, cand, vid=None):
+    urls = []
+    if canon_ok and canon and canon.art:
+        urls.append(("Apple", canon.art))
+    if cand.thumb:
+        urls.append(("YT Music", ytm_square(cand.thumb)))
+    if vid:
+        urls += [("YouTube", f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg"),
+                 ("YouTube", f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")]
+    return urls
+
+
+# ───────────────────────────── metadata assembly ─────────────────────────────
+def info_artists(info):
+    a = info.get("artists")
+    if isinstance(a, list) and a:
+        return [x for x in a if isinstance(x, str) and x]
+    if info.get("artist"):
+        return split_artists(info["artist"])
+    ch = re.sub(r"\s*-\s*Topic$", "", info.get("channel") or info.get("uploader") or "")
+    return [ch] if ch else []
+
+
+def build_meta(cand, canon, info=None):
+    info = info or {}
+    title0 = cand.title or info.get("track") or info.get("title") or ""
+    dur = cand.duration or info.get("duration")
+    use = bool(canon) and canon_matches(canon, title0, dur, cand)
+    artists = list(cand.artists) or info_artists(info) or (split_artists(canon.artist) if use else [])
+    raw_title = (canon.title if use else "") or info.get("track") or title0 or "Unknown Title"
+    title = clean_title(raw_title) or raw_title
+    album = clean_album((canon.album if use else "") or cand.album or info.get("album"))
+    m = Meta(
+        title=title, artists=artists, album=album,
+        year=(canon.year if use else "") or str(info.get("release_year") or ""),
+        genre=(canon.genre if use else ""),
+        track=(canon.track if use else 0), tracks=(canon.tracks if use else 0),
+        disc=(canon.disc if use else 0), duration=dur,
+    )
+    return m
+
+
+def apply_over(meta, over):
+    if over:
+        if over.album:
+            meta.album = over.album
+        meta.track, meta.tracks, meta.disc = over.track, over.tracks, over.disc
+    return meta
+
+
+def dest_path(meta, ext, album_artist=None, root=None):
+    return (root or MUSIC_DIR) / safe(album_artist or meta.primary) / safe(meta.album) / f"{safe(meta.title)}.{ext}"
+
+
+# ───────────────────────────── tagging ─────────────────────────────
+def _mime(data):
+    return "image/png" if data[:4] == b"\x89PNG" else "image/jpeg"
+
+
+def tag_file(path, meta, fmt, cover, lyrics):
+    artist = ", ".join(meta.artists) or "Unknown Artist"
+    if fmt == "mp3":
+        from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TALB, TCON, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, USLT
+        try:
+            t = ID3(path)
+        except ID3NoHeaderError:
+            t = ID3()
+        t.clear()
+        t.add(TIT2(encoding=3, text=meta.title))
+        t.add(TPE1(encoding=3, text=artist))
+        t.add(TPE2(encoding=3, text=meta.primary))
+        t.add(TALB(encoding=3, text=meta.album))
+        if meta.track:
+            t.add(TRCK(encoding=3, text=f"{meta.track}/{meta.tracks}" if meta.tracks else str(meta.track)))
+        if meta.disc:
+            t.add(TPOS(encoding=3, text=str(meta.disc)))
+        if meta.year:
+            t.add(TDRC(encoding=3, text=meta.year))
+        if meta.genre:
+            t.add(TCON(encoding=3, text=meta.genre))
+        if cover:
+            t.add(APIC(encoding=3, mime=_mime(cover), type=3, desc="Cover", data=cover))
+        if lyrics:
+            t.add(USLT(encoding=3, lang="eng", desc="", text=lyrics))
+        t.save(path)
+    else:
+        from mutagen.mp4 import MP4, MP4Cover
+        f = MP4(path)
+        f.delete()
+        f["\xa9nam"], f["\xa9ART"], f["aART"], f["\xa9alb"] = [meta.title], [artist], [meta.primary], [meta.album]
+        if meta.track:
+            f["trkn"] = [(meta.track, meta.tracks or 0)]
+        if meta.disc:
+            f["disk"] = [(meta.disc, 0)]
+        if meta.year:
+            f["\xa9day"] = [meta.year]
+        if meta.genre:
+            f["\xa9gen"] = [meta.genre]
+        if cover:
+            fmt_c = MP4Cover.FORMAT_PNG if cover[:4] == b"\x89PNG" else MP4Cover.FORMAT_JPEG
+            f["covr"] = [MP4Cover(cover, imageformat=fmt_c)]
+        if lyrics:
+            f["\xa9lyr"] = [lyrics]
+        f.save()
+
+
+def has_lyrics(path):
+    try:
+        if path.suffix == ".mp3":
+            from mutagen.id3 import ID3
+            return bool(ID3(path).getall("USLT"))
+        from mutagen.mp4 import MP4
+        return "\xa9lyr" in (MP4(path).tags or {})
+    except Exception:
+        return True  # unreadable -> don't touch it
+
+
+def embed_lyrics_only(path, text):
+    if path.suffix == ".mp3":
+        from mutagen.id3 import ID3, ID3NoHeaderError, USLT
+        try:
+            t = ID3(path)
+        except ID3NoHeaderError:
+            t = ID3()
+        t.delall("USLT")
+        t.add(USLT(encoding=3, lang="eng", desc="", text=text))
+        t.save(path)
+    else:
+        from mutagen.mp4 import MP4
+        f = MP4(path)
+        f["\xa9lyr"] = [text]
+        f.save()
+
+
+# ───────────────────────────── archive & context ─────────────────────────────
+class Archive:
+    """video-id -> file path, so re-runs skip instantly with zero network."""
+
+    def __init__(self, path):
+        self.path, self.lock = path, threading.Lock()
+        try:
+            self.data = json.loads(path.read_text("utf-8"))
+        except Exception:
+            self.data = {}
+
+    def get(self, vid, fmt):
+        p = self.data.get(f"{vid}:{fmt}")
+        return Path(p) if p and Path(p).exists() else None
+
+    def add(self, vid, fmt, p):
+        self.put(f"{vid}:{fmt}", str(p))
+
+    def nolrc_recent(self, vid, days=14):
+        return time.time() - self.data.get(f"nolrc:{vid}", 0) < days * 86400
+
+    def put(self, key, value):
+        with self.lock:
+            self.data[key] = value
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=0), "utf-8")
+            os.replace(tmp, self.path)
+
+
+@dataclass
+class Ctx:
+    args: argparse.Namespace
+    con: Console
+    archive: Archive
+    tmp: Path
+    prompt_lock: threading.Lock = field(default_factory=threading.Lock)
+    lowconf: list = field(default_factory=list)
+
+
+# ───────────────────────────── download ─────────────────────────────
+class _QuietLog:
+    def __init__(self):
+        self.errors = []
+
+    def debug(self, m): pass
+    def info(self, m): pass
+    def warning(self, m): pass
+    def error(self, m): self.errors.append(m)
+
+
+def _short_err(msg):
+    msg = re.sub(r"\x1b\[[0-9;]*m", "", str(msg))
+    msg = re.sub(r"^\s*ERROR:\s*(\[[^\]]+\]\s*[\w-]*:\s*)?", "", msg.strip().splitlines()[-1] if msg.strip() else "")
+    low = msg.lower()
+    if "sign in" in low or "bot" in low:
+        return "YouTube asked for sign-in/bot-check (update yt-dlp, or try --cookies-from-browser firefox)"
+    if "unavailable" in low or "private" in low:
+        return "video unavailable (private/removed/region-locked)"
+    if "ffmpeg" in low or "ffprobe" in low:
+        return "ffmpeg problem: " + msg[:100]
+    return msg[:160] or "download failed"
+
+
+def download_audio(ctx, url, work, hook, post_hook):
+    import yt_dlp
+    fmt = ctx.args.format
+    log = _QuietLog()
+    pp = {"key": "FFmpegExtractAudio", "preferredcodec": fmt}
+    if fmt == "mp3":
+        pp["preferredquality"] = "0"  # LAME V0
+    opts = {
+        "format": "bestaudio[ext=m4a]/bestaudio/best" if fmt == "m4a" else "bestaudio/best",
+        "outtmpl": str(work / "%(id)s.%(ext)s"),
+        "quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True,
+        "logger": log, "progress_hooks": [hook], "postprocessor_hooks": [post_hook],
+        "postprocessors": [pp],
+        "concurrent_fragment_downloads": 4,
+        "http_chunk_size": 10 * 1024 * 1024,  # avoids YouTube's per-connection throttling
+        "retries": 5, "fragment_retries": 5, "socket_timeout": 20,
+    }
+    if ctx.args.cookies_from_browser:
+        opts["cookiesfrombrowser"] = (ctx.args.cookies_from_browser,)
+    try:
+        with yt_dlp.YoutubeDL(opts) as y:
+            return y.extract_info(url, download=True)
+    except Exception as e:  # yt_dlp.utils.DownloadError and friends
+        raise TrackError(_short_err(log.errors[-1] if log.errors else e))
+
+
+def skipped(ctx, path, meta, why, conf=None, vid=""):
+    note = why
+    if (ctx.args.lyrics and not (vid and ctx.archive.nolrc_recent(vid))
+            and not has_lyrics(path) and not path.with_suffix(".lrc").exists()):
+        got = get_lyrics(meta.primary, meta.title, meta.album if meta.album != "Singles" else None, meta.duration)
+        if not got and vid:
+            ctx.archive.put(f"nolrc:{vid}", time.time())
+        if got:
+            try:
+                embed_lyrics_only(path, got[0])
+                if got[1]:
+                    path.with_suffix(".lrc").write_text(got[0], "utf-8")
+                note += f" · lyrics added ({LEVEL_NAME[lyrics_level(got[0])]})"
+            except Exception:
+                pass
+    return Result("skip", f"{meta.primary} — {meta.title}", path, note, path.stat().st_size, conf)
+
+
+def acquire(ctx, cand, canon, tried, key, prog, say, over=None, shared_cover=None, conf=None):
+    """Download one candidate into a temp dir (lyrics/cover fetched in parallel). Returns Fetched or a skip Result."""
+    a, fmt, t0 = ctx.args, ctx.args.format, time.time()
+    pre = apply_over(build_meta(cand, canon), over)
+    if cand.vid:
+        hit = ctx.archive.get(cand.vid, fmt)
+        if hit:
+            return skipped(ctx, hit, pre, "already in library", conf, cand.vid)
+    if over is None and pre.artists:
+        p = dest_path(pre, fmt)
+        if p.exists():
+            if cand.vid:
+                ctx.archive.add(cand.vid, fmt, p)
+            return skipped(ctx, p, pre, "already in library", conf, cand.vid)
+
+    work = ctx.tmp / f"{cand.vid or 'link'}-{uuid.uuid4().hex[:6]}"
+    work.mkdir(parents=True, exist_ok=True)
+    pool = ThreadPoolExecutor(max_workers=2)
+    try:
+        fut_l = fut_c = None
+        pre_urls = []
+        if a.lyrics and pre.artists:
+            fut_l = pool.submit(get_lyrics, pre.primary, pre.title,
+                                pre.album if pre.album != "Singles" else None, pre.duration)
+        if not shared_cover:
+            pre_urls = cover_urls(bool(canon) and canon_matches(canon, cand.title, cand.duration, cand), canon, cand)
+            if pre_urls:
+                fut_c = pool.submit(get_cover, pre_urls)
+
+        def hook(d):
+            if d.get("status") == "downloading":
+                tot = d.get("total_bytes") or d.get("total_bytes_estimate")
+                frac = (d.get("downloaded_bytes") or 0) / tot if tot else 0.0
+                sp, eta = d.get("speed"), d.get("eta")
+                extra = (f"↓ {fmt_size(sp)}/s" + (f"  ETA {fmt_time(eta)}" if eta else "")) if sp else "↓"
+                prog.update(key, 0.05 + 0.85 * min(frac, 1.0), extra)
+            elif d.get("status") == "finished":
+                prog.update(key, 0.90, "converting…")
+
+        def post(d):
+            if d.get("status") == "started":
+                prog.update(key, 0.92, "converting…")
+
+        say(f"  ⬇  Downloading ({'LAME V0 mp3' if fmt == 'mp3' else 'm4a, no re-encode'})…")
+        prog.update(key, 0.05, "↓")
+        info = download_audio(ctx, cand.watch, work, hook, post) or {}
+        rd = info.get("requested_downloads") or []
+        path = Path(rd[0]["filepath"]) if rd and rd[0].get("filepath") else None
+        if not path or not path.exists():
+            files = sorted(work.glob(f"*.{fmt}"))
+            path = files[0] if files else None
+        if not path:
+            raise TrackError("download finished but no output file was produced (is ffmpeg OK?)")
+        vid = cand.vid or info.get("id") or ""
+        prog.update(key, 0.95, "tagging…")
+
+        meta = build_meta(cand, canon, info)
+        if not canon and not tried and a.itunes and over is None and meta.artists:
+            canon = itunes_lookup(f"{meta.primary} {meta.title}", a.country)
+            meta = build_meta(cand, canon, info)
+        apply_over(meta, over)
+        canon_ok = bool(canon) and canon_matches(canon, cand.title or meta.title, cand.duration or meta.duration, cand)
+
+        lyrics, synced = None, False
+        if a.lyrics:
+            same = pre.artists and tokens(pre.title) == tokens(meta.title) and pre.primary == meta.primary
+            got = fut_l.result() if (fut_l and same) else get_lyrics(
+                meta.primary, meta.title, meta.album if meta.album != "Singles" else None, meta.duration)
+            if got:
+                lyrics, synced = got
+
+        cover, csrc = None, ""
+        if shared_cover:
+            cover, csrc = shared_cover
+        else:
+            got_c = fut_c.result() if fut_c else None
+            if not got_c:
+                late = [u for u in cover_urls(canon_ok, canon, cand, vid) if u not in pre_urls]
+                got_c = get_cover(late) if late else None
+            if got_c:
+                cover, csrc = got_c
+        return Fetched(vid, meta, path, work, lyrics, synced, cover, csrc, conf, time.time() - t0)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    finally:
+        pool.shutdown(wait=False)
+
+
+def finalize(ctx, f, album_artist=None):
+    fmt = ctx.args.format
+    dest = dest_path(f.meta, fmt, album_artist)
+    label = f"{f.meta.primary} — {f.meta.title}"
+    try:
+        if dest.exists():
+            if f.vid:
+                ctx.archive.add(f.vid, fmt, dest)
+            return Result("skip", label, dest, "already in library", dest.stat().st_size, f.conf)
+        warn = ""
+        try:
+            tag_file(f.path, f.meta, fmt, f.cover, f.lyrics)
+        except Exception as e:
+            warn = f" · ⚠ tagging failed ({e.__class__.__name__})"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(f.path), str(dest))
+        if f.lyrics and f.synced:
+            try:
+                dest.with_suffix(".lrc").write_text(f.lyrics, "utf-8")
+            except OSError:
+                pass
+        if f.vid:
+            ctx.archive.add(f.vid, fmt, dest)
+            if ctx.args.lyrics and not f.lyrics:
+                ctx.archive.put(f"nolrc:{f.vid}", time.time())
+        bits = [f"lyrics {LEVEL_NAME[lyrics_level(f.lyrics)]}" if f.lyrics else "no lyrics",
+                f"cover {f.cover_src}" if f.cover else "no cover"]
+        if f.meta.year:
+            bits.insert(0, f.meta.year)
+        return Result("done", label, dest, " · ".join(bits) + warn, dest.stat().st_size, f.conf, f.secs)
+    finally:
+        shutil.rmtree(f.work, ignore_errors=True)
+
+
+# ───────────────────────────── drivers ─────────────────────────────
+def ask_pick(ctx, query, ranked):
+    con = ctx.con
+    with ctx.prompt_lock:
+        con.status("")
+        con.log(con.bold(f"\nResults for “{query}”:"))
+        for i, c in enumerate(ranked[:6], 1):
+            con.log(f"  {i}) {c.label()}  [{fmt_time(c.duration)}]  {int(c.conf * 100)}%  {con.dim(c.origin())}")
+        try:
+            ans = input("Pick number [1], or s to skip: ").strip().lower()
+        except EOFError:
+            ans = ""
+    if ans == "s":
+        return None
+    if ans.isdigit() and 1 <= int(ans) <= min(6, len(ranked)):
+        return ranked[int(ans) - 1]
+    return ranked[0]
+
+
+def suspicious(cand, query):
+    """Chosen result is low-confidence, or looks like a live/remix/cover the user didn't ask for."""
+    odd = bad_hits(tokens(cand.title) | tokens(cand.channel), tokens(query))
+    if odd:
+        return f"result looks like a “{'/'.join(sorted(odd))}” version, not the studio track"
+    if cand.conf < 0.55:
+        return "low confidence"
+    return ""
+
+
+def print_match(ctx, cand, canon, ranked, query=""):
+    con = ctx.con
+    con.log(f"  ✔ Match    {con.bold(cand.label())}  ({fmt_time(cand.duration)})   confidence {int(cand.conf * 100)}%")
+    con.log(f"    Source   {cand.origin()}  {con.dim('[' + cand.vid + ']')}")
+    if canon:
+        extra = " · ".join(x for x in [canon.year, canon.genre, f"track {canon.track}/{canon.tracks}" if canon.track else ""] if x)
+        con.log(f"    Catalog  {clean_album(canon.album) if canon.album else '-'}  {con.dim(extra)}")
+    others = [c for c in ranked[1:4]]
+    if others:
+        con.log(con.dim("    Others   " + " | ".join(f"{c.label()} ({fmt_time(c.duration)})" for c in others)))
+    why = suspicious(cand, query)
+    if why:
+        con.log(con.yellow(f"    ⚠ {why} — re-run with -p to choose the right one"))
+
+
+def process_query(ctx, query, key, prog, verbose):
+    say = ctx.con.log if verbose else (lambda m="": None)
+    try:
+        prog.update(key, 0.01, "searching…")
+        say(f"🔎 Searching for “{query}” …" + ("" if HAVE_YTM else ctx.con.dim("  (ytmusicapi not importable here, using yt-dlp search)")))
+        cand, canon, ranked = resolve(ctx, query)
+        if ctx.args.pick and sys.stdin.isatty():
+            chosen = ask_pick(ctx, query, ranked)
+            if chosen is None:
+                return Result("skip", query, note="skipped by you")
+            cand = chosen
+        if verbose:
+            print_match(ctx, cand, canon, ranked, query)
+        why = suspicious(cand, query)
+        if why and not verbose:
+            ctx.lowconf.append(f"{query}  →  {cand.label()}  ({why})")
+        out = acquire(ctx, cand, canon, True, key, prog, say, conf=cand.conf)
+        if isinstance(out, Result):
+            return out
+        say("  🏷  Embedding tags, cover & lyrics…")
+        return finalize(ctx, out)
+    except TrackError as e:
+        return Result("fail", query, note=str(e))
+    except Exception as e:  # never let one track kill a batch
+        return Result("fail", query, note=f"unexpected error: {e!r}")
+
+
+def format_result(ctx, r, idx=None, total=None):
+    con = ctx.con
+    mark = {"done": con.green("✔"), "skip": con.yellow("⤼"), "fail": con.red("✘")}[r.status]
+    pre = f"[{idx}/{total}] " if idx else ""
+    head = f"{pre}{mark} {r.label}"
+    bits = []
+    if r.status == "done":
+        if r.conf is not None:
+            bits.append(f"{int(r.conf * 100)}% match")
+        bits.append(r.note)
+        bits.append(fmt_size(r.size))
+        bits.append(f"{r.secs:.1f}s")
+    elif r.status == "skip":
+        bits.append(r.note)
+    else:
+        bits.append(con.red(r.note))
+    line = head + "  " + con.dim(" · ".join(b for b in bits if b))
+    if r.path:
+        line += "\n      " + con.dim("↳ " + short_path(r.path))
+    return line
+
+
+def summarize(ctx, results, t0):
+    con, n = ctx.con, Counter(r.status for r in results)
+    size = sum(r.size for r in results if r.status == "done")
+    con.log("")
+    con.log(con.bold("Summary: ") + f"{con.green('✔ ' + str(n['done']))} downloaded   "
+            f"{con.yellow('⤼ ' + str(n['skip']))} skipped   {con.red('✘ ' + str(n['fail']))} failed   "
+            + con.dim(f"· {fmt_size(size)} · {time.time() - t0:.0f}s"))
+    for r in results:
+        if r.status == "fail":
+            con.log(con.red(f"  ✘ {r.label}: {r.note}"))
+    if ctx.lowconf:
+        con.log(con.yellow("  Check these (possible wrong version) - use `musicD song -p <name>` to pick manually:"))
+        for s in ctx.lowconf:
+            con.log(con.yellow("    ? " + s))
+
+
+def run_songs(ctx, queries):
+    t0, total = time.time(), len(queries)
+    verbose = total == 1
+    prog = Progress(ctx.con, total)
+    jobs = max(1, min(ctx.args.jobs, total))
+    if not verbose:
+        ctx.con.log(f"⚡ {total} songs · {jobs} parallel workers · format {ctx.args.format}")
+    results = [None] * total
+    ex = ThreadPoolExecutor(max_workers=jobs)
+
+    def work(i, q):
+        r = process_query(ctx, q, i, prog, verbose)
+        prog.finish(i, r.status)
+        ctx.con.log(format_result(ctx, r, None if verbose else i + 1, None if verbose else total))
+        return i, r
+
+    try:
+        futs = [ex.submit(work, i, q) for i, q in enumerate(queries)]
+        for f in as_completed(futs):
+            i, r = f.result()
+            results[i] = r
+    except KeyboardInterrupt:
+        ex.shutdown(wait=False, cancel_futures=True)
+        raise
+    ex.shutdown()
+    prog.clear()
+    if not verbose:
+        summarize(ctx, results, t0)
+    return results
+
+
+def run_link(ctx, url):
+    if re.search(r"(playlist\?list=|/browse/MPRE|list=OLAK5uy)", url) and "watch?v=" not in url:
+        return run_album(ctx, url)
+    m = re.search(r"(?:v=|youtu\.be/|shorts/)([\w-]{11})", url)
+    cand = Cand(vid=m.group(1) if m else "", title="", url=url)
+    t0 = time.time()
+    prog = Progress(ctx.con, 1)
+    ctx.con.log(f"🔗 Fetching {url}")
+    try:
+        out = acquire(ctx, cand, None, False, 0, prog, ctx.con.log)
+        r = out if isinstance(out, Result) else finalize(ctx, out)
+    except TrackError as e:
+        r = Result("fail", url, note=str(e))
+    prog.finish(0, r.status)
+    prog.clear()
+    ctx.con.log(format_result(ctx, r))
+    return [r]
+
+
+def run_album(ctx, url):
+    import yt_dlp
+    con, t0 = ctx.con, time.time()
+    con.log("📀 Reading tracklist…")
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist", "skip_download": True,
+            "logger": _QuietLog()}
+    try:
+        with yt_dlp.YoutubeDL(opts) as y:
+            info = y.extract_info(url, download=False)
+    except Exception as e:
+        con.log(con.red(f"✘ could not read that link: {_short_err(e)}"))
+        return [Result("fail", url, note=_short_err(e))]
+    entries = [e for e in (info.get("entries") or []) if e and e.get("id")]
+    if not entries:
+        con.log(con.red("✘ no tracks found at that link"))
+        return [Result("fail", url, note="no tracks found")]
+    title = info.get("title") or ""
+    album = re.sub(r"^(?:Album|EP|Single|Playlist)\s*-\s*", "", title, flags=re.I).strip() or "Unknown Album"
+    is_album = bool(re.match(r"^(Album|EP|Single)\s*-", title, re.I)) or str(info.get("id", "")).startswith("OLAK5uy")
+    total, jobs = len(entries), max(1, min(ctx.args.jobs, len(entries)))
+    shared_cover = None
+    if is_album and info.get("thumbnails"):
+        shared_cover = get_cover([("YT Music", ytm_square(info["thumbnails"][-1]["url"]))])
+    con.log(f"💿 {con.bold(album)} — {total} tracks · {jobs} parallel workers · {ctx.args.format}"
+            f"{' · album cover ✓' if shared_cover else ''}")
+
+    prog = Progress(con, total)
+    fetched, results = {}, {}
+
+    def work(i, e):
+        cand = Cand(vid=e["id"], title=e.get("title") or "", duration=e.get("duration"),
+                    channel=e.get("channel") or e.get("uploader") or "")
+        over = Over(album=album, track=i + 1, tracks=total, disc=1)
+        try:
+            out = acquire(ctx, cand, None, True, i, prog, lambda m="": None, over=over, shared_cover=shared_cover)
+        except TrackError as ex_:
+            out = Result("fail", cand.title or e["id"], note=str(ex_))
+        except Exception as ex_:
+            out = Result("fail", cand.title or e["id"], note=f"unexpected error: {ex_!r}")
+        prog.finish(i, "done" if isinstance(out, Fetched) else out.status)
+        if isinstance(out, Result):
+            con.log(format_result(ctx, out, i + 1, total))
+        else:
+            con.log(f"[{i + 1}/{total}] {con.green('↓')} {out.meta.primary} — {out.meta.title}  " + con.dim(f"{out.secs:.1f}s"))
+        return i, out
+
+    ex = ThreadPoolExecutor(max_workers=jobs)
+    try:
+        for fut in as_completed([ex.submit(work, i, e) for i, e in enumerate(entries)]):
+            i, out = fut.result()
+            (fetched if isinstance(out, Fetched) else results)[i] = out
+    except KeyboardInterrupt:
+        ex.shutdown(wait=False, cancel_futures=True)
+        raise
+    ex.shutdown()
+    prog.clear()
+
+    # album artist = the majority primary artist, else "Various Artists"
+    cnt = Counter(f.meta.primary for f in fetched.values())
+    album_artist = "Various Artists"
+    if cnt:
+        top, c = cnt.most_common(1)[0]
+        if c / sum(cnt.values()) >= 0.5:
+            album_artist = top
+    for i, f in sorted(fetched.items()):
+        results[i] = finalize(ctx, f, album_artist)
+    out_list = [results[i] for i in sorted(results)]
+    con.log("")
+    con.log(f"📁 {short_path(MUSIC_DIR / safe(album_artist) / safe(album))}")
+    if fetched:
+        n_ly = sum(1 for f in fetched.values() if f.lyrics)
+        n_sy = sum(1 for f in fetched.values() if lyrics_level(f.lyrics) == "word")
+        n_cv = sum(1 for f in fetched.values() if f.cover)
+        con.log(f"🏷  lyrics on {n_ly}/{len(fetched)} tracks ({n_sy} word-synced) · cover art on {n_cv}/{len(fetched)}")
+    summarize(ctx, out_list, t0)
+    return out_list
+
+
+# ───────────────────────────── CLI ─────────────────────────────
+def build_parser():
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-f", "--format", choices=["mp3", "m4a"], default="mp3",
+                        help="mp3 = LAME V0 re-encode (default); m4a = no re-encode, fastest, no CPU")
+    common.add_argument("-j", "--jobs", type=int, default=max(2, min(4, os.cpu_count() or 2)), help="parallel downloads")
+    common.add_argument("-p", "--pick", action="store_true", help="show top results and choose manually")
+    common.add_argument("--no-lyrics", dest="lyrics", action="store_false", help="skip lyrics lookup")
+    common.add_argument("--no-itunes", dest="itunes", action="store_false", help="skip iTunes catalogue lookup")
+    common.add_argument("--country", default=os.environ.get("MUSICD_COUNTRY", "US"), help="iTunes storefront (e.g. IN, US, GB)")
+    common.add_argument("--cookies-from-browser", metavar="NAME", help="e.g. firefox, chromium")
+
+    p = argparse.ArgumentParser(prog="musicD", description="Fast, accurate music downloader.")
+    p.add_argument("--version", action="version", version=f"musicD {VERSION}")
+    sub = p.add_subparsers(dest="mode")
+    s = sub.add_parser("song", parents=[common], help="download song(s)")
+    s.add_argument("query", nargs="*")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("-m", "--multi", action="store_true", help="comma-separated list of songs")
+    g.add_argument("-l", "--link", action="store_true", help="the argument is a URL")
+    ly = sub.add_parser("lyrics", parents=[common], help="upgrade lyrics of songs you already have (word-level if possible)")
+    ly.add_argument("folder", nargs="?", default=str(MUSIC_DIR))
+    al = sub.add_parser("album", aliases=["playlist", "list"], parents=[common], help="download album/playlist")
+    al.add_argument("url", nargs="?")
+    return p
+
+
+def preflight(args, con):
+    missing = []
+    if importlib.util.find_spec("yt_dlp") is None:
+        missing.append("yt-dlp (python module)   →  sudo pacman -S yt-dlp")
+    if importlib.util.find_spec("mutagen") is None:
+        missing.append("mutagen                  →  sudo pacman -S python-mutagen")
+    if not shutil.which("ffmpeg"):
+        missing.append("ffmpeg                   →  sudo pacman -S ffmpeg")
+    if missing:
+        print("Missing requirements:\n  " + "\n  ".join(missing))
+        sys.exit(1)
+    if not HAVE_YTM and args.mode == "song":
+        con.log(con.yellow(f"⚠ ytmusicapi is not importable from {sys.executable} — matching will be much less reliable.\n"
+                           "  fix: sudo pacman -S python-ytmusicapi   (pip installs into a different Python won't be seen)\n"))
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.mode:
+        parser.print_help()
+        sys.exit(1)
+    con = Console()
+    preflight(args, con)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_DIR / "tmp"
+    tmp.mkdir(exist_ok=True)
+    for d in tmp.iterdir():  # leftovers from crashed runs
+        try:
+            if time.time() - d.stat().st_mtime > 3600:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+    ctx = Ctx(args, con, Archive(STATE_DIR / "archive.json"), tmp)
+    t0 = time.time()
+    try:
+        if args.mode == "song":
+            q = " ".join(args.query).strip()
+            if not q:
+                parser.parse_args(["song", "-h"])
+            if args.link:
+                results = run_link(ctx, q)
+            elif args.multi:
+                queries = [x.strip() for x in q.split(",") if x.strip()]
+                if not queries:
+                    print("Error: give comma-separated song names.")
+                    sys.exit(1)
+                results = run_songs(ctx, queries)
+            else:
+                results = run_songs(ctx, [q])
+        elif args.mode == "lyrics":
+            results = run_lyrics(ctx, args.folder)
+        else:
+            if not args.url:
+                print("Error: please provide a link.")
+                sys.exit(1)
+            results = run_album(ctx, args.url)
+    except KeyboardInterrupt:
+        con.status("")
+        print("\nInterrupted — cleaning up.")
+        shutil.rmtree(tmp, ignore_errors=True)
+        os._exit(130)
+    con.status("")
+    shutil.rmtree(tmp, ignore_errors=True)
+    sys.exit(1 if any(r.status == "fail" for r in results) else 0)
+
+
+if __name__ == "__main__":
+    main()
