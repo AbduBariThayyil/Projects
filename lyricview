@@ -17,6 +17,9 @@ import argparse
 import hashlib
 import json
 import os
+os.environ.setdefault("QSG_RENDER_LOOP", "basic")
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 import re
 import shutil
 import subprocess
@@ -281,17 +284,27 @@ _FLEN = {}
 
 
 def file_length(url):
-    """Song length from the file itself, for players that don't report one (cached)."""
+    """Song length from the file itself (cached, mutagen + ffprobe fallback)."""
     p = path_from_url(url) if url else None
     if not p:
         return 0.0
     if p not in _FLEN:
+        dur = 0.0
         try:
             import mutagen
             f = mutagen.File(p)
-            _FLEN[p] = float(f.info.length) if f is not None else 0.0
+            dur = float(f.info.length) if f is not None and getattr(f, "info", None) else 0.0
         except Exception:
-            _FLEN[p] = 0.0
+            pass
+        if not dur and shutil.which("ffprobe"):
+            try:
+                r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                    "-of", "default=noprint_wrappers=1:nokey=1", str(p)],
+                                   capture_output=True, encoding="utf-8", errors="replace", timeout=3)
+                dur = float(r.stdout.strip())
+            except Exception:
+                pass
+        _FLEN[p] = dur
     return _FLEN[p]
 
 
@@ -824,6 +837,10 @@ class Shuffler:
     def __init__(self, lib):
         self.lib, self.left, self.played = lib, {}, set()
 
+    def reset(self):
+        self.played.clear()
+        self.left.clear()
+
     def _pool(self):
         t = self.lib.tracks
         pool = {aid: [i for i in a["tracks"] if t[i]["path"] not in self.played] for aid, a in self.lib.albums.items()}
@@ -837,6 +854,12 @@ class Shuffler:
                 self.left[aid].remove(i)
             if not self.left[aid]:
                 del self.left[aid]
+
+    def reshuffle(self):
+        self.queue.clear()
+        self.history.clear()
+        self.shuf.reset()
+        self.next()
 
     def next(self):
         if not self.left:
@@ -892,14 +915,47 @@ def _item(vid, title, artists, album, length, thumbs):
             "album": album or "", "len": float(length or 0), "art": _sq(thumbs[-1]["url"]) if thumbs else ""}
 
 
-def yt_search(query, limit=12):
+def yt_search(query, kind="songs", limit=15):
     if _FAKE:
+        if kind == "albums":
+            return [{"id": f"fake_alb_{i}", "title": f"{query.title()} Album {i}", "artist": "Fake Artist", "artists": "Fake Artist",
+                     "album": f"{query.title()} Album {i}", "len": 0, "art": "", "is_album": True} for i in range(1, 6)]
         return [_item(f"fake{i}", f"{query.title()} Song {i}", ["Fake Artist"], "Fake Album", 30 + i, []) for i in range(1, 6)]
     out = []
-    for r in _ytm().search(query, filter="songs", limit=limit):
-        if r.get("videoId"):
-            out.append(_item(r["videoId"], r.get("title"), [a["name"] for a in r.get("artists") or [] if a.get("name")],
-                             (r.get("album") or {}).get("name"), r.get("duration_seconds"), r.get("thumbnails") or []))
+    try:
+        filt = "albums" if kind == "albums" else "songs"
+        res = _ytm().search(query, filter=filt, limit=limit)
+        for r in res:
+            if kind == "albums" and r.get("browseId"):
+                artists = [a["name"] for a in r.get("artists") or [] if a.get("name")]
+                out.append({"id": r["browseId"], "title": r.get("title") or "", "artist": (artists[0] if artists else "Unknown"),
+                            "artists": ", ".join(artists), "album": r.get("title") or "", "len": 0,
+                            "art": _sq(r["thumbnails"][-1]["url"]) if r.get("thumbnails") else "", "is_album": True})
+            elif r.get("videoId"):
+                out.append(_item(r["videoId"], r.get("title"), [a["name"] for a in r.get("artists") or [] if a.get("name")],
+                                 (r.get("album") or {}).get("name"), r.get("duration_seconds"), r.get("thumbnails") or []))
+    except Exception:
+        pass
+    return out
+
+
+def yt_album_tracks(browse_id):
+    if _FAKE:
+        return [_item(f"fake_track_{i}", f"Album Track {i}", ["Fake Artist"], "Album", 45 + i, []) for i in range(1, 7)]
+    out = []
+    try:
+        alb = _ytm().get_album(browse_id)
+        alb_name = alb.get("title") or ""
+        alb_art = _sq(alb["thumbnails"][-1]["url"]) if alb.get("thumbnails") else ""
+        for t in alb.get("tracks") or []:
+            if t.get("videoId"):
+                artists = [a["name"] for a in t.get("artists") or [] if a.get("name")]
+                item = _item(t["videoId"], t.get("title"), artists, alb_name, t.get("duration_seconds") or _secs(t.get("length")), [])
+                if alb_art:
+                    item["art"] = alb_art
+                out.append(item)
+    except Exception:
+        pass
     return out
 
 
@@ -941,7 +997,17 @@ class QtEngine(QObject):
         self.M = QMediaPlayer
         self.p, self.out = QMediaPlayer(), QAudioOutput()
         self.p.setAudioOutput(self.out)
-        self.p.mediaStatusChanged.connect(lambda s: self.ended.emit() if s == QMediaPlayer.MediaStatus.EndOfMedia else None)
+        self.p.mediaStatusChanged.connect(self._on_ms)
+
+    def _on_ms(self, s):
+        from PySide6.QtMultimedia import QMediaPlayer
+        if s == QMediaPlayer.MediaStatus.EndOfMedia:
+            pos = self.position()
+            dur = self.p.duration() / 1000.0 if self.p.duration() > 0 else 0
+            if dur > 0 and pos >= max(3.0, dur - 3.0):
+                self.ended.emit()
+            elif dur <= 0 and pos > 10.0:
+                self.ended.emit()
         self.p.playbackStateChanged.connect(self._ps)
         self.p.errorOccurred.connect(lambda e, msg: self.failed.emit(msg or "playback error"))
 
@@ -1634,7 +1700,7 @@ class Bridge(QObject):
             except Exception as e:  # QtMultimedia missing
                 self._engine_err = f"{type(e).__name__}: {e}"[:120]
         if eng:
-            self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self.a.mpris_name)
+            self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self._settings.get("mpris_name") or self.a.mpris_name or "lollypop")
         self.lib.load_cache()
         self.lib.apply_pending()
         self._scanning = True
@@ -1644,8 +1710,7 @@ class Bridge(QObject):
         threading.Thread(target=self.run_worker, daemon=True).start()
         a = self.a
         self._auto = not (a.player or a.follow or a.own)  # unless forced, we follow Lollypop (and co.) whenever one is running
-        want = "follow" if (a.player or a.follow) else "own" if a.own else ("follow" if external_players() else "own")
-        self.setMode(want, announce=False)
+        self.setMode("own", announce=False)
         self._rescan_timer = QTimer(self)
         self._rescan_timer.setInterval(30000)
         self._rescan_timer.timeout.connect(self._rescan)
@@ -1711,8 +1776,13 @@ class Bridge(QObject):
 
     @Slot()
     def toggleMode(self):
-        self._auto = False  # you chose: stop switching on our own
-        self.setMode("follow" if self._mode == "own" else "own")
+        self.reshuffle()
+
+    @Slot()
+    def reshuffle(self):
+        if self.own:
+            self.own.reshuffle()
+            self.toast.emit("reshuffled library")
 
     # ---- own-player callbacks (UI thread)
     def ownTrack(self, meta):
@@ -1860,7 +1930,22 @@ class Bridge(QObject):
 
     # ---- online: search and stream
     @Slot(str)
-    def search(self, query):
+    @Slot(result=str)
+    def getClipboard(self):
+        try:
+            return QGuiApplication.clipboard().text() or ""
+        except Exception:
+            return ""
+
+    @Slot(str)
+    def setClipboard(self, s):
+        try:
+            QGuiApplication.clipboard().setText(s)
+        except Exception:
+            pass
+
+    @Slot(str, str)
+    def search(self, query, kind="songs"):
         self._sgen += 1
         gen = self._sgen
         if not online_available():
@@ -1869,9 +1954,23 @@ class Bridge(QObject):
 
         def job():
             try:
-                self._srch.emit(gen, json.dumps({"rows": yt_search(query), "error": ""}))
+                rows = yt_search(query, kind=kind)
+                self._srch.emit(gen, json.dumps({"rows": rows, "error": ""}, ensure_ascii=False))
             except Exception as e:
                 self._srch.emit(gen, json.dumps({"rows": [], "error": f"search failed ({type(e).__name__}) - are you online?"}))
+        threading.Thread(target=job, daemon=True).start()
+
+    @Slot(str)
+    def drillAlbum(self, browse_id):
+        self._sgen += 1
+        gen = self._sgen
+
+        def job():
+            try:
+                rows = yt_album_tracks(browse_id)
+                self._srch.emit(gen, json.dumps({"rows": rows, "error": ""}, ensure_ascii=False))
+            except Exception as e:
+                self._srch.emit(gen, json.dumps({"rows": [], "error": f"failed loading album ({type(e).__name__})"}))
         threading.Thread(target=job, daemon=True).start()
 
     def _on_srch(self, gen, js):
@@ -2062,20 +2161,7 @@ class Bridge(QObject):
                 time.sleep(1.0)
 
     def _auto_check(self):
-        if not self._auto or time.time() - self._auto_t < 3.0:
-            return
-        self._auto_t = time.time()
-        ext = external_players()
-        if self._mode == "own" and ext:
-            self._gone = 0
-            self._modeReq.emit("follow")
-        elif self._mode == "follow" and not ext and self.lib.ready:
-            self._gone += 1
-            if self._gone >= 2:
-                self._gone = 0
-                self._modeReq.emit("own")
-        else:
-            self._gone = 0
+        pass
 
     def _worker_step(self):
         self._auto_check()
@@ -2175,6 +2261,7 @@ class Bridge(QObject):
 
 QML = r"""
 import QtQuick
+import QtMultimedia
 import QtQuick.Window
 import QtQuick.Layouts
 import QtQuick.Shapes
@@ -2185,6 +2272,7 @@ Window {
     width: 1280; height: 720; visible: true; color: "#050507"
     title: bridge.meta.title ? bridge.meta.artist + " – " + bridge.meta.title : "lyricview"
     visibility: bridge.cfg.windowed ? Window.Windowed : Window.FullScreen
+    flags: Qt.Window
 
     component Icon: Item {
         id: ic
@@ -2193,9 +2281,8 @@ Window {
         width: 56; height: 56
         Shape {
             anchors.centerIn: parent; width: 24; height: 24; scale: 1.25
-            ShapePath { fillColor: ma.containsMouse ? "white" : Qt.rgba(1, 1, 1, 0.78); strokeWidth: -1; PathSvg { path: ic.d } }
+            ShapePath { fillColor: Qt.rgba(1, 1, 1, 0.85); strokeWidth: -1; PathSvg { path: ic.d } }
         }
-        MouseArea { id: ma; anchors.fill: parent; hoverEnabled: true; onClicked: ic.clicked() }
     }
 
     // two crossfading copies of the (pre-blurred) artwork
@@ -2336,9 +2423,40 @@ Window {
         readonly property real offset: bridge.offset
         readonly property real len: bridge.meta.length || 0
         readonly property bool atEnd: len > 0 && pos >= len
+        readonly property real spreadVal: 1.0
+        readonly property real vol: 0.8
         readonly property string kind: bridge.kind
 
         // ───── responsive layout: wide-short, normal and tall-narrow windows (scratchpads!)
+        // Layout polish & progress styling
+        property real coverTitleGap: 14
+        property int progressStyle: 1
+        property bool showProgress: true
+
+        // Background & user media
+        property string bgType: bridge.cfg.bgType || "clouds" // clouds | backdrop | video | image | none
+        property string userBgPath: bridge.cfg.userBgPath || ""
+        property real bgDim: 0.65
+        property bool bgVideoError: false
+
+        // Element toggles & Clean View
+        property bool cleanView: false
+        property bool elemShowLyrics: true
+        property bool elemShowCover: true
+        property bool elemShowTitle: true
+        property bool elemShowProgress: true
+        property bool elemShowBgLayers: true
+        property bool elemShowToasts: true
+
+        // Unified Get Music tab
+        property string getMusicTab: "songs" // songs | albums
+        property string albumDrillBrowseId: ""
+
+        // Settings Overlay navigation
+        property int setTab: 0 // 0: Display, 1: Audio, 2: Background, 3: Keybinds
+        property int setSel: 0
+        property bool keyListening: false
+        property int listeningActionIdx: -1
         readonly property bool portrait: win.width < win.height * 1.1
         readonly property real pad: Math.round(Math.min(win.width, win.height) * 0.05)
         readonly property real u: Math.min(win.height, win.width * 0.75)           // text unit
@@ -2379,11 +2497,12 @@ Window {
         readonly property bool isGrid: overlay === "pick" && pickKind !== "songs"
         readonly property var keymap: [
             ["Space", "Play / pause"], ["← →", "Seek 5 s  (Shift: 30 s)"], ["↑ ↓", "Volume"], ["N   P", "Next / previous song"],
-            ["Tab", "Albums · artists · songs"], ["S", "Stream from YouTube Music"], ["D", "Download with musicD"], ["Q", "Queue"],
-            ["M", "Your library ⇄ follow other players"], ["W", "One word at a time"], ["T", "Word style (in word mode)"],
-            ["B", "Cover as backdrop, lyrics only"], ["C", "Show / hide the playback buttons"], ["[   ]", "Lyrics earlier / later"],
-            [",   .", "Word timing shorter / longer"], ["F", "Fullscreen"], ["Ctrl+R", "Rescan the music folder"],
-            ["Esc", "Close · leave fullscreen"], ["Ctrl+Q", "Quit"], ["F1", "This sheet"]]
+            ["Tab", "Albums · artists · songs"], ["S", "Get Music (search, stream, queue & download)"], ["Q", "Queue"],
+            ["M", "Reshuffle library"], ["W", "One word at a time (Stack · Edit · Rain)"], ["T", "Word style (Stack / Edit / Rain)"],
+            ["O", "Settings (Display, Audio, Background, Keybinds)"], ["V", "Clean view (video / background mode)"],
+            ["B", "Cover backdrop"], ["[   ]", "Lyrics earlier / later"], [",   .", "Word timing shorter / longer"],
+            ["F", "Fullscreen"], ["Ctrl+R", "Rescan music folder"], ["Esc", "Close overlay / leave fullscreen"],
+            ["Ctrl+Q", "Quit"], ["F1", "This keymap sheet"]]
 
         function say(t) { toastText.text = t; toast.opacity = 1; toastTimer.restart() }
         function punch() { pulseAnim.restart() }
@@ -2427,8 +2546,11 @@ Window {
         }
         function openOverlay(kind) {
             if (kind === "pick") { openPick("albums"); return }
+            if (kind === "search" || kind === "download") kind = "get-music"
             overlay = kind; filter = ""; sel = 0; searchNote = ""; items = []; shown = []
+            albumDrillBrowseId = ""
             if (kind === "queue") reloadQueue()
+            if (kind === "get-music" && filter.length >= 2) typed()
         }
         function closeOverlay() { overlay = "" }
         function refilter() {
@@ -2442,7 +2564,7 @@ Window {
             sel = 0
         }
         function typed() {
-            if (overlay === "search" || overlay === "download") {
+            if (overlay === "get-music" || overlay === "search" || overlay === "download") {
                 if (filter.length < 2) { items = []; shown = []; searchNote = "" }
                 else { searchNote = "searching…"; searchTimer.restart() }
             } else refilter()
@@ -2469,6 +2591,96 @@ Window {
         }
         function moveSel(d) { sel = Math.max(0, Math.min(Math.max(0, shown.length - 1), sel + d)) }
         function overlayKey(e, ctrl, shift) {
+            var k = e.key, it = shown.length ? shown[sel] : null
+            if (overlay === "settings") {
+                if (keyListening) {
+                    var kname = e.text ? e.text.toUpperCase() : ""
+                    if (k === Qt.Key_Space) kname = "Space"
+                    else if (k === Qt.Key_Return || k === Qt.Key_Enter) kname = "Enter"
+                    else if (k === Qt.Key_Tab) kname = "Tab"
+                    else if (k === Qt.Key_Escape) kname = "Esc"
+                    if (kname !== "") {
+                        keyListening = false
+                        bridge.saveSetting("custom_key_" + listeningActionIdx, kname)
+                        say("bound to " + kname)
+                    }
+                    return
+                }
+                if (k === Qt.Key_Escape) { closeOverlay(); return }
+                if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
+                    setTab = (setTab + (k === Qt.Key_Backtab ? 3 : 1)) % 4
+                    setSel = 0
+                    return
+                }
+                if (k === Qt.Key_Up) { setSel = Math.max(0, setSel - 1); return }
+                if (k === Qt.Key_Down) { setSel = setSel + 1; return }
+                if (k === Qt.Key_Left || k === Qt.Key_Right) {
+                    var d = (k === Qt.Key_Right ? 1 : -1)
+                    if (setTab === 0) { // Display
+                        if (setSel === 0) { wordStyle = (wordStyle + (d > 0 ? 1 : 2)) % 3; bridge.saveSetting("wstyle", wordStyle); say("Word style: " + styleNames[wordStyle]) }
+                        else if (setSel === 1) { progressStyle = (progressStyle + (d > 0 ? 1 : 2)) % 3; bridge.saveSetting("progressStyle", progressStyle); say("Progress style: " + ["Glow Line", "Dot Pill", "Waveform"][progressStyle]) }
+                        else if (setSel === 2) { coverTitleGap = Math.max(0, Math.min(40, coverTitleGap + d * 4)); bridge.saveSetting("coverTitleGap", coverTitleGap); say("Cover spacing: " + coverTitleGap + "px") }
+                        else if (setSel === 3) { elemShowProgress = !elemShowProgress; say("Show progress: " + elemShowProgress) }
+                    } else if (setTab === 1) { // Audio & Library
+                        if (setSel === 0) { bridge.volume(d * 0.05); say("Volume: " + Math.round(bridge.vol * 100) + "%") }
+                        else if (setSel === 1) { bridge.adjustOffset(d * 0.1) }
+                        else if (setSel === 2) { bridge.adjustSpread(d * 0.1) }
+                    } else if (setTab === 2) { // Background & Media
+                        if (setSel === 0) {
+                            var btypes = ["clouds", "backdrop", "video", "image", "none"]
+                            var bidx = (btypes.indexOf(bgType) + (d > 0 ? 1 : 4)) % 5
+                            bgType = btypes[bidx]; bridge.saveSetting("bgType", bgType); say("Background: " + bgType)
+                        } else if (setSel === 1) {
+                            bgDim = Math.max(0.1, Math.min(1.0, Math.round((bgDim + d * 0.05) * 100) / 100))
+                            bridge.saveSetting("bgDim", bgDim); say("Background dim: " + Math.round(bgDim * 100) + "%")
+                        } else if (setSel === 2) { elemShowLyrics = !elemShowLyrics; say("Show lyrics: " + elemShowLyrics) }
+                        else if (setSel === 3) { elemShowCover = !elemShowCover; say("Show cover: " + elemShowCover) }
+                        else if (setSel === 4) { elemShowTitle = !elemShowTitle; say("Show title: " + elemShowTitle) }
+                    }
+                    return
+                }
+                if (k === Qt.Key_Return || k === Qt.Key_Enter) {
+                    if (setTab === 1 && setSel === 3) { bridge.reshuffle(); closeOverlay(); return }
+                    if (setTab === 1 && setSel === 4) { bridge.rescan(); closeOverlay(); return }
+                    if (setTab === 2 && setSel === 5) { cleanView = !cleanView; say(cleanView ? "clean view enabled" : "clean view disabled"); closeOverlay(); return }
+                    if (setTab === 3) { keyListening = true; listeningActionIdx = setSel; say("Press any key to remap…"); return }
+                }
+                return
+            }
+            if (ctrl && k === Qt.Key_V || (shift && k === Qt.Key_Insert)) {
+                filter += bridge.getClipboard(); typed(); return
+            }
+            if (ctrl && k === Qt.Key_C) {
+                bridge.setClipboard(filter); say("copied query to clipboard"); return
+            }
+            if (ctrl && k === Qt.Key_X) {
+                bridge.setClipboard(filter); filter = ""; typed(); say("cut to clipboard"); return
+            }
+            if (overlay === "get-music") {
+                if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
+                    getMusicTab = (getMusicTab === "songs" ? "albums" : "songs")
+                    albumDrillBrowseId = ""
+                    searchNote = "switching tab…"; searchTimer.restart()
+                    return
+                }
+                if (k === Qt.Key_D || (ctrl && k === Qt.Key_D)) {
+                    if (it) {
+                        if (it.is_album) {
+                            bridge.dlLink("https://music.youtube.com/playlist?list=" + it.id)
+                            say("downloading album · " + it.name)
+                        } else {
+                            bridge.dlStart(it.id, it.name, it.sub)
+                            say("downloading song · " + it.name)
+                        }
+                    }
+                    return
+                }
+                if (k === Qt.Key_Backspace && filter === "" && albumDrillBrowseId !== "") {
+                    albumDrillBrowseId = ""
+                    searchTimer.restart()
+                    return
+                }
+            }
             var k = e.key, it = shown.length ? shown[sel] : null
             if (overlay === "help" || k === Qt.Key_Escape) { closeOverlay(); return }
             if (overlay === "queue") {
@@ -2516,6 +2728,11 @@ Window {
             if (overlay !== "") { overlayKey(e, ctrl, shift); return }
             switch (e.key) {
             case Qt.Key_Space: bridge.playPause(); break
+            case Qt.Key_O: openOverlay("settings"); break
+            case Qt.Key_V:
+                cleanView = !cleanView
+                say(cleanView ? "clean view · video mode (press V to restore)" : "normal view")
+                break
             case Qt.Key_Right: seekTo(pos + (shift ? 30 : 5)); break
             case Qt.Key_Left: seekTo(pos - (shift ? 30 : 5)); break
             case Qt.Key_Up: bridge.volume(0.05); break
@@ -2523,8 +2740,8 @@ Window {
             case Qt.Key_N: bridge.next(); break
             case Qt.Key_P: bridge.prev(); break
             case Qt.Key_Tab: openOverlay("pick"); break
-            case Qt.Key_S: openOverlay("search"); break
-            case Qt.Key_D: openOverlay("download"); break
+            case Qt.Key_S: openOverlay("get-music"); break
+            case Qt.Key_D: openOverlay("get-music"); break
             case Qt.Key_Q: if (ctrl) Qt.quit(); else openOverlay("queue"); break
             case Qt.Key_M: bridge.toggleMode(); break
             case Qt.Key_B: backdrop = !backdrop; say(backdrop ? "cover backdrop · lyrics focus" : "normal view"); break
@@ -2561,7 +2778,7 @@ Window {
         function seekTo(sec) { sec = Math.max(0, sec); basePos = sec; baseT = Date.now(); pos = sec; bridge.seek(sec) }
         function wake() { idle = false; idleTimer.restart() }
 
-        Timer { id: searchTimer; interval: 450; onTriggered: if (root.overlay === "search" || root.overlay === "download") bridge.search(root.filter) }
+        Timer { id: searchTimer; interval: 450; onTriggered: if (root.overlay === "get-music" || root.overlay === "search" || root.overlay === "download") bridge.search(root.filter, root.getMusicTab) }
         NumberAnimation { id: pulseAnim; target: root; property: "pulse"; from: 1; to: 0; duration: 800; easing.type: Easing.OutCubic }
         Timer { id: idleTimer; interval: 3000; running: true; onTriggered: root.idle = true }
         FrameAnimation {
@@ -2581,8 +2798,11 @@ Window {
             function onThumbsReady() { if (root.overlay === "pick" && root.pickKind !== "songs") { var s0 = root.sel; root.loadPick(); root.sel = s0 } }
             function onDlChanged(js) { root.dlJobs = JSON.parse(js) }
             function onSync(p, playing) {
+                if (root.len > 0 && p > root.len) p = root.len
                 var cur = root.playing ? root.basePos + (Date.now() - root.baseT) / 1000 : root.basePos
-                if (playing !== root.playing || Math.abs(p - cur) > 0.25) { root.basePos = p; root.baseT = Date.now(); root.pos = p }
+                if (playing !== root.playing || Math.abs(p - cur) > 0.25) {
+                    root.basePos = p; root.baseT = Date.now(); root.pos = p
+                }
             }
             function onMetaChanged() {
                 var k = bridge.meta.key || ""
@@ -2606,12 +2826,45 @@ Window {
         }
 
         Keys.onPressed: (e) => { root.onKey(e); e.accepted = true }
-        HoverHandler { onPointChanged: root.wake(); cursorShape: root.idle ? Qt.BlankCursor : Qt.ArrowCursor }
+        HoverHandler { onPointChanged: root.wake(); cursorShape: Qt.BlankCursor }
+
+                // ───── user background video / image layer
+        Item {
+            id: userBg
+            anchors.fill: parent
+            visible: (root.bgType === "video" || root.bgType === "image") && !root.bgVideoError
+            z: -2
+
+            Image {
+                id: userImg
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                source: (root.bgType === "image" && root.userBgPath) ? (root.userBgPath.indexOf("file://") === 0 ? root.userBgPath : "file://" + root.userBgPath) : ""
+                visible: root.bgType === "image" && source !== ""
+                opacity: root.bgDim
+            }
+
+            MediaPlayer {
+                id: bgPlayer
+                source: (root.bgType === "video" && root.userBgPath) ? (root.userBgPath.indexOf("file://") === 0 ? root.userBgPath : "file://" + root.userBgPath) : ""
+                loops: MediaPlayer.Infinite
+                audioOutput: null // muted
+                onErrorOccurred: (e, msg) => { root.bgVideoError = true }
+                Component.onCompleted: if (source !== "") play()
+            }
+            VideoOutput {
+                anchors.fill: parent
+                fillMode: VideoOutput.PreserveAspectCrop
+                visible: root.bgType === "video" && !root.bgVideoError && bgPlayer.playbackState === MediaPlayer.PlayingState
+                opacity: root.bgDim
+            }
+        }
 
         // ───── fluid background: two slowly counter-rotating blurred covers + wandering colour clouds
         Item {
             id: bg
             anchors.fill: parent; clip: true
+            visible: root.elemShowBgLayers && !root.cleanView
             Rectangle { anchors.fill: parent; color: Qt.darker(root.c1, 5) }
             Item {
                 id: spin1
@@ -2654,15 +2907,17 @@ Window {
         // ───── cover, title, progress, controls (beside the lyrics, or above them in tall windows)
         GridLayout {
             id: side
+            visible: !root.cleanView && (root.elemShowCover || root.elemShowTitle || root.elemShowProgress)
             columns: root.portrait ? 2 : 1
             columnSpacing: root.pad * 0.6
-            rowSpacing: root.portrait ? root.pad * 0.35 : win.height * 0.03
+            rowSpacing: (root.portrait ? root.pad * 0.35 : win.height * 0.03) + root.coverTitleGap
             x: root.pad
             y: root.portrait ? root.pad : Math.max(root.pad, (win.height - height) / 2)
             width: root.sideW
 
             Item {
                 id: card
+                visible: root.elemShowCover && !root.cleanView
                 Layout.preferredWidth: root.cardS; Layout.preferredHeight: root.cardS
                 Layout.alignment: Qt.AlignTop
                 scale: root.playing ? 1 : 0.94
@@ -2679,6 +2934,7 @@ Window {
                 }
             }
             ColumnLayout {
+                visible: root.elemShowTitle && !root.cleanView
                 Layout.fillWidth: true
                 Layout.alignment: root.portrait ? Qt.AlignVCenter : Qt.AlignTop
                 spacing: 4
@@ -2688,14 +2944,82 @@ Window {
                        font.weight: Font.DemiBold; elide: Text.ElideRight }
                 Text { Layout.fillWidth: true; text: bridge.meta.album || ""; color: Qt.rgba(1, 1, 1, 0.45); font.pixelSize: Math.round(root.u * 0.021); elide: Text.ElideRight }
             }
+            // Polished Progress Bar with multiple styles & breathing room
             Item {
-                Layout.fillWidth: true; Layout.preferredHeight: 30
+                id: progWrap
+                visible: root.showProgress && root.elemShowProgress && !root.cleanView
+                Layout.fillWidth: true
+                Layout.preferredHeight: 34
                 Layout.columnSpan: root.portrait ? 2 : 1
-                Rectangle { width: parent.width; height: 4; radius: 2; y: 6; color: Qt.rgba(1, 1, 1, 0.2)
-                    Rectangle { height: parent.height; radius: 2; color: "white"; width: root.len > 0 ? parent.width * Math.max(0, Math.min(1, root.pos / root.len)) : 0 } }
-                Text { y: 14; text: root.fmt(root.pos); color: Qt.rgba(1, 1, 1, 0.6); font.pixelSize: 13 }
-                Text { y: 14; anchors.right: parent.right; text: root.len > 0 ? root.fmt(root.len) : "--:--"; color: Qt.rgba(1, 1, 1, 0.6); font.pixelSize: 13 }
-                MouseArea { x: 0; y: -6; width: parent.width; height: 24; enabled: root.controlsOn; onClicked: (m) => root.seekTo(root.len * m.x / width) }
+                readonly property real frac: root.len > 0 ? Math.max(0, Math.min(1, root.pos / root.len)) : 0
+
+                // Style 0: Thin Glow Line
+                Item {
+                    visible: root.progressStyle === 0
+                    width: parent.width; height: 8; y: 4
+                    Rectangle {
+                        anchors.centerIn: parent; width: parent.width; height: 3; radius: 1.5
+                        color: Qt.rgba(1, 1, 1, 0.18)
+                    }
+                    Rectangle {
+                        y: 2.5; height: 3; radius: 1.5
+                        width: parent.width * progWrap.frac
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: root.c1 }
+                            GradientStop { position: 1.0; color: "white" }
+                        }
+                    }
+                }
+
+                // Style 1: Rounded Track with Glowing Dot
+                Item {
+                    visible: root.progressStyle === 1
+                    width: parent.width; height: 12; y: 2
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 4; radius: 2
+                        color: Qt.rgba(1, 1, 1, 0.22)
+                    }
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter; height: 4; radius: 2
+                        width: parent.width * progWrap.frac; color: "white"
+                    }
+                    Rectangle {
+                        x: Math.max(0, Math.min(parent.width - width, parent.width * progWrap.frac - width / 2))
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 10; height: 10; radius: 5; color: "white"
+                        Rectangle {
+                            anchors.centerIn: parent; width: 18; height: 18; radius: 9
+                            color: Qt.rgba(1, 1, 1, 0.25); z: -1
+                        }
+                    }
+                }
+
+                // Style 2: Segmented Audio Waveform Track
+                Row {
+                    visible: root.progressStyle === 2
+                    anchors.top: parent.top; anchors.topMargin: 2
+                    width: parent.width; height: 12
+                    spacing: Math.max(2, Math.floor((width - 40 * 3) / 39))
+                    Repeater {
+                        model: 40
+                        delegate: Rectangle {
+                            required property int index
+                            readonly property real pFrac: (index + 0.5) / 40.0
+                            readonly property bool active: pFrac <= progWrap.frac
+                            width: 3
+                            height: 4 + 8 * Math.abs(Math.sin((index + 1) * 0.7))
+                            radius: 1.5
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: active ? "white" : Qt.rgba(1, 1, 1, 0.20)
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                        }
+                    }
+                }
+
+                // Timestamps
+                Text { y: 16; text: root.fmt(root.pos); color: Qt.rgba(1, 1, 1, 0.65); font.pixelSize: 12; font.weight: Font.Medium }
+                Text { y: 16; anchors.right: parent.right; text: root.len > 0 ? root.fmt(root.len) : "--:--"; color: Qt.rgba(1, 1, 1, 0.65); font.pixelSize: 12; font.weight: Font.Medium }
             }
             Row {
                 visible: root.controlsOn
@@ -2717,7 +3041,7 @@ Window {
             height: win.height - y
             model: root.lines
             opacity: root.wordMode && root.kind === "synced" ? 0 : 1
-            visible: opacity > 0.01
+            visible: opacity > 0.01 && root.elemShowLyrics && !root.cleanView
             Behavior on opacity { NumberAnimation { duration: 320 } }
             clip: true; cacheBuffer: 3000
             interactive: root.kind !== "synced"
@@ -2792,8 +3116,7 @@ Window {
                         }
                     }
                 }
-                MouseArea { anchors.fill: parent; enabled: row.synced && !row.isGap; onClicked: root.seekTo(row.modelData.t - root.offset) }
-            }
+                            }
         }
 
         Text {
@@ -2804,133 +3127,214 @@ Window {
         }
 
 
-        // ───── word mode: one big word at a time - Pop / Glow / Rise / Rain (T cycles the style)
+        // ───── word mode: Stack (0) / Edit (1) / Rain (2) (T cycles the style)
         Item {
             id: wv
             x: lv.x; y: lv.y; width: lv.width; height: lv.height
             opacity: root.wordMode && root.kind === "synced" ? 1 : 0
-            visible: opacity > 0.01
+            visible: opacity > 0.01 && root.elemShowLyrics && !root.cleanView
             Behavior on opacity { NumberAnimation { duration: 320 } }
             readonly property int st: root.wordStyle
-            readonly property var line: root.activeIdx >= 0 ? root.lines[root.activeIdx] : null
-            readonly property bool isWords: line !== null && line.words !== undefined && line.words.length > 0
             readonly property real tnow: root.pos + root.offset
-            readonly property int wi: {
-                if (!isWords) return -1
-                var w = line.words, r = -1
-                for (var k = 0; k < w.length; k++) { if (w[k].t <= tnow) r = k; else break }
-                return r
-            }
-            readonly property var word: wi >= 0 ? line.words[wi] : null
-            readonly property real p: word ? Math.max(0, Math.min(1, (tnow - word.t) / Math.max(0.05, word.e - word.t))) : 0
-            readonly property real bigPx: Math.max(8, Math.round(Math.min(root.fs * 3.0, height * 0.22)))
-            readonly property font bigFont: Qt.font({ family: bridge.cfg.font ? bridge.cfg.font : Qt.application.font.family, pixelSize: bigPx, weight: Font.Black })
-            readonly property string wkey: root.activeIdx + ":" + wi
-            property string shownText: ""
-            property string ghostText: ""
+            readonly property int fi: root.flatIdx(tnow)
+            readonly property var curItem: fi >= 0 && fi < root.flat.length ? root.flat[fi] : null
+            readonly property real p: curItem ? Math.max(0, Math.min(1, (tnow - curItem.t) / Math.max(0.05, curItem.e - curItem.t))) : 0
+
+            property int prevFi: -1
             property real laneSeq: 0.3
             property int rainIdx: 0
-            onWkeyChanged: {
-                ghostText = shownText
-                shownText = word ? word.w.trim() : ""
-                enter()
-                if (st === 3 && shownText !== "") rainSpawn(shownText)
+            property var spawnedRain: ({})
+
+            onCurItemChanged: {
+                if (curItem && fi !== prevFi) {
+                    prevFi = fi
+                    if (st === 1) editWord.trigger()
+                    else if (st === 0) root.punch()
+                }
             }
-            onStChanged: { clearRain(); shownText = word ? word.w.trim() : ""; enter() }
-            function enter() {
-                bigWrap.yOff = 0; bigBox.opacity = 1; bigWrap.scale = 1
-                if (st === 0) { aScale.from = 0.84; aScale.to = 1; aScale.duration = 190; aScale.easing.type = Easing.OutBack; aScale.restart(); aFade.from = 0.15; aFade.to = 1; aFade.restart() }
-                else if (st === 1) { aScale.from = 0.93; aScale.to = 1; aScale.duration = 420; aScale.easing.type = Easing.OutCubic; aScale.restart(); aFade.from = 0.4; aFade.to = 1; aFade.restart() }
-                else if (st === 2) { aRise.from = bigPx * 0.75; aRise.to = 0; aRise.restart(); aFade.from = 0; aFade.to = 1; aFade.restart(); ghostAnim.restart() }
+
+            onStChanged: {
+                clearRain()
+                spawnedRain = ({})
+                if (st === 1 && curItem) editWord.trigger()
             }
-            function rainSpawn(t) {
+
+            function clearRain() {
+                for (var i = 0; i < 24; i++) {
+                    var d = rainRep.itemAt(i)
+                    if (d) d.halt()
+                }
+            }
+
+            function rainSpawn(t, remMs) {
                 laneSeq = (laneSeq + 0.618034) % 1
-                var size = bigPx * (0.30 + 0.22 * Math.min(1, 6 / Math.max(3, t.length)))
-                var d = rainRep.itemAt(rainIdx % 16); if (d) d.go(t, size, width * (0.1 + 0.8 * laneSeq), width, height)
+                var size = Math.max(20, Math.round(root.fs * (1.6 + 0.6 * Math.min(1, 6 / Math.max(3, t.length)))))
+                var d = rainRep.itemAt(rainIdx % 24)
+                if (d) d.go(t, size, width * (0.12 + 0.76 * laneSeq), width, height, remMs)
                 rainIdx++
             }
-            function clearRain() { for (var i = 0; i < 16; i++) { var d = rainRep.itemAt(i); if (d) d.halt() } }
-            function esc(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") }
-            function html(words, cur) {
-                var s = ""
-                for (var i = 0; i < words.length; i++) {
-                    var c = i < cur ? "#cfcfd8" : i === cur ? "#ffffff" : "#6d6d78"
-                    s += "<font color='" + c + "'>" + esc(words[i].w) + "</font>" + (words[i].s ? " " : "")
-                }
-                return s
-            }
-            function plain(n) {
-                if (!n || n.gap || !n.words) return ""
-                var s = ""
-                for (var i = 0; i < n.words.length; i++) s += n.words[i].w + (n.words[i].s ? " " : "")
-                return s
-            }
-            NumberAnimation { id: aScale; target: bigWrap; property: "scale" }
-            NumberAnimation { id: aRise; target: bigWrap; property: "yOff"; duration: 340; easing.type: Easing.OutCubic }
-            NumberAnimation { id: aFade; target: bigBox; property: "opacity"; duration: 140 }
 
-            Item {   // the big word (Pop / Glow / Rise)
-                id: bigWrap
-                property real yOff: 0
-                width: parent.width; height: wv.bigPx * 1.4; y: parent.height * 0.24 + yOff
-                opacity: wv.word && wv.st !== 3 ? 1 : 0
-                Item {
-                    id: bigBox
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: tmBig.advanceWidth; height: parent.height
-                    scale: Math.min(1, (wv.width * 0.94) / Math.max(1, width))
-                    TextMetrics { id: tmBig; font: wv.bigFont; text: wv.word ? wv.word.w.trim() : "" }
-                    Text { text: tmBig.text; font: wv.bigFont; color: Qt.rgba(1, 1, 1, 0.26) }
-                    Text { visible: wv.p >= 1; text: tmBig.text; font: wv.bigFont; color: "white" }
-                    Loader { active: wv.p > 0 && wv.p < 1; sourceComponent: bigWipe }
-                    Component {
-                        id: bigWipe
-                        SoftWipe { word: tmBig.text; fnt: wv.bigFont; p: wv.p; tw: tmBig.advanceWidth; h: bigBox.height; edge: wv.bigPx * 0.5; glow: wv.st === 1 ? 1 : 0 }
+            Timer {
+                id: rainScheduler
+                interval: 40; repeat: true
+                running: wv.visible && wv.st === 2 && root.playing
+                onTriggered: {
+                    if (!root.flat.length) return
+                    var tn = wv.tnow
+                    for (var i = 0; i < root.flat.length; i++) {
+                        var w = root.flat[i]
+                        if (w.t > tn + 1.2) break
+                        if (w.t >= tn - 0.05 && !wv.spawnedRain[i]) {
+                            wv.spawnedRain[i] = true
+                            var remMs = Math.max(150, Math.round((w.t - tn) * 1000))
+                            wv.rainSpawn(w.w, remMs)
+                        }
                     }
                 }
             }
-            Text {   // Rise: the previous word floats away upwards
-                id: ghost
-                property real gy: 0
-                visible: wv.st === 2
+
+            // Warning badge when lyrics are not word-by-word
+            Row {
+                visible: !bridge.wordLevel && wv.visible
+                anchors.top: parent.top; anchors.topMargin: root.pad * 0.4
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: bigWrap.y + gy; opacity: 0; color: "white"; font: wv.bigFont; text: wv.ghostText
-                scale: Math.min(1, (wv.width * 0.94) / Math.max(1, implicitWidth))
-                ParallelAnimation {
-                    id: ghostAnim
-                    NumberAnimation { target: ghost; property: "opacity"; from: 0.4; to: 0; duration: 420 }
-                    NumberAnimation { target: ghost; property: "gy"; from: 0; to: -wv.bigPx * 0.9; duration: 420; easing.type: Easing.OutCubic }
+                spacing: 6
+                Rectangle {
+                    width: warnTxt.implicitWidth + 24; height: warnTxt.implicitHeight + 10
+                    radius: height / 2; color: Qt.rgba(0.9, 0.6, 0.1, 0.22)
+                    border.color: Qt.rgba(0.9, 0.6, 0.1, 0.65); border.width: 1
+                    Text {
+                        id: warnTxt; anchors.centerIn: parent
+                        text: "⚠ Estimated word timing (line-level LRC)"
+                        color: "#ffb142"; font.pixelSize: Math.round(root.fs * 0.46); font.weight: Font.DemiBold
+                    }
                 }
             }
-            Item {   // Rain: words fall from the top and fade out as they reach the line
-                anchors.fill: parent; visible: wv.st === 3
-                Repeater { id: rainRep; model: 16; delegate: RainDrop {} }
+
+            // 1. STACK STYLE (0): Vertical ListView of single words, scrolling with distance fade
+            ListView {
+                id: lvStack
+                visible: wv.st === 0
+                anchors.fill: parent
+                model: root.flat
+                clip: true
+                currentIndex: Math.max(0, wv.fi)
+                highlightRangeMode: ListView.StrictlyEnforceRange
+                preferredHighlightBegin: height * 0.42
+                preferredHighlightEnd: height * 0.42 + 1
+                highlightMoveDuration: 280
+                highlightMoveVelocity: -1
+                spacing: root.fs * 0.35
+
+                delegate: Item {
+                    id: stkRow
+                    required property int index
+                    required property var modelData
+                    readonly property int dist: index - lvStack.currentIndex
+                    readonly property bool on: dist === 0
+                    width: lvStack.width
+                    height: Math.round(root.fs * 1.9)
+                    opacity: on ? 1.0 : Math.max(0.10, 0.45 - 0.11 * Math.abs(dist))
+                    scale: on ? 1.18 : Math.max(0.82, 1.0 - 0.06 * Math.abs(dist))
+                    transformOrigin: Item.Center
+
+                    Behavior on opacity { NumberAnimation { duration: 240 } }
+                    Behavior on scale { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+
+                    GlowText {
+                        anchors.centerIn: parent
+                        text: stkRow.modelData.w
+                        col: stkRow.on ? "white" : Qt.rgba(1, 1, 1, 0.70)
+                        fnt: Qt.font({ family: root.lyricFont.family, pixelSize: Math.round(root.fs * 1.45), weight: stkRow.on ? Font.Black : Font.Bold })
+                        glow: stkRow.on ? 1.0 : 0
+                    }
+                }
             }
-            Text {
-                id: ctx
-                x: parent.width * 0.05; width: parent.width * 0.9
-                y: wv.st === 3 ? wv.height * 0.70 : bigWrap.y + wv.bigPx * 1.7
-                Behavior on y { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
-                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; textFormat: Text.StyledText
-                font.pixelSize: Math.round(root.fs * 0.78); font.weight: Font.Bold
-                text: wv.isWords ? wv.html(wv.line.words, wv.wi) : ""
+
+            // 2. EDIT STYLE (1): Kinetic typography 'edit video' feel, bold single word, pop-in, tilt, punch, color accents, stretch
+            Item {
+                id: editWord
+                visible: wv.st === 1 && wv.curItem !== null
+                anchors.fill: parent
+                property real popScale: 1.0
+                property real tilt: 0.0
+                property real xShift: 0.0
+                property real yShift: 0.0
+                property color wordCol: "white"
+
+                function trigger() {
+                    if (!wv.curItem) return
+                    root.punch()
+                    var w = wv.curItem.w
+                    var hash = 0
+                    for (var i = 0; i < w.length; i++) hash = (hash * 31 + w.charCodeAt(i)) & 0x7fffffff
+                    tilt = ((hash % 11) - 5) * 1.9
+                    xShift = ((hash % 7) - 3) * 7
+                    yShift = (((hash >> 3) % 7) - 3) * 6
+                    var mod = hash % 6
+                    wordCol = (mod === 0) ? root.c1 : (mod === 1) ? root.c2 : (mod === 2) ? root.c3 : "white"
+                    popScale = 1.32
+                    popAnim.restart()
+                }
+
+                NumberAnimation {
+                    id: popAnim
+                    target: editWord; property: "popScale"; from: 1.32; to: 1.0
+                    duration: 200; easing.type: Easing.OutBack
+                }
+
+                Item {
+                    id: editBox
+                    anchors.centerIn: parent
+                    x: (parent.width - width) / 2 + editWord.xShift
+                    y: (parent.height - height) / 2 + editWord.yShift
+                    rotation: editWord.tilt
+                    scale: editWord.popScale
+
+                    readonly property real dur: wv.curItem ? Math.max(0.1, wv.curItem.e - wv.curItem.t) : 0.4
+                    readonly property bool isSustained: dur > 0.75
+                    readonly property real stretch: isSustained ? (1.0 + 0.28 * Math.sin(wv.p * Math.PI * 0.5)) : 1.0
+
+                    transform: Scale { xScale: editBox.stretch; origin.x: gtEdit.width / 2; origin.y: gtEdit.height / 2 }
+
+                    GlowText {
+                        id: gtEdit
+                        text: wv.curItem ? wv.curItem.w : ""
+                        col: editWord.wordCol
+                        fnt: Qt.font({ family: bridge.cfg.font ? bridge.cfg.font : Qt.application.font.family,
+                                       pixelSize: Math.max(28, Math.round(Math.min(win.width * 0.16, win.height * 0.22))),
+                                       weight: Font.Black })
+                        glow: 1.0
+                    }
+                }
             }
-            Text {
-                x: parent.width * 0.08; width: parent.width * 0.84; y: ctx.y + ctx.height + root.fs * 0.6
-                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; color: "white"; opacity: 0.26
-                font.pixelSize: Math.round(root.fs * 0.55); font.weight: Font.DemiBold
-                text: wv.plain(root.lines[root.activeIdx + 1])
+
+            // 3. RAIN STYLE (2): Falling words landing exactly at word.t, flashing and fading
+            Item {
+                visible: wv.st === 2
+                anchors.fill: parent
+                Repeater {
+                    id: rainRep
+                    model: 24
+                    delegate: RainDrop {}
+                }
             }
-            Row {   // instrumental gap
-                visible: wv.line !== null && wv.line.gap === true
-                anchors.horizontalCenter: parent.horizontalCenter; y: parent.height * 0.34; spacing: root.fs * 0.5
+
+            // Instrumental gap indicator in word mode
+            Row {
+                visible: {
+                    var l = root.lines[root.activeIdx]
+                    return l !== undefined && l.gap === true
+                }
+                anchors.horizontalCenter: parent.horizontalCenter; y: parent.height * 0.42; spacing: root.fs * 0.5
                 Repeater {
                     model: 3
                     delegate: Rectangle {
                         required property int index
-                        readonly property real q: wv.line && wv.line.gap
-                            ? Math.max(0, Math.min(1, ((wv.tnow - wv.line.t) / Math.max(0.1, wv.line.e - wv.line.t)) * 3 - index)) : 0
-                        width: root.fs * 0.6; height: width; radius: width / 2; color: "white"; opacity: 0.25 + 0.75 * q; scale: 0.8 + 0.3 * q
+                        readonly property var curL: root.lines[root.activeIdx]
+                        readonly property real q: curL && curL.gap
+                            ? Math.max(0, Math.min(1, ((wv.tnow - curL.t) / Math.max(0.1, curL.e - curL.t)) * 3 - index)) : 0
+                        width: root.fs * 0.7; height: width; radius: width / 2; color: "white"; opacity: 0.25 + 0.75 * q; scale: 0.8 + 0.3 * q
                     }
                 }
             }
@@ -2966,16 +3370,21 @@ Window {
                 anchors.fill: parent; anchors.margins: Math.max(18, root.pad * 0.6); spacing: root.pad * 0.3
                 RowLayout {
                     Layout.fillWidth: true; spacing: root.pad * 0.5
-                    Text { text: ({ help: "Keybinds", queue: "Up next", search: "Stream", download: "Download", pick: "Library" })[root.overlay] || ""
+                    Text { text: ({ help: "Keybinds", queue: "Up next", "get-music": "Get Music", search: "Get Music", download: "Get Music", pick: "Library", settings: "Settings" })[root.overlay] || ""
                            color: "white"; font.pixelSize: Math.round(root.u * 0.044); font.weight: Font.ExtraBold }
                     Text { visible: root.drillSpec !== ""; Layout.fillWidth: true; text: "‹  " + root.drillLabel; color: Qt.rgba(1, 1, 1, 0.6); elide: Text.ElideRight
                            font.pixelSize: Math.round(root.u * 0.03); font.weight: Font.DemiBold }
                     Item { Layout.fillWidth: true; visible: root.drillSpec === "" }
                     Repeater {
-                        model: root.overlay === "pick" ? ["albums", "artists", "songs"] : root.overlay === "search" ? ["YouTube Music"] : root.overlay === "download" ? ["musicD"] : []
+                        model: root.overlay === "pick" ? ["albums", "artists", "songs"]
+                             : root.overlay === "get-music" ? ["songs", "albums"]
+                             : root.overlay === "settings" ? ["Display", "Audio & Library", "Background & Media", "Keybinds"] : []
                         delegate: Text {
+                            required property int index
                             required property string modelData
-                            readonly property bool on: root.overlay === "pick" ? root.pickKind === modelData : true
+                            readonly property bool on: root.overlay === "pick" ? root.pickKind === modelData
+                                                      : root.overlay === "get-music" ? root.getMusicTab === modelData
+                                                      : root.overlay === "settings" ? root.setTab === index : true
                             text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
                             color: on ? "white" : Qt.rgba(1, 1, 1, 0.38); font.pixelSize: Math.round(root.u * 0.028); font.weight: Font.Bold
                             Rectangle { y: parent.height + 3; height: 2; radius: 1; color: root.c1; width: parent.on ? parent.width : 0; Behavior on width { NumberAnimation { duration: 180 } } }
@@ -2984,11 +3393,11 @@ Window {
                 }
                 Item {   // filter line
                     Layout.fillWidth: true; Layout.preferredHeight: Math.round(root.u * 0.05)
-                    visible: root.overlay === "pick" || root.overlay === "search" || root.overlay === "download"
+                    visible: root.overlay === "pick" || root.overlay === "get-music" || root.overlay === "search" || root.overlay === "download"
                     Rectangle { anchors.fill: parent; radius: height / 2; color: Qt.rgba(1, 1, 1, 0.07) }
                     Text { x: 18; anchors.verticalCenter: parent.verticalCenter; font.pixelSize: Math.round(root.u * 0.026); font.weight: Font.DemiBold
                            color: root.filter === "" ? Qt.rgba(1, 1, 1, 0.35) : "white"
-                           text: root.filter !== "" ? root.filter : root.overlay === "search" ? "search songs on YouTube Music" : root.overlay === "download" ? "song name, or paste a link" : "type to filter" }
+                           text: root.filter !== "" ? root.filter : root.overlay === "get-music" ? (root.getMusicTab === "songs" ? "Search songs (Enter stream, Shift+Enter queue, D download)" : "Search albums (Enter view tracks, D download album)") : "type to filter" }
                     Rectangle { visible: root.filter !== ""; x: 20 + fm.advanceWidth; anchors.verticalCenter: parent.verticalCenter; width: 2; height: parent.height * 0.5; color: root.c1
                                 SequentialAnimation on opacity { loops: Animation.Infinite; NumberAnimation { to: 0.1; duration: 500 } NumberAnimation { to: 1; duration: 500 } } }
                     TextMetrics { id: fm; text: root.filter; font.pixelSize: Math.round(root.u * 0.026); font.weight: Font.DemiBold }
@@ -3042,6 +3451,74 @@ Window {
                                    text: root.overlay === "queue" ? (modelData.group ? modelData.n + " songs" : (modelData.depth ? "" : (modelData.path ? "#" + (modelData.path[0] + 1) : ""))) : (modelData.dur || "") }
                         }
                     }
+                    
+                    // ───── Settings list view
+                    Item {
+                        anchors.fill: parent; visible: root.overlay === "settings"
+                        ColumnLayout {
+                            anchors.fill: parent; spacing: 14
+                            Repeater {
+                                model: {
+                                    if (root.setTab === 0) return [
+                                        ["Word Mode Style", root.styleNames[root.wordStyle], "T to cycle"],
+                                        ["Progress Bar Style", ["Glow Line", "Dot Pill", "Waveform"][root.progressStyle], "Left / Right to change"],
+                                        ["Cover Spacing", root.coverTitleGap + "px", "Left / Right to adjust"],
+                                        ["Show Progress Bar", root.elemShowProgress ? "Yes" : "No", "Left / Right to toggle"]
+                                    ]
+                                    if (root.setTab === 1) return [
+                                        ["Volume", Math.round(root.vol * 100) + "%", "Up / Down / Left / Right"],
+                                        ["Lyric Timing Offset", (root.offset >= 0 ? "+" : "") + root.offset.toFixed(1) + "s", "[ ] keys"],
+                                        ["Word Timing Spread", "x" + root.spreadVal.toFixed(2), ", . keys"],
+                                        ["Reshuffle Library", "Press Enter to reshuffle", "M key"],
+                                        ["Rescan Music Folder", "Press Enter to rescan", "Ctrl+R"]
+                                    ]
+                                    if (root.setTab === 2) return [
+                                        ["Background Type", root.bgType, "Left / Right to cycle"],
+                                        ["Background Dim", Math.round(root.bgDim * 100) + "%", "Left / Right to adjust"],
+                                        ["Show Lyrics", root.elemShowLyrics ? "Yes" : "No", "Left / Right to toggle"],
+                                        ["Show Cover Art", root.elemShowCover ? "Yes" : "No", "Left / Right to toggle"],
+                                        ["Show Track Title", root.elemShowTitle ? "Yes" : "No", "Left / Right to toggle"],
+                                        ["Clean View (Video Mode)", root.cleanView ? "Enabled" : "Disabled", "Press Enter or V"]
+                                    ]
+                                    return [
+                                        ["Play / Pause", "Space", "Enter to remap"],
+                                        ["Next / Prev Track", "N / P", "Enter to remap"],
+                                        ["Seek ±5s (Shift: ±30s)", "← / →", "Enter to remap"],
+                                        ["Get Music (Stream & DL)", "S / D", "Enter to remap"],
+                                        ["Library Picker", "Tab", "Enter to remap"],
+                                        ["Queue Overlay", "Q", "Enter to remap"],
+                                        ["Reshuffle", "M", "Enter to remap"],
+                                        ["Word Mode", "W", "Enter to remap"],
+                                        ["Word Style", "T", "Enter to remap"],
+                                        ["Settings", "O", "Enter to remap"],
+                                        ["Clean Video View", "V", "Enter to remap"],
+                                        ["Fullscreen", "F", "Enter to remap"],
+                                        ["Quit", "Ctrl+Q", "Enter to remap"]
+                                    ]
+                                }
+                                delegate: Item {
+                                    required property int index
+                                    required property var modelData
+                                    Layout.fillWidth: true; Layout.preferredHeight: Math.round(root.u * 0.06)
+                                    Rectangle {
+                                        anchors.fill: parent; radius: 12
+                                        color: index === root.setSel ? Qt.rgba(root.c1.r, root.c1.g, root.c1.b, 0.35) : Qt.rgba(1, 1, 1, 0.04)
+                                    }
+                                    RowLayout {
+                                        anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
+                                        Text { text: modelData[0]; color: "white"; font.pixelSize: Math.round(root.u * 0.026); font.weight: Font.DemiBold }
+                                        Item { Layout.fillWidth: true }
+                                        Text {
+                                            text: (root.keyListening && root.setTab === 3 && index === root.setSel) ? "‹ Press any key… ›" : "‹ " + modelData[1] + " ›"
+                                            color: (root.keyListening && root.setTab === 3 && index === root.setSel) ? "#ffb142" : "white"
+                                            font.pixelSize: Math.round(root.u * 0.026); font.weight: Font.Bold
+                                        }
+                                        Text { text: modelData[2] ? "(" + modelData[2] + ")" : ""; color: Qt.rgba(1, 1, 1, 0.45); font.pixelSize: Math.round(root.u * 0.02) }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     GridLayout {   // keybind sheet
                         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; visible: root.overlay === "help"
                         columns: win.width < 900 ? 1 : 2; columnSpacing: root.pad; rowSpacing: 0
@@ -3068,9 +3545,9 @@ Window {
                     }
                 }
                 Column {   // download progress
-                    visible: root.overlay === "download" && root.dlJobs.length > 0; Layout.fillWidth: true; spacing: 2
+                    visible: (root.overlay === "get-music" || root.overlay === "download") && root.dlJobs.length > 0; Layout.fillWidth: true; spacing: 2
                     Repeater {
-                        model: root.overlay === "download" ? root.dlJobs.slice(-3) : []
+                        model: (root.overlay === "get-music" || root.overlay === "download") ? root.dlJobs.slice(-3) : []
                         delegate: Text {
                             required property var modelData
                             width: parent.width; elide: Text.ElideRight; font.pixelSize: Math.round(root.u * 0.022); font.weight: Font.DemiBold
@@ -3093,7 +3570,8 @@ Window {
 
         // ───── toast + hint
         Rectangle {
-            id: toast; opacity: 0; anchors.horizontalCenter: parent.horizontalCenter; y: parent.height - height - win.height * 0.05
+            id: toast
+            visible: root.elemShowToasts && !root.cleanView; opacity: 0; anchors.horizontalCenter: parent.horizontalCenter; y: parent.height - height - win.height * 0.05
             width: Math.min(toastText.implicitWidth + 36, win.width - 20); height: toastText.height + 18; radius: height / 2; color: Qt.rgba(0, 0, 0, 0.55)
             Behavior on opacity { NumberAnimation { duration: 250 } }
             Text { id: toastText; anchors.centerIn: parent; width: parent.width - 28; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
@@ -3111,7 +3589,7 @@ def main_qt():
     ap.add_argument("-p", "--player", help="only follow this player (e.g. lollypop, mpv, spotify)")
     ap.add_argument("--own", action="store_true", help="start in your-own-library mode even if another player is running")
     ap.add_argument("--follow", action="store_true", help="start by following other players")
-    ap.add_argument("--mpris-name", default="lyricview", metavar="NAME",
+    ap.add_argument("--mpris-name", default="lollypop", metavar="NAME",
                     help="name other programs (polybar, playerctl) see while playing your library, e.g. Lollypop")
     ap.add_argument("--music", metavar="DIR", help="music folder (default ~/Music or $MUSICD_DIR)")
     ap.add_argument("--controls", action="store_true", help="show the prev/play/next buttons from the start")
@@ -3139,6 +3617,10 @@ def main_qt():
     bridge.start()
     app.aboutToQuit.connect(bridge._kill_follow)
     win = engine.rootObjects()[0]
+    try:
+        win.sceneGraphError.connect(lambda err, msg: print(f"lyricview: sceneGraphError {err}: {msg}", file=sys.stderr))
+    except Exception:
+        pass
     if a.size:
         win.resize(*[int(v) for v in a.size.lower().split("x")])
     steps = [s for s in (a.keys or "").split(",") if s]
