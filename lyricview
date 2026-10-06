@@ -1257,7 +1257,13 @@ class OwnPlayer(QObject):
             self.b.toast.emit("polybar/playerctl can't see this player (python-gobject missing)")
         self.tick.start()
         if self.cur is None:
-            self.next()
+            if getattr(self.b.a, "track", None) is not None:
+                self.play(self.b.a.track)
+            else:
+                self.next()
+            if getattr(self.b.a, "seek", None) is not None:
+                self.seek(self.b.a.seek)
+                self.b.a.seek = None
         else:  # coming back from "follow": put the UI back on this track, then resume the sound
             self.b.ownResume()
             self.mpris.update(status="Playing", meta=self.meta, pos=self.eng.position(), seeked=True)
@@ -3313,17 +3319,17 @@ Window {
                     }
                 }
 
-                // Window of words around current playback time
+                // Window of words around current playback time (time-bounded lookahead so CJK/dense lyrics never clip)
                 readonly property int curFi: Math.max(0, root.flatIdx(wv.tnow))
                 readonly property var activeRainWords: {
                     if (!root.flat.length) return []
                     var res = []
                     var tn = wv.tnow
-                    var start = Math.max(0, curFi - 4)
-                    var end = Math.min(root.flat.length, curFi + 14)
-                    for (var i = start; i < end; i++) {
+                    var start = Math.max(0, curFi - 8)
+                    for (var i = start; i < root.flat.length; i++) {
                         var w = root.flat[i]
-                        if (w.t <= tn + rainView.fallDur && (tn <= w.e + 0.4)) {
+                        if (w.t > tn + rainView.fallDur) break
+                        if (tn <= w.e + 0.4) {
                             res.push(w)
                         }
                     }
@@ -3669,6 +3675,8 @@ def main_qt():
     ap.add_argument("--screenshot", metavar="FILE", help=argparse.SUPPRESS)
     ap.add_argument("--size", metavar="WxH", help=argparse.SUPPRESS)
     ap.add_argument("--keys", metavar="LIST", help=argparse.SUPPRESS)
+    ap.add_argument("--track", type=int, help=argparse.SUPPRESS)
+    ap.add_argument("--seek", type=float, help=argparse.SUPPRESS)
     a = ap.parse_args()
     if not shutil.which("playerctl"):
         sys.exit("playerctl not found - install it: sudo pacman -S playerctl")
