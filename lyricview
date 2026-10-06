@@ -2663,7 +2663,7 @@ Window {
                     searchNote = "switching tab…"; searchTimer.restart()
                     return
                 }
-                if (k === Qt.Key_D || (ctrl && k === Qt.Key_D)) {
+                if (ctrl && k === Qt.Key_D) {
                     if (it) {
                         if (it.is_album) {
                             bridge.dlLink("https://music.youtube.com/playlist?list=" + it.id)
@@ -3397,7 +3397,7 @@ Window {
                     Rectangle { anchors.fill: parent; radius: height / 2; color: Qt.rgba(1, 1, 1, 0.07) }
                     Text { x: 18; anchors.verticalCenter: parent.verticalCenter; font.pixelSize: Math.round(root.u * 0.026); font.weight: Font.DemiBold
                            color: root.filter === "" ? Qt.rgba(1, 1, 1, 0.35) : "white"
-                           text: root.filter !== "" ? root.filter : root.overlay === "get-music" ? (root.getMusicTab === "songs" ? "Search songs (Enter stream, Shift+Enter queue, D download)" : "Search albums (Enter view tracks, D download album)") : "type to filter" }
+                           text: root.filter !== "" ? root.filter : root.overlay === "get-music" ? (root.getMusicTab === "songs" ? "Search songs (Enter stream, Shift+Enter queue, Ctrl+D download)" : "Search albums (Enter view tracks, Ctrl+D download album)") : "type to filter" }
                     Rectangle { visible: root.filter !== ""; x: 20 + fm.advanceWidth; anchors.verticalCenter: parent.verticalCenter; width: 2; height: parent.height * 0.5; color: root.c1
                                 SequentialAnimation on opacity { loops: Animation.Infinite; NumberAnimation { to: 0.1; duration: 500 } NumberAnimation { to: 1; duration: 500 } } }
                     TextMetrics { id: fm; text: root.filter; font.pixelSize: Math.round(root.u * 0.026); font.weight: Font.DemiBold }
