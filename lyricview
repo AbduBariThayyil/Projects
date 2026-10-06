@@ -1296,6 +1296,8 @@ class OwnPlayer(QObject):
         self.shuf.mark(i)
         self.cur = i
         self.eng.load(t["path"])
+        if isinstance(self.eng, NullEngine):
+            self.eng.dur = t["len"] or 240.0
         self.eng.play()
         self.meta = {"key": hashlib.md5(t["path"].encode()).hexdigest()[:16], "artist": t["artist"], "title": t["title"],
                      "album": t["album"], "length": t["len"], "url": QUrl.fromLocalFile(t["path"]).toString(), "art": ""}
@@ -1952,6 +1954,10 @@ class Bridge(QObject):
     def search(self, query, kind="songs"):
         self._sgen += 1
         gen = self._sgen
+        query = (query or "").strip()
+        if len(query) < 2:
+            self._srch.emit(gen, json.dumps({"rows": [], "error": ""}))
+            return
         if not online_available():
             self._srch.emit(gen, json.dumps({"rows": [], "error": "needs ytmusicapi and yt-dlp:  sudo pacman -S python-ytmusicapi yt-dlp"}))
             return
@@ -2455,6 +2461,7 @@ Window {
         // Unified Get Music tab
         property string getMusicTab: "songs" // songs | albums
         property string albumDrillBrowseId: ""
+        property string albumDrillTitle: ""
 
         // Settings Overlay navigation
         property int setTab: 0 // 0: Display, 1: Audio, 2: Background, 3: Keybinds
@@ -2552,7 +2559,7 @@ Window {
             if (kind === "pick") { openPick("albums"); return }
             if (kind === "search" || kind === "download") kind = "get-music"
             overlay = kind; filter = ""; sel = 0; searchNote = ""; items = []; shown = []
-            albumDrillBrowseId = ""
+            albumDrillBrowseId = ""; albumDrillTitle = ""
             if (kind === "queue") reloadQueue()
             if (kind === "get-music" && filter.length >= 2) typed()
         }
@@ -2568,18 +2575,30 @@ Window {
             sel = 0
         }
         function typed() {
-            if (overlay === "get-music" || overlay === "search" || overlay === "download") {
+            if ((overlay === "get-music" || overlay === "search" || overlay === "download") && albumDrillBrowseId === "") {
                 if (filter.length < 2) { items = []; shown = []; searchNote = "" }
                 else { searchNote = "searching…"; searchTimer.restart() }
             } else refilter()
         }
         function activate(queueOnly) {
-            if (overlay === "download" && filter.indexOf("http") === 0 && (!shown.length || filter.length > 20)) { bridge.dlLink(filter); filter = ""; items = []; shown = []; return }
+            if ((overlay === "get-music" || overlay === "download") && filter.indexOf("http") === 0 && (!shown.length || filter.length > 20)) {
+                bridge.dlLink(filter); filter = ""; items = []; shown = []; say("downloading link…"); return
+            }
             if (!shown.length) return
             var it = shown[sel]
             if (overlay === "queue") { bridge.queuePlay(JSON.stringify(it.path)); closeOverlay(); return }
             if (overlay === "download") { bridge.dlStart(it.id, it.name, it.sub); say("downloading · " + it.name); return }
             if (overlay === "search") bridge.pickOnline(it.id, queueOnly)
+            else if (overlay === "get-music") {
+                if (getMusicTab === "albums" && albumDrillBrowseId === "") {
+                    albumDrillBrowseId = it.id
+                    albumDrillTitle = it.name
+                    searchNote = "loading album tracks…"
+                    bridge.drillAlbum(it.id)
+                    return
+                }
+                bridge.pickOnline(it.id, queueOnly)
+            }
             else bridge.pick(pickKind, it.id, queueOnly)
             if (!queueOnly) closeOverlay()
         }
@@ -2661,16 +2680,33 @@ Window {
                 bridge.setClipboard(filter); filter = ""; typed(); say("cut to clipboard"); return
             }
             if (overlay === "get-music") {
+                if (ctrl && (k === Qt.Key_D)) {
+                    if (it && it.id) {
+                        bridge.dlStart(it.id, it.name, it.sub)
+                        say("downloading · " + it.name)
+                    }
+                    return
+                }
                 if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
                     getMusicTab = (getMusicTab === "songs" ? "albums" : "songs")
-                    albumDrillBrowseId = ""
-                    searchNote = "switching tab…"; searchTimer.restart()
+                    albumDrillBrowseId = ""; albumDrillTitle = ""
+                    if (filter.trim().length >= 2) {
+                        searchNote = "searching " + getMusicTab + "…"
+                        searchTimer.restart()
+                    } else {
+                        items = []; shown = []; searchNote = ""
+                    }
                     return
                 }
 
                 if (k === Qt.Key_Backspace && filter === "" && albumDrillBrowseId !== "") {
-                    albumDrillBrowseId = ""
-                    searchTimer.restart()
+                    albumDrillBrowseId = ""; albumDrillTitle = ""
+                    if (filter.trim().length >= 2) {
+                        searchNote = "searching albums…"
+                        searchTimer.restart()
+                    } else {
+                        items = []; shown = []; searchNote = ""
+                    }
                     return
                 }
             }
@@ -2772,7 +2808,7 @@ Window {
         function seekTo(sec) { sec = Math.max(0, sec); basePos = sec; baseT = Date.now(); pos = sec; bridge.seek(sec) }
         function wake() { idle = false; idleTimer.restart() }
 
-        Timer { id: searchTimer; interval: 450; onTriggered: if (root.overlay === "get-music" || root.overlay === "search" || root.overlay === "download") bridge.search(root.filter, root.getMusicTab) }
+        Timer { id: searchTimer; interval: 450; onTriggered: if (root.overlay === "get-music" || root.overlay === "search" || root.overlay === "download") { if (root.filter.trim().length >= 2) bridge.search(root.filter.trim(), root.getMusicTab) } }
         NumberAnimation { id: pulseAnim; target: root; property: "pulse"; from: 1; to: 0; duration: 800; easing.type: Easing.OutCubic }
         Timer { id: idleTimer; interval: 3000; running: true; onTriggered: root.idle = true }
         FrameAnimation {
@@ -2812,7 +2848,7 @@ Window {
             }
             function onSearchDone(js) {
                 var d = JSON.parse(js)
-                if (root.overlay !== "search" && root.overlay !== "download") return
+                if (root.overlay !== "search" && root.overlay !== "download" && root.overlay !== "get-music") return
                 root.items = d.rows; root.shown = d.rows; root.sel = 0
                 root.searchNote = d.error !== "" ? d.error : d.rows.length === 0 ? "nothing found" : ""
             }
@@ -3158,6 +3194,10 @@ Window {
             readonly property int fi: root.flatIdx(tnow)
             readonly property var curItem: fi >= 0 && fi < root.flat.length ? root.flat[fi] : null
             readonly property real p: curItem ? Math.max(0, Math.min(1, (tnow - curItem.t) / Math.max(0.05, curItem.e - curItem.t))) : 0
+            readonly property bool isGap: {
+                var l = root.lines[root.activeIdx]
+                return l !== undefined && l.gap === true
+            }
 
             property int prevFi: -1
             property real laneSeq: 0.3
@@ -3202,6 +3242,8 @@ Window {
             ListView {
                 id: lvStack
                 visible: wv.st === 0
+                opacity: wv.isGap ? 0.0 : 1.0
+                Behavior on opacity { NumberAnimation { duration: 250 } }
                 anchors.fill: parent
                 model: root.flat
                 clip: true
@@ -3241,7 +3283,7 @@ Window {
             // 2. EDIT STYLE (1): Kinetic typography 'edit video' feel, bold single word, pop-in, tilt, punch, color accents, stretch
             Item {
                 id: editWord
-                visible: wv.st === 1 && wv.curItem !== null
+                visible: wv.st === 1 && wv.curItem !== null && !wv.isGap
                 anchors.fill: parent
                 property real popScale: 1.0
                 property real tilt: 0.0
@@ -3394,11 +3436,12 @@ Window {
 
             // Instrumental gap indicator in word mode
             Row {
-                visible: {
-                    var l = root.lines[root.activeIdx]
-                    return l !== undefined && l.gap === true
-                }
-                anchors.horizontalCenter: parent.horizontalCenter; y: parent.height * 0.42; spacing: root.fs * 0.5
+                id: gapIndicator
+                visible: wv.isGap
+                opacity: visible ? 1.0 : 0.0
+                Behavior on opacity { NumberAnimation { duration: 250 } }
+                anchors.centerIn: parent
+                spacing: root.fs * 0.6
                 Repeater {
                     model: 3
                     delegate: Rectangle {
@@ -3406,7 +3449,9 @@ Window {
                         readonly property var curL: root.lines[root.activeIdx]
                         readonly property real q: curL && curL.gap
                             ? Math.max(0, Math.min(1, ((wv.tnow - curL.t) / Math.max(0.1, curL.e - curL.t)) * 3 - index)) : 0
-                        width: root.fs * 0.7; height: width; radius: width / 2; color: "white"; opacity: 0.25 + 0.75 * q; scale: 0.8 + 0.3 * q
+                        width: root.fs * 0.7; height: width; radius: width / 2; color: "white"
+                        opacity: 0.25 + 0.75 * q
+                        scale: (0.8 + 0.3 * q) * (q > 0 ? 1 + 0.08 * Math.sin(root.pos * 4 + index) : 1)
                     }
                 }
             }
@@ -3444,9 +3489,10 @@ Window {
                     Layout.fillWidth: true; spacing: root.pad * 0.5
                     Text { text: ({ help: "Keybinds", queue: "Up next", "get-music": "Get Music", search: "Get Music", download: "Get Music", pick: "Library", settings: "Settings" })[root.overlay] || ""
                            color: "white"; font.pixelSize: Math.round(root.u * 0.044); font.weight: Font.ExtraBold }
-                    Text { visible: root.drillSpec !== ""; Layout.fillWidth: true; text: "‹  " + root.drillLabel; color: Qt.rgba(1, 1, 1, 0.6); elide: Text.ElideRight
+                    Text { visible: (root.overlay === "pick" && root.drillSpec !== "") || (root.overlay === "get-music" && root.albumDrillBrowseId !== ""); Layout.fillWidth: true
+                           text: "‹  " + (root.overlay === "get-music" ? root.albumDrillTitle : root.drillLabel); color: Qt.rgba(1, 1, 1, 0.6); elide: Text.ElideRight
                            font.pixelSize: Math.round(root.u * 0.03); font.weight: Font.DemiBold }
-                    Item { Layout.fillWidth: true; visible: root.drillSpec === "" }
+                    Item { Layout.fillWidth: true; visible: !((root.overlay === "pick" && root.drillSpec !== "") || (root.overlay === "get-music" && root.albumDrillBrowseId !== "")) }
                     Repeater {
                         model: root.overlay === "pick" ? ["albums", "artists", "songs"]
                              : root.overlay === "get-music" ? ["songs", "albums"]
@@ -3504,7 +3550,7 @@ Window {
                     }
                     ListView {   // songs, queue, search, download results
                         id: plist
-                        anchors.fill: parent; visible: root.overlay !== "help" && !root.isGrid; clip: true; model: root.isGrid ? [] : root.shown
+                        anchors.fill: parent; visible: root.overlay !== "help" && root.overlay !== "settings" && !root.isGrid; clip: true; model: root.isGrid ? [] : root.shown
                         currentIndex: root.sel
                         onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
                         delegate: Item {
@@ -3614,9 +3660,10 @@ Window {
                     }
                     Text {   // empty states
                         anchors.centerIn: parent; width: parent.width * 0.8; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
-                        visible: root.shown.length === 0 && root.overlay !== "help"; color: Qt.rgba(1, 1, 1, 0.45); font.pixelSize: Math.round(root.u * 0.028)
+                        visible: root.shown.length === 0 && root.overlay !== "help" && root.overlay !== "settings"; color: Qt.rgba(1, 1, 1, 0.45); font.pixelSize: Math.round(root.u * 0.028)
                         text: root.overlay === "queue" ? "The queue is empty.\nAdd albums or songs with Shift+Enter - then the shuffle carries on."
-                              : (root.overlay === "search" || root.overlay === "download") ? (root.searchNote !== "" ? root.searchNote : "Type a song or an artist")
+                              : (root.overlay === "search" || root.overlay === "download" || root.overlay === "get-music")
+                                ? (root.searchNote !== "" ? root.searchNote : (root.getMusicTab === "songs" ? "Type a song or artist to search YouTube Music" : "Type an album name to search YouTube Music"))
                               : bridge.libInfo.scanning && !bridge.libInfo.ready ? "Scanning your music…" : root.filter !== "" ? "Nothing matches" : "No songs found"
                     }
                 }
@@ -3637,8 +3684,7 @@ Window {
                     font.pixelSize: Math.round(root.u * 0.02); font.weight: Font.DemiBold
                     text: root.overlay === "help" ? "In lists: type to filter · arrows move · Enter play · Shift+Enter queue · Tab next list · Ctrl+→ open (artist → albums, album → songs) · Ctrl+← back"
                         : root.overlay === "queue" ? "↑ ↓ select · Shift+↑↓ move · → expand album · ← collapse · Enter play now · Del remove · Shift+Del clear · Esc"
-                        : root.overlay === "search" ? "type to search · ↑ ↓ · Enter stream now · Shift+Enter queue · Esc close"
-                        : root.overlay === "download" ? "type a song or paste a link · ↑ ↓ · Enter download · Esc close"
+                        : root.overlay === "get-music" ? (root.albumDrillBrowseId !== "" ? "↑ ↓ select track · Enter stream · Shift+Enter queue · Backspace back to albums · Esc close" : (root.getMusicTab === "songs" ? "type to search · ↑ ↓ · Enter stream · Shift+Enter queue · Ctrl+D download · Tab switch to albums · Esc close" : "type to search albums · ↑ ↓ · Enter view tracks · Tab switch to songs · Esc close"))
                         : "arrows move · Enter play · Shift+Enter queue · Ctrl+→ open · Ctrl+← back · Tab albums/artists/songs · Esc"
                 }
             }
