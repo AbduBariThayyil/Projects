@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# PolybarMusic - centre playback module for polybar (Lollypop / Spotify / MPD via playerctl)
+# PolybarMusic - centre playback module for polybar (LyricView / Lollypop / Spotify / MPD via playerctl)
 #
-# Click map:  face + title, and time + bar  -> LollypopLauncher
+# Click map:  face + title, and time + bar  -> LyricViewLauncher
 #             play/pause, prev, next icons  -> playerctl
 
-LAUNCH="LollypopLauncher"
+LAUNCH="LyricViewLauncher"
 TITLE_W=16     # title column width, in characters
 BAR_W=8        # progress bar length, in characters
-WIDTH=51       # visible width of the playing layout; "No Music" is padded to match it
+WIDTH=54       # visible width of the playing layout; "No Music" is padded to match it
                # (keeps the centred block, and so the date, from jumping when playback starts/stops)
 
 # Everything below counts characters, not bytes. Polybar may start us with no UTF-8 locale.
@@ -26,7 +26,7 @@ no_music() {
 # Pick the player that is Playing; otherwise the first Paused one.
 PLAYER="" STATUS="" POS=0 LEN=0 TITLE=""
 while IFS='|' read -r name status pos len title; do
-    [[ ${name,,} =~ lollypop|spotify|mpd ]] || continue
+    [[ ${name,,} =~ qt-music|lyricview|lollypop|spotify|mpd ]] || continue
     case $status in
         Playing) PLAYER=$name STATUS=$status POS=$pos LEN=$len TITLE=$title; break ;;
         Paused)  [[ -z $PLAYER ]] && { PLAYER=$name STATUS=$status POS=$pos LEN=$len TITLE=$title; } ;;
@@ -65,4 +65,7 @@ else
     PLAY_ICON="󰐊"
 fi
 
-echo "%{O45}%{A1:$LAUNCH:}%{F#bd93f9}${FACE}%{F-}  %{F#f8f8f2}${TITLE_FIXED}%{F-}%{A}  %{F#50fa7b}%{A1:playerctl -p $PLAYER play-pause:}${PLAY_ICON}%{A}%{F-} %{F#8be9fd}%{A1:playerctl -p $PLAYER previous:}󰒮%{A}%{F-} %{A1:$LAUNCH:}%{F#bd93f9}${TIME_STR}%{F-} %{F#ff79c6}${BAR}%{F-}%{A} %{F#8be9fd}%{A1:playerctl -p $PLAYER next:}󰒭%{A}%{F-}"
+CLOSE_CMD="qt-music --quit 2>/dev/null; playerctl -p $PLAYER stop 2>/dev/null; playerctl -p $PLAYER quit 2>/dev/null"
+CLOSE_BTN="%{F#ff5555}%{A1:$CLOSE_CMD:}󰅖%{A}%{F-}"
+
+echo "%{O45}%{A1:$LAUNCH:}%{F#bd93f9}${FACE}%{F-}  %{F#f8f8f2}${TITLE_FIXED}%{F-}%{A}  %{F#50fa7b}%{A1:playerctl -p $PLAYER play-pause:}${PLAY_ICON}%{A}%{F-} %{F#8be9fd}%{A1:playerctl -p $PLAYER previous:}󰒮%{A}%{F-} %{A1:$LAUNCH:}%{F#bd93f9}${TIME_STR}%{F-} %{F#ff79c6}${BAR}%{F-}%{A} %{F#8be9fd}%{A1:playerctl -p $PLAYER next:}󰒭%{A}%{F-}  ${CLOSE_BTN}"
