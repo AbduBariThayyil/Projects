@@ -1,0 +1,69 @@
+"""
+USB HID keyboard and consumer scancode definitions.
+Maps standard keys and media keys to USB HID scancodes for mouse macro bytecode.
+"""
+
+from typing import Dict, Tuple
+
+# USB HID Keyboard Usage Page (0x07) scancodes
+HID_KEY_MAP: Dict[str, int] = {
+    # Letters
+    "a": 0x04, "b": 0x05, "c": 0x06, "d": 0x07, "e": 0x08, "f": 0x09,
+    "g": 0x0A, "h": 0x0B, "i": 0x0C, "j": 0x0D, "k": 0x0E, "l": 0x0F,
+    "m": 0x10, "n": 0x11, "o": 0x12, "p": 0x13, "q": 0x14, "r": 0x15,
+    "s": 0x16, "t": 0x17, "u": 0x18, "v": 0x19, "w": 0x1A, "x": 0x1B,
+    "y": 0x1C, "z": 0x1D,
+
+    # Numbers
+    "1": 0x1E, "2": 0x1F, "3": 0x20, "4": 0x21, "5": 0x22,
+    "6": 0x23, "7": 0x24, "8": 0x25, "9": 0x26, "0": 0x27,
+
+    # Control / Special
+    "enter": 0x28, "return": 0x28,
+    "escape": 0x29, "esc": 0x29,
+    "backspace": 0x2A,
+    "tab": 0x2B,
+    "space": 0x2C, "spacebar": 0x2C,
+    "-": 0x2D, "=": 0x2E, "[": 0x2F, "]": 0x30, "\\": 0x31,
+    ";": 0x33, "'": 0x34, "`": 0x35, ",": 0x36, ".": 0x37, "/": 0x38,
+    "caps_lock": 0x39,
+
+    # Function keys
+    "f1": 0x3A, "f2": 0x3B, "f3": 0x3C, "f4": 0x3D, "f5": 0x3E, "f6": 0x3F,
+    "f7": 0x40, "f8": 0x41, "f9": 0x42, "f10": 0x43, "f11": 0x44, "f12": 0x45,
+
+    # Navigation / Editing
+    "print_screen": 0x46, "scroll_lock": 0x47, "pause": 0x48,
+    "insert": 0x49, "home": 0x4A, "page_up": 0x4B,
+    "delete": 0x4C, "end": 0x4D, "page_down": 0x4E,
+    "right": 0x4F, "left": 0x50, "down": 0x51, "up": 0x52,
+
+    # Keypad
+    "num_lock": 0x53,
+    "kp_divide": 0x54, "kp_multiply": 0x55, "kp_minus": 0x56, "kp_plus": 0x57,
+    "kp_enter": 0x58, "kp_1": 0x59, "kp_2": 0x5A, "kp_3": 0x5B, "kp_4": 0x5C,
+    "kp_5": 0x5D, "kp_6": 0x5E, "kp_7": 0x5F, "kp_8": 0x60, "kp_9": 0x61,
+    "kp_0": 0x62, "kp_period": 0x63,
+
+    # Modifiers
+    "left_ctrl": 0xE0, "ctrl": 0xE0,
+    "left_shift": 0xE1, "shift": 0xE1,
+    "left_alt": 0xE2, "alt": 0xE2,
+    "left_meta": 0xE3, "meta": 0xE3, "super": 0xE3,
+    "right_ctrl": 0xE4,
+    "right_shift": 0xE5,
+    "right_alt": 0xE6,
+    "right_meta": 0xE7,
+}
+
+# Reverse lookup for display
+HID_CODE_TO_NAME: Dict[int, str] = {v: k.upper() for k, v in HID_KEY_MAP.items()}
+
+# Mouse actions for macro
+MOUSE_ACTION_CODES = {
+    "left_click": 0x01,
+    "right_click": 0x02,
+    "middle_click": 0x04,
+    "forward_click": 0x08,
+    "back_click": 0x10,
+}
