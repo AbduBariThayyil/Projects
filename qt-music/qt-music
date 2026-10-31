@@ -2151,6 +2151,12 @@ class Bridge(QObject):
             threading.Thread(target=self.st.ctl, args=("volume", f"{abs(delta):.2f}{'+' if delta > 0 else '-'}"), daemon=True).start()
             self.toast.emit("volume " + ("up" if delta > 0 else "down"))
 
+    @Slot()
+    def requestDestroyUi(self):
+        cb = getattr(self, "_on_destroy_ui", None)
+        if callable(cb):
+            cb()
+
     # ---- worker thread -> UI thread
     def _on_meta(self, js):
         self._meta_d = json.loads(js)
@@ -2325,7 +2331,7 @@ Window {
 
     onClosing: (close) => {
         close.accepted = false
-        win.hide()
+        bridge.requestDestroyUi()
     }
 
     component Icon: Item {
@@ -3761,6 +3767,8 @@ def main_qt():
     ap.add_argument("--show", action="store_true", help="show running window")
     ap.add_argument("--hide", action="store_true", help="hide running window")
     ap.add_argument("--quit", action="store_true", help="quit running instance")
+    ap.add_argument("--headless", "--daemon", action="store_true", dest="headless",
+                    help="start in background as lightweight headless audio engine (loads no QML/GUI until toggled)")
     ap.add_argument("-p", "--player", help="only follow this player (e.g. lollypop, mpv, spotify)")
     ap.add_argument("--own", action="store_true", help="start in your-own-library mode even if another player is running")
     ap.add_argument("--follow", action="store_true", help="start by following other players")
@@ -3779,21 +3787,27 @@ def main_qt():
     a = ap.parse_args()
 
     # Fast IPC check: if an instance is already running, control it
-    ipc_names = [f"qt-music-ipc-{os.getuid()}", f"lyricview-ipc-{os.getuid()}"]
-    _sock = QLocalSocket()
+    import socket
+    ipc_socket_paths = [f"/tmp/qt-music-ipc-{os.getuid()}", f"/tmp/lyricview-ipc-{os.getuid()}"]
     _connected = False
-    for _name in ipc_names:
-        _sock.connectToServer(_name)
-        if _sock.waitForConnected(200):
-            _connected = True
-            break
+    for _sock_path in ipc_socket_paths:
+        if os.path.exists(_sock_path):
+            _s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                _s.settimeout(0.4)
+                _s.connect(_sock_path)
+                cmd = "toggle" if a.toggle else ("quit" if a.quit else ("hide" if a.hide else "show"))
+                _s.sendall((cmd + "\n").encode())
+                _s.close()
+                _connected = True
+                break
+            except Exception:
+                try:
+                    os.unlink(_sock_path)
+                except OSError:
+                    pass
 
     if _connected:
-        cmd = "toggle" if a.toggle else ("quit" if a.quit else ("hide" if a.hide else "show"))
-        _sock.write((cmd + "\n").encode())
-        _sock.flush()
-        _sock.waitForBytesWritten(500)
-        _sock.disconnectFromServer()
         sys.exit(0)
 
     if a.quit:
@@ -3809,29 +3823,13 @@ def main_qt():
     app.setApplicationName("qt-music")
     app.setQuitOnLastWindowClosed(False)
     bridge = Bridge(State(a.player), a)
-    engine = QQmlApplicationEngine()
-    engine.rootContext().setContextProperty("bridge", bridge)
-    engine.loadData(QML.encode("utf-8"), QUrl("file:///qt-music.qml"))
-    if not engine.rootObjects():
-        sys.exit("could not load the UI - is Qt Quick complete? (sudo pacman -S pyside6 qt6-declarative)")
     bridge.start()
-    win = engine.rootObjects()[0]
-    try:
-        win.sceneGraphError.connect(lambda err, msg: print(f"qt-music: sceneGraphError {err}: {msg}", file=sys.stderr))
-    except Exception:
-        pass
 
-    # Set up IPC server on both current and legacy socket names
-    servers = []
-    for s_name in ipc_names:
-        srv = QLocalServer()
-        srv.removeServer(s_name)
-        if srv.listen(s_name):
-            servers.append(srv)
+    engine = None
+    win = None
 
-    def set_bypass_compositor(bypass: bool):
+    def set_bypass_compositor(wid, bypass: bool):
         try:
-            wid = win.winId()
             if wid:
                 val = 1 if bypass else 0
                 subprocess.Popen(["xprop", "-id", str(wid), "-f", "_NET_WM_BYPASS_COMPOSITOR", "32c", "-set", "_NET_WM_BYPASS_COMPOSITOR", str(val)],
@@ -3839,37 +3837,108 @@ def main_qt():
         except Exception:
             pass
 
-    def on_win_visibility_changed():
-        set_bypass_compositor(win.isVisible())
+    def show_gui():
+        nonlocal engine, win
+        if win is not None:
+            win.show()
+            win.raise_()
+            win.requestActivate()
+            return
 
-    win.visibleChanged.connect(on_win_visibility_changed)
-    if win.isVisible():
-        QTimer.singleShot(150, lambda: set_bypass_compositor(True))
+        engine = QQmlApplicationEngine()
+        engine.rootContext().setContextProperty("bridge", bridge)
+        engine.loadData(QML.encode("utf-8"), QUrl("file:///qt-music.qml"))
+        if not engine.rootObjects():
+            print("qt-music: could not load the UI - is Qt Quick complete?", file=sys.stderr)
+            return
+        win = engine.rootObjects()[0]
+        try:
+            win.sceneGraphError.connect(lambda err, msg: print(f"qt-music: sceneGraphError {err}: {msg}", file=sys.stderr))
+        except Exception:
+            pass
+
+        if a.size:
+            win.resize(*[int(v) for v in a.size.lower().split("x")])
+
+        wid = win.winId()
+        QTimer.singleShot(150, lambda: set_bypass_compositor(wid, True))
+
+        win.show()
+        win.raise_()
+        win.requestActivate()
+
+    def hide_and_destroy_gui():
+        nonlocal engine, win
+        if win is not None:
+            try:
+                wid = win.winId()
+                set_bypass_compositor(wid, False)
+            except Exception:
+                pass
+            try:
+                win.hide()
+            except Exception:
+                pass
+            win = None
+        if engine is not None:
+            try:
+                engine.clearComponentCache()
+                engine.deleteLater()
+            except Exception:
+                pass
+            engine = None
+        import gc
+        gc.collect()
+
+    def toggle_gui():
+        if win is not None and win.isVisible():
+            hide_and_destroy_gui()
+        else:
+            show_gui()
+
+    bridge._on_destroy_ui = hide_and_destroy_gui
+
+    # Set up IPC server on both current and legacy socket names
+    ipc_names = [f"qt-music-ipc-{os.getuid()}", f"lyricview-ipc-{os.getuid()}"]
+    servers = []
+    for s_name in ipc_names:
+        srv = QLocalServer()
+        srv.removeServer(s_name)
+        if srv.listen(s_name):
+            servers.append(srv)
+
+    _active_clients = []
 
     def handle_client(srv):
         client = srv.nextPendingConnection()
         if not client:
             return
+        _active_clients.append(client)
+        def cleanup_client():
+            if client in _active_clients:
+                _active_clients.remove(client)
+        client.disconnected.connect(cleanup_client)
+
         def on_data():
             raw = bytes(client.readAll()).decode("utf-8", "replace").strip()
+            try:
+                client.write(b"ok\n")
+                client.flush()
+            except Exception:
+                pass
             for line in raw.splitlines():
                 action = line.strip().lower()
                 if action == "toggle":
-                    if win.isVisible():
-                        win.hide()
-                    else:
-                        win.show()
-                        win.raise_()
-                        win.requestActivate()
+                    toggle_gui()
                 elif action in ("show", "raise"):
-                    win.show()
-                    win.raise_()
-                    win.requestActivate()
+                    show_gui()
                 elif action == "hide":
-                    win.hide()
+                    hide_and_destroy_gui()
                 elif action == "quit":
-                    app.quit()
+                    QTimer.singleShot(20, _cleanup)
         client.readyRead.connect(on_data)
+        if client.bytesAvailable() > 0:
+            on_data()
 
     for srv in servers:
         srv.newConnection.connect(lambda s=srv: handle_client(s))
@@ -3882,34 +3951,44 @@ def main_qt():
                 pass
         for s_name in ipc_names:
             QLocalServer.removeServer(s_name)
+        try:
+            if bridge.own:
+                bridge.own.deactivate()
+        except Exception:
+            pass
         bridge._kill_follow()
+        os._exit(0)
 
     app.aboutToQuit.connect(_cleanup)
-    if a.size:
-        win.resize(*[int(v) for v in a.size.lower().split("x")])
-    steps = [s for s in (a.keys or "").split(",") if s]
-    if steps:  # test hook: replay key presses, e.g. --keys Tab,Down,Return
-        from PySide6.QtTest import QTest
 
-        def press(i=0):
-            if i >= len(steps):
-                return
-            mods, name = Qt.KeyboardModifier.NoModifier, steps[i]
-            while "+" in name[1:]:
-                m, name = name.split("+", 1)
-                mods |= {"Shift": Qt.KeyboardModifier.ShiftModifier, "Ctrl": Qt.KeyboardModifier.ControlModifier}[m]
-            if name.startswith("wait"):
-                QTimer.singleShot(int(name[4:] or 500), lambda: press(i + 1))
-                return
-            if len(name) == 1:
-                QTest.keyClick(win, name, mods)
-            else:
-                QTest.keyClick(win, getattr(Qt.Key, "Key_" + name), mods)
-            QTimer.singleShot(350, lambda: press(i + 1))
-        QTimer.singleShot(2500, press)
-    if a.screenshot:
-        total = sum(int(s[4:] or 500) if s.startswith("wait") else 350 for s in steps)
-        QTimer.singleShot(3500 + total, lambda: (win.grabWindow().save(a.screenshot), app.quit()))
+    if not getattr(a, "headless", False):
+        show_gui()
+
+    if win is not None:
+        steps = [s for s in (a.keys or "").split(",") if s]
+        if steps:  # test hook: replay key presses, e.g. --keys Tab,Down,Return
+            from PySide6.QtTest import QTest
+
+            def press(i=0):
+                if i >= len(steps):
+                    return
+                mods, name = Qt.KeyboardModifier.NoModifier, steps[i]
+                while "+" in name[1:]:
+                    m, name = name.split("+", 1)
+                    mods |= {"Shift": Qt.KeyboardModifier.ShiftModifier, "Ctrl": Qt.KeyboardModifier.ControlModifier}[m]
+                if name.startswith("wait"):
+                    QTimer.singleShot(int(name[4:] or 500), lambda: press(i + 1))
+                    return
+                if len(name) == 1:
+                    QTest.keyClick(win, name, mods)
+                else:
+                    QTest.keyClick(win, getattr(Qt.Key, "Key_" + name), mods)
+                QTimer.singleShot(350, lambda: press(i + 1))
+            QTimer.singleShot(2500, press)
+        if a.screenshot:
+            total = sum(int(s[4:] or 500) if s.startswith("wait") else 350 for s in steps)
+            QTimer.singleShot(3500 + total, lambda: (win.grabWindow().save(a.screenshot), app.quit()))
+
     sys.exit(app.exec())
 
 
