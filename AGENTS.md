@@ -12,3 +12,10 @@ Whenever the agent completes a bugfix, implements a feature, or modifies code/co
    git push origin master
    ```
 4. **Clean State**: Never leave uncommitted changes or detached worktree branches behind after completing a task.
+
+## Execution Guardrails
+- **Structural Validation**: Verify changed files via structural ast/lint checks immediately after the first edit.
+- **Consecutive Failure Halting**: If an automated fix fails twice consecutively, halt background execution and surface the diff overview immediately.
+- **Clarification Over Assumptions**: Proactively prompt with clarification questions whenever behavior parameters are ambiguous; do not assume unlikely implementation traits.
+- **Non-Intrusive Live Testing**: Verify fixes took place by live testing without covering the user's screen (e.g., execute in another desktop workspace, run headless via `xvfb-run`, or in the background). Do not interrupt fullscreen applications.
+
