@@ -3840,7 +3840,10 @@ def main_qt():
     def show_gui():
         nonlocal engine, win
         if win is not None:
-            win.show()
+            if not a.windowed:
+                win.showFullScreen()
+            else:
+                win.show()
             win.raise_()
             win.requestActivate()
             return
@@ -3863,7 +3866,10 @@ def main_qt():
         wid = win.winId()
         QTimer.singleShot(150, lambda: set_bypass_compositor(wid, True))
 
-        win.show()
+        if not a.windowed:
+            win.showFullScreen()
+        else:
+            win.show()
         win.raise_()
         win.requestActivate()
 
