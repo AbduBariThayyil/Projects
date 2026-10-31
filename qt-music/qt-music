@@ -4171,6 +4171,17 @@ def main_gui_proc(a, ipc_name):
     win.raise_()
     win.requestActivate()
 
+    def set_bypass_compositor(val):
+        try:
+            wid = win.winId()
+            if wid:
+                subprocess.Popen(["xprop", "-id", str(wid), "-f", "_NET_WM_BYPASS_COMPOSITOR", "32c", "-set", "_NET_WM_BYPASS_COMPOSITOR", str(val)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+    set_bypass_compositor(0 if a.windowed else 1)
+
     def place_on_desktop_5():
         try:
             xid = f"0x{int(win.winId()):08x}"
