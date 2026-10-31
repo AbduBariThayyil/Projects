@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# LyricViewLauncher - Toggle LyricView window or launch in system tray
+
+export PATH="$HOME/.local/bin:$HOME/.config/bspwm/bin:$PATH"
+
+if pgrep -f "qt-music" >/dev/null 2>&1 || pgrep -f "lyricview" >/dev/null 2>&1; then
+    lyricview --toggle >/dev/null 2>&1 &
+else
+    nohup lyricview >/dev/null 2>&1 & disown
+fi

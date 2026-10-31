@@ -277,157 +277,6 @@ def load_art(meta):
     return None
 
 
-# ───────────────────────────── player state ─────────────────────────────
-IGNORE = ["lyricview"]  # our own MPRIS name; emptied when --mpris-name is used
-
-
-_FLEN = {}
-
-
-def file_length(url):
-    """Song length from the file itself (cached, mutagen + ffprobe fallback)."""
-    p = path_from_url(url) if url else None
-    if not p:
-        return 0.0
-    if p not in _FLEN:
-        dur = 0.0
-        try:
-            import mutagen
-            f = mutagen.File(p)
-            dur = float(f.info.length) if f is not None and getattr(f, "info", None) else 0.0
-        except Exception:
-            pass
-        if not dur and shutil.which("ffprobe"):
-            try:
-                r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                                    "-of", "default=noprint_wrappers=1:nokey=1", str(p)],
-                                   capture_output=True, encoding="utf-8", errors="replace", timeout=3)
-                dur = float(r.stdout.strip())
-            except Exception:
-                pass
-        _FLEN[p] = dur
-    return _FLEN[p]
-
-
-class State:
-    def __init__(self, player=None):
-        self.player = player
-        self.lock = threading.Lock()
-        self.active = False
-        self.status, self.pos, self.t = "Stopped", 0.0, time.time()
-        self.meta, self.key = {}, ""
-        self.lyrics, self.lyr_ev = None, threading.Event()
-        self.art, self.art_done, self.art_ev = None, False, threading.Event()
-        self.last_client = 0.0
-        self.track_t0, self.settle = 0.0, 0.0
-        self.on_lyrics = None  # callback(key, lyrics) when word-level lyrics arrive after the first ones
-
-    def cmd(self, *args):
-        sel = ["-p", self.player] if self.player else (["--ignore-player", IGNORE[0]] if IGNORE else [])  # never follow ourselves
-        return ["playerctl"] + sel + list(args)
-
-    def ctl(self, *args):
-        try:
-            subprocess.run(self.cmd(*args), capture_output=True, timeout=3)
-        except Exception:
-            pass
-
-    def refresh(self):
-        try:
-            r = subprocess.run(self.cmd("metadata", "--format", FMT), capture_output=True, encoding="utf-8", errors="replace", timeout=3)
-            f = r.stdout.rstrip("\n").split(SEP) if r.returncode == 0 else []
-        except FileNotFoundError:
-            sys.exit("playerctl not found - install it: sudo pacman -S playerctl")
-        except Exception:
-            f = []
-        if len(f) < 9:
-            with self.lock:
-                self.active = False
-            return
-        status, player, artist, title, album, length, url, art, pos = f
-
-        def num(x, div=1e6):
-            try:
-                return float(x) / div
-            except ValueError:
-                return 0.0
-        length_s = num(length) or file_length(url)
-        key = hashlib.md5(f"{artist}|{title}|{album}|{url}".encode()).hexdigest()[:16]  # not the length: it may arrive late
-        new = None
-        with self.lock:
-            now, p = time.time(), num(pos)
-            if key != self.key:  # a new song: a position that is still the previous song's must not leak in
-                self.track_t0, self.settle = now, now + 1.5
-                if p > 3:
-                    p = 0.0
-            elif now < self.settle and p > (now - self.track_t0) + 3:
-                p = now - self.track_t0
-            if length_s and p > length_s:
-                p = length_s
-            self.active, self.status, self.pos, self.t = True, status, p, now
-            if self.meta and key == self.key and self.meta.get("length") != length_s:
-                self.meta["length"] = length_s
-            if key != self.key:
-                self.key = key
-                self.meta = {"key": key, "artist": artist, "title": title, "album": album, "length": length_s,
-                             "url": url, "art": art, "player": player}
-                self.lyrics, self.art, self.art_done = None, None, False
-                self.lyr_ev, self.art_ev = threading.Event(), threading.Event()
-                new = (self.meta, self.lyr_ev, self.art_ev, key)
-        if new:  # cover and lyrics load independently: a slow lyrics lookup must never delay the cover
-            threading.Thread(target=self._load_art, args=(new[0], new[2], new[3]), daemon=True).start()
-            threading.Thread(target=self._load_lyr, args=(new[0], new[1], new[3]), daemon=True).start()
-
-    def _load_lyr(self, meta, ev, key):
-        try:
-            lyr = load_lyrics(meta)
-        except Exception:
-            lyr = {"kind": "none", "lines": [], "src": ""}
-        with self.lock:
-            if self.key == key:
-                self.lyrics = lyr
-        ev.set()
-        try:  # then look for word-by-word lyrics; swap them in live if found
-            up = upgrade_lyrics(meta, lyr or {})
-        except Exception:
-            up = None
-        if up:
-            with self.lock:
-                ok = self.key == key
-                if ok:
-                    self.lyrics = up
-            if ok and self.on_lyrics:
-                self.on_lyrics(key, up)
-
-    def _load_art(self, meta, ev, key):
-        art = None
-        try:
-            art = load_art(meta)
-        except Exception:
-            pass
-        with self.lock:
-            if self.key == key:
-                self.art, self.art_done = art, True
-        ev.set()
-
-    def poll_loop(self):
-        while True:
-            self.refresh()
-            idle = time.time() - self.last_client > 10
-            time.sleep(4.0 if idle else 1.0)  # browser extrapolates between polls, so 1s is plenty (was 0.5s)
-
-    def snapshot(self):
-        with self.lock:
-            self.last_client = time.time()
-            pos = self.pos + (time.time() - self.t if self.status == "Playing" else 0)
-            ln = self.meta.get("length", 0)
-            if ln and pos > ln:  # never run past the end of the track
-                pos = ln
-            return {"active": self.active, "status": self.status, "pos": round(pos, 3), "key": self.key,
-                    "title": self.meta.get("title", ""), "artist": self.meta.get("artist", ""),
-                    "album": self.meta.get("album", ""), "length": self.meta.get("length", 0),
-                    "player": self.meta.get("player", "")}
-
 
 
 # ───────────────────────────── word-level lyrics (same sources as musicD) ─────────────────────────────
@@ -655,10 +504,11 @@ except ImportError:
              "No Qt? The browser version needs only playerctl and a browser:  lyricview-web")
 
 from PySide6.QtCore import Property, QObject, QRectF, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QImage, QPainter, QPainterPath
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow  # noqa: F401  (registers the Quick window type)
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 AUDIO_EXT = {".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav", ".aac", ".wma", ".mp4"}
 
@@ -667,25 +517,6 @@ def _num(s):
     m = re.match(r"\d+", str(s or ""))
     return int(m.group()) if m else 0
 
-
-def external_players():
-    """MPRIS players other than ourselves (Lollypop, mpv, ...), asked straight from D-Bus - no process spawned."""
-    ignore = IGNORE[0] if IGNORE else None
-    names = None
-    try:
-        import gi
-        gi.require_version("Gio", "2.0")
-        from gi.repository import Gio, GLib
-        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-        r = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames", None,
-                          GLib.VariantType("(as)"), Gio.DBusCallFlags.NONE, 1500, None)
-        names = [n[len("org.mpris.MediaPlayer2."):] for n in r.unpack()[0] if n.startswith("org.mpris.MediaPlayer2.")]
-    except Exception:
-        try:
-            names = subprocess.run(["playerctl", "-l"], capture_output=True, encoding="utf-8", errors="replace", timeout=3).stdout.split()
-        except Exception:
-            names = []
-    return [p for p in names if p.split(".")[0] != ignore]
 
 
 class Library:
@@ -1131,6 +962,8 @@ class Mpris:
             self.on_cmd("Seek", a[0] / 1e6)
         elif method == "SetPosition":
             self.on_cmd("SetPosition", a[1] / 1e6)
+        elif method == "OpenUri":
+            self.on_cmd("OpenUri", str(a[0]))
         inv.return_value(self.GLib.Variant("()", ()))
 
     def _pos(self):
@@ -1391,6 +1224,7 @@ class OwnPlayer(QObject):
         self.eng.seek(sec)
         self.mpris.update(pos=sec, seeked=True)
         self.b.sync.emit(float(sec), self.status == "Playing")
+        self.b._send_gui({"type": "sync", "pos": float(sec), "playing": self.status == "Playing"})
 
     def set_volume(self, v):
         self.vol = max(0.0, min(1.0, v))
@@ -1412,11 +1246,13 @@ class OwnPlayer(QObject):
             e = self._entry(idxs[1:], name, sub)
             self.queue = [e] if e is not None else []
             self.play(idxs[0])
+            self.b._send_gui({"type": "queue", "rows": self.queue_rows()})
 
     def enqueue(self, idxs, name=None, sub=None):
         e = self._entry(idxs, name, sub)
         if e is not None:
             self.queue.append(e)
+            self.b._send_gui({"type": "queue", "rows": self.queue_rows()})
 
     def _pop_queue(self):
         e = self.queue[0]
@@ -1450,6 +1286,7 @@ class OwnPlayer(QObject):
         j = i + delta
         if 0 <= i < len(box) and 0 <= j < len(box):
             box[i], box[j] = box[j], box[i]
+            self.b._send_gui({"type": "queue", "rows": self.queue_rows()})
             return True
         return False
 
@@ -1459,6 +1296,7 @@ class OwnPlayer(QObject):
             del box[i]
             if len(path) == 2 and not box:
                 del self.queue[path[0]]
+            self.b._send_gui({"type": "queue", "rows": self.queue_rows()})
 
     def queue_play(self, path):
         i = path[0]
@@ -1474,6 +1312,7 @@ class OwnPlayer(QObject):
         else:
             t, self.queue = e, self.queue[i + 1:]
         self.play(t)
+        self.b._send_gui({"type": "queue", "rows": self.queue_rows()})
 
     # ---- engine events
     def _state(self, st):
@@ -1515,9 +1354,12 @@ class OwnPlayer(QObject):
         pos = self.eng.position()
         self.b.sync.emit(float(pos), self.status == "Playing")
         self.mpris.update(pos=pos)
+        self.b._send_gui({"type": "sync", "pos": float(pos), "playing": self.status == "Playing"})
 
     def _push(self):
-        self.b.sync.emit(float(self.eng.position()), self.status == "Playing")
+        pos = self.eng.position()
+        self.b.sync.emit(float(pos), self.status == "Playing")
+        self.b._send_gui({"type": "sync", "pos": float(pos), "playing": self.status == "Playing"})
 
     def _on_mpris(self, name, arg):
         if name == "Next": self.next()
@@ -1527,6 +1369,14 @@ class OwnPlayer(QObject):
         elif name == "PlayPause": self.toggle()
         elif name == "Seek": self.seek(self.eng.position() + arg)
         elif name == "SetPosition": self.seek(arg)
+        elif name == "OpenUri":
+            p = path_from_url(arg) if str(arg).startswith("file://") else Path(str(arg))
+            if p and p.exists():
+                idx = self.lib.by_path.get(str(p.resolve()))
+                if idx is not None:
+                    self.play(idx)
+                else:
+                    self.play({"path": str(p), "title": p.stem, "artist": "Unknown", "album": "", "len": 0})
         elif name == "Quit": QGuiApplication.quit()
 
 # ───────────────────────────── native app (Qt Quick, GPU rendered) ─────────────────────────────
@@ -1660,15 +1510,15 @@ class Bridge(QObject):
     _lyr = Signal(str)
     _art = Signal(str)
 
-    def __init__(self, state, args):
+    def __init__(self, state_or_args, args=None):
         super().__init__()
-        self.st, self.a = state, args
-        self.wake = threading.Event()
-        self._fproc = None
-        self.st.on_lyrics = lambda key, lyr: self._lyr.emit(json.dumps(lyr, ensure_ascii=False)) if self._mode == "follow" else None
-        self.lib = Library(args.music or os.environ.get("MUSICD_DIR") or Path.home() / "Music")
-        self.own, self._mode, self._own_key, self._scanning, self._engine_err = None, "follow", None, False, ""
-        self._wk = [None, None]  # follow worker: last meta / last key
+        if args is None:
+            self.a = state_or_args
+            self.st = None
+        else:
+            self.st, self.a = state_or_args, args
+        self.lib = Library(self.a.music or os.environ.get("MUSICD_DIR") or Path.home() / "Music")
+        self.own, self._mode, self._own_key, self._scanning, self._engine_err = None, "own", None, False, ""
         self._set_file = CACHE / "settings.json"
         try:
             self._settings = json.loads(self._set_file.read_text())
@@ -1678,9 +1528,14 @@ class Bridge(QObject):
         self._kind, self._lyr_json, self._src, self._raw, self._length = "none", "[]", "", None, 0.0
         self._art_d = {"art": "", "bg": "", "c1": "#6c5ce7", "c2": "#00b894"}
         self._own_ui = None
-        self._cfg = {"windowed": bool(args.windowed or args.screenshot), "lite": bool(args.lite), "controls": bool(args.controls),
+        self._cfg = {"windowed": bool(self.a.windowed or self.a.screenshot), "lite": bool(self.a.lite), "controls": bool(self.a.controls),
                      "wstyle": int(self._settings.get("wstyle", 0)),
-                     "font": args.font or os.environ.get("LYRICVIEW_FONT") or ""}
+                     "font": self.a.font or os.environ.get("LYRICVIEW_FONT") or "",
+                     **self._settings}
+        self._win = None
+        self._gui_proc = None
+        self._gui_sock = None
+        self._gui_buf = b""
         try:
             self._offset = float(json.loads(OFFSET_FILE.read_text())["offset"])
         except Exception:
@@ -1693,7 +1548,12 @@ class Bridge(QObject):
         self._modeReq.connect(lambda m: self.setMode(m))
         self._thumbs.connect(self.thumbsReady.emit)
         self._dlsig.connect(self.dlChanged.emit)
-        self._wordlevel, self._auto, self._auto_t, self._gone, self._thumb_busy, self._dl, self._dl_id = False, True, 0.0, 0, False, [], 0
+        self.toast.connect(lambda t: self._send_gui({"type": "toast", "msg": t}))
+        self.thumbsReady.connect(lambda: self._send_gui({"type": "thumbsReady"}))
+        self.dlChanged.connect(lambda d: self._send_gui({"type": "dlChanged", "data": d}))
+        self.libChanged.connect(lambda: self._send_gui({"type": "libChanged", "info": self.libInfo}))
+        self.searchDone.connect(lambda s: self._send_gui({"type": "searchDone", "data": s}))
+        self._wordlevel, self._auto, self._auto_t, self._gone, self._thumb_busy, self._dl, self._dl_id = False, False, 0.0, 0, False, [], 0
         self._sgen, self._sr = 0, {}
 
     # ---- properties read by QML
@@ -1722,13 +1582,16 @@ class Bridge(QObject):
     def cfg(self): return self._cfg
 
     @Property(str, notify=modeChanged)
-    def mode(self): return self._mode
+    def mode(self): return "own"
+
+    @Property(float)
+    def vol(self): return self.own.vol if self.own else 0.8
 
     @Property("QVariantMap", notify=libChanged)
     def libInfo(self): return {"ready": self.lib.ready, "count": self.lib.count, "scanning": self._scanning,
                                "dir": str(self.lib.root), "engineErr": self._engine_err, "online": online_available()}
 
-    # ---- start-up: pick the mode, build the library in the background
+    # ---- start-up: build the library in the background and start player
     def start(self):
         eng = None
         if os.environ.get("LYRICVIEW_ENGINE") == "null":
@@ -1736,19 +1599,12 @@ class Bridge(QObject):
         else:
             try:
                 eng = QtEngine()
-            except Exception as e:  # QtMultimedia missing
+            except Exception as e:
                 self._engine_err = f"{type(e).__name__}: {e}"[:120]
         if eng:
             self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self._settings.get("mpris_name") or self.a.mpris_name or "lollypop")
         self.lib.load_cache()
-        self.lib.apply_pending()
-        self._scanning = True
-        self.libChanged.emit()
-        threading.Thread(target=self._scan, daemon=True).start()
         self._start_thumbs()
-        threading.Thread(target=self.run_worker, daemon=True).start()
-        a = self.a
-        self._auto = not (a.player or a.follow or a.own)  # unless forced, we follow Lollypop (and co.) whenever one is running
         self.setMode("own", announce=False)
         self._rescan_timer = QTimer(self)
         self._rescan_timer.setInterval(30000)
@@ -1785,33 +1641,24 @@ class Bridge(QObject):
         self._scanning = False
         if changed:
             self.libChanged.emit()
-        if self._mode == "own" and self.own and self.own.cur is None and self.lib.ready:
+        if self.own and self.own.cur is None and self.lib.ready:
             self.own.activate()
 
-    def setMode(self, m, announce=True):
-        if m == "own":
-            if not self.own:
+    def setMode(self, m="own", announce=True):
+        self._mode = "own"
+        if not self.own:
+            try:
+                eng = QtEngine()
+                self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self._settings.get("mpris_name") or self.a.mpris_name or "lollypop")
+            except Exception as e:
+                self._engine_err = f"{type(e).__name__}: {e}"[:120]
                 self.toast.emit("can't play audio here - install qt6-multimedia (" + (self._engine_err or "unavailable") + ")")
                 return
-            self._mode = "own"
-            self._kill_follow()  # no helper process while we play our own music
-            self.modeChanged.emit()
-            if self.lib.ready:
-                self.own.activate()
-            if announce:
-                self.toast.emit("your library · shuffling" if self.lib.ready else "scanning your music folder…")
-        else:
-            if self._mode == "own":  # remember what the screen showed, so coming back isn't a black screen
-                self._own_ui = (dict(self._meta_d), self._kind, self._lyr_json, self._src, self._raw, self._length, dict(self._art_d))
-            if self.own:
-                self.own.deactivate()
-            self._mode = "follow"
-            self._wk = [None, None]
-            self.modeChanged.emit()
-            self.wake.set()
-            if announce:
-                ext = external_players()
-                self.toast.emit(f"following {ext[0].split('.')[0]}" if ext else "following other players (none running)")
+        self.modeChanged.emit()
+        if self.lib.ready and self.own.cur is None:
+            self.own.activate()
+        if announce:
+            self.toast.emit("your library · shuffling" if self.lib.ready else "scanning your music folder…")
 
     @Slot()
     def toggleMode(self):
@@ -1826,6 +1673,7 @@ class Bridge(QObject):
                 self.toast.emit("exited streaming · playing library")
             else:
                 self.toast.emit("reshuffled library")
+            self._send_gui({"type": "queue", "rows": self.own.queue_rows()})
 
     # ---- own-player callbacks (UI thread)
     def ownTrack(self, meta):
@@ -1833,6 +1681,8 @@ class Bridge(QObject):
         self._meta_d = {"active": True, "playing": True, "key": meta["key"], "title": meta["title"], "artist": meta["artist"],
                         "album": meta["album"], "length": float(meta["length"] or 0)}
         self.metaChanged.emit()
+        self._send_gui({"type": "meta", "meta": self._meta_d})
+        self._send_gui({"type": "queue", "rows": self.own.queue_rows() if self.own else []})
         self._on_lyr(json.dumps({"kind": "loading", "lines": []}))
         threading.Thread(target=self._own_assets, args=(dict(meta),), daemon=True).start()
 
@@ -1848,9 +1698,10 @@ class Bridge(QObject):
         self.artChanged.emit()
 
     def ownStatus(self, playing):
-        if self._mode == "own" and self._meta_d.get("playing") != playing:
+        if self._meta_d.get("playing") != playing:
             self._meta_d = dict(self._meta_d, playing=playing)
             self.metaChanged.emit()
+            self._send_gui({"type": "status", "playing": playing})
 
     def _own_assets(self, meta):
         key = meta["key"]
@@ -1960,9 +1811,6 @@ class Bridge(QObject):
             return
         if not idxs:
             return
-        if self._mode != "own":
-            self._auto = False
-            self.setMode("own", announce=False)
         n = len(idxs)
         if queue_only:
             self.own.enqueue(idxs, name, sub)
@@ -2034,8 +1882,6 @@ class Bridge(QObject):
         it = self._sr.get(vid)
         if not it or not self.own:
             return
-        if self._mode != "own":
-            self.setMode("own", announce=False)
         if queue_only:
             self.own.queue.append(it)
             self.toast.emit(f"queued · {it['title']}")
@@ -2130,37 +1976,239 @@ class Bridge(QObject):
             QTimer.singleShot(0, self._rescan)  # picks the new song up right away
 
     def _save(self, key, val):
-        self._settings[key] = val
+        if hasattr(val, "toVariant"):
+            val = val.toVariant()
+        if isinstance(val, (int, float, str, bool, list, dict)) or val is None:
+            self._settings[key] = val
+        else:
+            try:
+                self._settings[key] = json.loads(json.dumps(val, default=str))
+            except Exception:
+                self._settings[key] = str(val)
         try:
             CACHE.mkdir(parents=True, exist_ok=True)
-            self._set_file.write_text(json.dumps(self._settings))
-        except OSError:
-            pass
+            self._set_file.write_text(json.dumps(self._settings, indent=2, default=str))
+        except Exception as e:
+            print(f"lyricview: save settings error: {e}", file=sys.stderr)
 
-    @Slot(str, int)
+    @Slot(str, "QVariant")
     def saveSetting(self, key, val):
         self._save(key, val)
+        self._cfg[key] = val
+
+    def _prepare_desktop_5(self):
+        try:
+            cur = subprocess.check_output(["bspc", "query", "-D", "-d", "focused", "--names"], encoding="utf-8").strip()
+            if cur and cur != "5":
+                self._prev_desktop = cur
+        except Exception:
+            pass
+        try:
+            subprocess.run(["bspc", "desktop", "5", "-f"], check=False)
+        except Exception:
+            pass
+
+    def _post_show_desktop_5(self):
+        try:
+            subprocess.run(["bspc", "desktop", "5", "-f"], check=False)
+        except Exception:
+            pass
+
+    def _restore_prev_desktop(self):
+        try:
+            target = getattr(self, "_prev_desktop", None)
+            desks = subprocess.check_output(["bspc", "query", "-D", "--names"], encoding="utf-8").split()
+            if target and target in desks and target != "5":
+                subprocess.run(["bspc", "desktop", target, "-f"], check=False)
+            else:
+                cur = subprocess.check_output(["bspc", "query", "-D", "-d", "focused", "--names"], encoding="utf-8").strip()
+                if cur == "5":
+                    valid = [d for d in desks if d != "5"]
+                    if valid:
+                        subprocess.run(["bspc", "desktop", valid[0], "-f"], check=False)
+        except Exception:
+            pass
+        self._prev_desktop = None
+
+    def set_gui_client(self, conn):
+        self._gui_sock = conn
+        self._gui_buf = b""
+        conn.readyRead.connect(self._on_gui_ready_read)
+        conn.disconnected.connect(self._on_gui_disconnected)
+        try:
+            init_data = {
+                "type": "init",
+                "meta": self._meta_d,
+                "art": self._art_d,
+                "lyrics": {
+                    "kind": self._kind,
+                    "lines": json.loads(self._lyr_json) if self._lyr_json else [],
+                    "src": self._src,
+                    "wordlevel": self._wordlevel,
+                    "raw": self._raw,
+                    "length": self._length
+                },
+                "pos": float(self.own.eng.position()) if self.own else 0.0,
+                "playing": (self.own.status == "Playing") if self.own else False,
+                "volume": self.own.vol if self.own else 0.8,
+                "offset": self._offset,
+                "queue": self.own.queue_rows() if self.own else [],
+                "lib": self.libInfo,
+                "cfg": self._cfg,
+                "dl": self._dl[-6:]
+            }
+            self._send_gui(init_data)
+        except Exception as e:
+            print(f"lyricview: send init error: {e}", file=sys.stderr)
+
+    def _send_gui(self, data):
+        if not self._gui_sock:
+            return
+        try:
+            line = (json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8")
+            self._gui_sock.write(line)
+            self._gui_sock.flush()
+        except Exception:
+            pass
+
+    def _on_gui_ready_read(self):
+        if not self._gui_sock:
+            return
+        self._gui_buf += bytes(self._gui_sock.readAll())
+        while b"\n" in self._gui_buf:
+            line, self._gui_buf = self._gui_buf.split(b"\n", 1)
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line.decode("utf-8", errors="replace"))
+                self._handle_gui_cmd(msg)
+            except Exception:
+                pass
+
+    def _on_gui_disconnected(self):
+        self._gui_sock = None
+        self._gui_proc = None
+        self._restore_prev_desktop()
+
+    def _handle_gui_cmd(self, msg):
+        cmd = msg.get("cmd")
+        if cmd == "playPause": self.playPause()
+        elif cmd == "next": self.next()
+        elif cmd == "prev": self.prev()
+        elif cmd == "seek": self.seek(msg.get("sec", 0.0))
+        elif cmd == "volume": self.volume(msg.get("delta", 0.0))
+        elif cmd == "reshuffle": self.reshuffle()
+        elif cmd == "pick":
+            self.pick(msg["kind"], msg["ident"], msg["queue_only"])
+            self._send_gui({"type": "queue", "rows": self.own.queue_rows() if self.own else []})
+        elif cmd == "pickOnline":
+            self.pickOnline(msg["vid"], msg["queue_only"])
+            self._send_gui({"type": "queue", "rows": self.own.queue_rows() if self.own else []})
+        elif cmd == "queuePlay":
+            self.queuePlay(msg["path"])
+            self._send_gui({"type": "queue", "rows": self.own.queue_rows() if self.own else []})
+        elif cmd == "queueRemove":
+            self.queueRemove(msg["path"])
+            self._send_gui({"type": "queue", "rows": self.own.queue_rows() if self.own else []})
+        elif cmd == "queueMove":
+            self.queueMove(msg["path"], msg["delta"])
+            self._send_gui({"type": "queue", "rows": self.own.queue_rows() if self.own else []})
+        elif cmd == "queueClear":
+            self.queueClear()
+            self._send_gui({"type": "queue", "rows": self.own.queue_rows() if self.own else []})
+        elif cmd == "search": self.search(msg.get("query", ""), msg.get("kind", "songs"))
+        elif cmd == "drillAlbum": self.drillAlbum(msg.get("browse_id", ""))
+        elif cmd == "dlStart": self.dlStart(msg.get("vid", ""), msg.get("title", ""), msg.get("sub", ""))
+        elif cmd == "dlLink": self.dlLink(msg.get("url", ""))
+        elif cmd == "rescan": self.rescan()
+        elif cmd == "adjustOffset":
+            self.adjustOffset(msg.get("delta", 0.0))
+            self._send_gui({"type": "offset", "offset": self._offset})
+        elif cmd == "adjustSpread":
+            self.adjustSpread(msg.get("delta", 0.0))
+        elif cmd == "saveSetting": self.saveSetting(msg.get("key"), msg.get("val"))
+        elif cmd == "hideWindow": self.hideWindow()
+        elif cmd == "quitApp": self.quitApp()
+
+    @Slot()
+    def hideWindow(self):
+        if self._gui_sock:
+            try:
+                self._gui_sock.write(b'{"type": "close"}\n')
+                self._gui_sock.flush()
+            except Exception:
+                pass
+        if self._gui_proc and self._gui_proc.poll() is None:
+            try:
+                self._gui_proc.terminate()
+                self._gui_proc.wait(timeout=0.25)
+            except Exception:
+                pass
+            self._gui_proc = None
+        self._restore_prev_desktop()
+
+    @Slot()
+    def showWindow(self):
+        if self._gui_proc and self._gui_proc.poll() is None:
+            self._post_show_desktop_5()
+            return
+        self._prepare_desktop_5()
+        cmd = [sys.executable, str(Path(__file__).resolve()), "--gui-proc"]
+        if getattr(self.a, "lite", False): cmd.append("--lite")
+        if getattr(self.a, "windowed", False): cmd.append("--windowed")
+        if getattr(self.a, "font", None): cmd.extend(["--font", self.a.font])
+        if getattr(self.a, "music", None): cmd.extend(["--music", self.a.music])
+        if getattr(self.a, "size", None): cmd.extend(["--size", self.a.size])
+        if getattr(self.a, "keys", None): cmd.extend(["--keys", self.a.keys])
+        if getattr(self.a, "screenshot", None): cmd.extend(["--screenshot", self.a.screenshot])
+        self._gui_proc = subprocess.Popen(cmd)
+
+    @Slot()
+    def toggleWindow(self):
+        cur = ""
+        try:
+            cur = subprocess.check_output(["bspc", "query", "-D", "-d", "focused", "--names"], encoding="utf-8").strip()
+        except Exception:
+            pass
+        if self._gui_proc and self._gui_proc.poll() is None:
+            if cur == "5":
+                self.hideWindow()
+            else:
+                self._prev_desktop = cur
+                self._post_show_desktop_5()
+        else:
+            self.showWindow()
+
+    @Slot()
+    def quitApp(self):
+        self.hideWindow()
+        for s_name in getattr(self, "_ipc_names", [f"qt-music-ipc-{os.getuid()}", f"lyricview-ipc-{os.getuid()}"]):
+            try:
+                QLocalServer.removeServer(s_name)
+            except Exception:
+                pass
+        try:
+            if self.own:
+                self.own.deactivate()
+        except Exception:
+            pass
+        self._restore_prev_desktop()
+        QApplication.quit()
 
     @Slot(float)
     def volume(self, delta):
-        if self._mode == "own" and self.own:
+        if self.own:
             v = self.own.set_volume(self.own.vol + delta)
             self._save("volume", v)
             self.toast.emit(f"volume {round(v * 100)}%")
-        else:
-            threading.Thread(target=self.st.ctl, args=("volume", f"{abs(delta):.2f}{'+' if delta > 0 else '-'}"), daemon=True).start()
-            self.toast.emit("volume " + ("up" if delta > 0 else "down"))
-
-    @Slot()
-    def requestDestroyUi(self):
-        cb = getattr(self, "_on_destroy_ui", None)
-        if callable(cb):
-            cb()
+            self._send_gui({"type": "volume", "vol": v})
 
     # ---- worker thread -> UI thread
     def _on_meta(self, js):
         self._meta_d = json.loads(js)
         self.metaChanged.emit()
+        self._send_gui({"type": "meta", "meta": self._meta_d})
 
     def _on_lyr(self, js):
         d = json.loads(js)
@@ -2168,130 +2216,36 @@ class Bridge(QObject):
         self._raw, self._length = d.get("raw"), d.get("length") or 0.0
         self._lyr_json = json.dumps(d["lines"], ensure_ascii=False)
         self.lyricsChanged.emit()
+        self._send_gui({"type": "lyrics", "data": d})
 
     def _on_art(self, js):
         self._art_d = json.loads(js)
         self.artChanged.emit()
+        self._send_gui({"type": "art", "data": self._art_d})
 
     def _kill_follow(self):
-        p, self._fproc = self._fproc, None
-        if p and p.poll() is None:
-            p.terminate()
-
-    def _follow(self):
-        """playerctl --follow prints a line on every track/status change. Runs only in follow mode and can't outlive us."""
-        def die_with_parent():
-            try:
-                import ctypes
-                ctypes.CDLL("libc.so.6").prctl(1, 15)  # PR_SET_PDEATHSIG, SIGTERM
-            except Exception:
-                pass
-        while True:
-            if self._mode != "follow":
-                time.sleep(0.5)
-                continue
-            try:
-                self._fproc = subprocess.Popen(self.st.cmd("--follow", "metadata", "--format", "{{status}}{{title}}"),
-                                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, encoding="utf-8", errors="replace",
-                                               preexec_fn=die_with_parent)
-                for _ in self._fproc.stdout:
-                    self.wake.set()
-            except Exception:
-                pass
-            finally:
-                self._kill_follow()
-            time.sleep(1.0)
-
-    def run_worker(self):
-        threading.Thread(target=self._follow, daemon=True).start()
-        last_err = ""
-        while True:
-            try:
-                self._worker_step()
-            except Exception as e:  # a bad byte or a flaky player must never kill the loop
-                msg = f"{type(e).__name__}: {e}"
-                if msg != last_err:
-                    print(f"lyricview: follow loop recovered from {msg}", file=sys.stderr)
-                    last_err = msg
-                time.sleep(1.0)
-
-    def _auto_check(self):
         pass
 
-    def _worker_step(self):
-        self._auto_check()
-        if self._mode != "follow":
-            self.wake.wait(1.0)
-            self.wake.clear()
-            return
-        last_meta, last_key = self._wk
-        self.st.refresh()
-        snap = self.st.snapshot()
-        meta = {"active": snap["active"], "playing": snap["status"] == "Playing", "key": snap["key"], "title": snap["title"],
-                "artist": snap["artist"], "album": snap["album"], "length": float(snap["length"] or 0)}
-        if meta != last_meta:
-            self._wk[0] = meta
-            self._meta.emit(json.dumps(meta))
-        key = snap["key"] if snap["active"] else None
-        if key != last_key:
-            self._wk[1] = key
-            self._lyr.emit(json.dumps({"kind": "loading", "lines": []}))
-            if key:
-                with self.st.lock:
-                    lev, aev = self.st.lyr_ev, self.st.art_ev
-                threading.Thread(target=self._lyr_job, args=(key, lev), daemon=True).start()
-                threading.Thread(target=self._art_job, args=(key, aev), daemon=True).start()
-        self.sync.emit(float(snap["pos"]), meta["playing"])
-        self.wake.wait(1.5)  # QML extrapolates between syncs; --follow wakes us instantly on any change
-        self.wake.clear()
-
-    def _lyr_job(self, key, ev):
-        ev.wait(25)
-        with self.st.lock:
-            if self.st.key != key:
-                return
-            lyr = self.st.lyrics
-        self._lyr.emit(json.dumps(lyr or {"kind": "none", "lines": [], "src": ""}, ensure_ascii=False))
-
-    def _art_job(self, key, ev):
-        ev.wait(15)
-        with self.st.lock:
-            if self.st.key != key:
-                return
-            art = self.st.art
-        if art:
-            try:
-                info = process_art(art[0], key)
-                if info:
-                    self._art.emit(json.dumps(info))
-            except Exception:
-                pass
-
     # ---- slots called from QML
-    def _ctl_then_sync(self, *args):
-        self.st.ctl(*args)
-        self.st.refresh()
-        s = self.st.snapshot()
-        self.sync.emit(float(s["pos"]), s["status"] == "Playing")
-
-    def _follow_ctl(self, *args):
-        threading.Thread(target=self._ctl_then_sync, args=args, daemon=True).start()
-
     @Slot()
     def playPause(self):
-        self.own.toggle() if self._mode == "own" and self.own else self._follow_ctl("play-pause")
+        if self.own:
+            self.own.toggle()
 
     @Slot()
     def next(self):
-        self.own.next() if self._mode == "own" and self.own else self._follow_ctl("next")
+        if self.own:
+            self.own.next()
 
     @Slot()
     def prev(self):
-        self.own.prev() if self._mode == "own" and self.own else self._follow_ctl("previous")
+        if self.own:
+            self.own.prev()
 
     @Slot(float)
     def seek(self, sec):
-        self.own.seek(sec) if self._mode == "own" and self.own else self._follow_ctl("position", f"{max(0.0, sec):.3f}")
+        if self.own:
+            self.own.seek(sec)
 
     @Slot(float)
     def adjustOffset(self, d):
@@ -2314,6 +2268,355 @@ class Bridge(QObject):
         self.toast.emit(f"word spread ×{SPREAD:.2f}  ( , shorter   . longer )")
 
 
+class GuiBridge(QObject):
+    metaChanged = Signal()
+    lyricsChanged = Signal()
+    artChanged = Signal()
+    tuneChanged = Signal()
+    modeChanged = Signal()
+    libChanged = Signal()
+    sync = Signal(float, bool)
+    toast = Signal(str)
+    searchDone = Signal(str)
+    thumbsReady = Signal()
+    dlChanged = Signal(str)
+
+    def __init__(self, a, ipc_name):
+        super().__init__()
+        self.a = a
+        self.ipc_name = ipc_name
+        self._win = None
+        self.lib = Library(self.a.music or os.environ.get("MUSICD_DIR") or Path.home() / "Music")
+        self.lib.load_cache()
+
+        self._meta_d = {"active": False, "playing": False, "title": "", "artist": "", "album": "", "length": 0.0}
+        self._kind, self._lyr_json, self._src, self._raw, self._length = "none", "[]", "", None, 0.0
+        self._art_d = {"art": "", "bg": "", "c1": "#6c5ce7", "c2": "#00b894"}
+        self._wordlevel = False
+        self._offset = 0.0
+        self._vol = 0.8
+        self._queue_rows = []
+        self._lib_info = {"ready": self.lib.ready, "count": self.lib.count, "scanning": False, "dir": str(self.lib.root), "engineErr": "", "online": online_available()}
+
+        self._set_file = CACHE / "settings.json"
+        try:
+            self._settings = json.loads(self._set_file.read_text())
+        except Exception:
+            self._settings = {}
+        self._cfg = {"windowed": bool(self.a.windowed or self.a.screenshot), "lite": bool(self.a.lite), "controls": bool(self.a.controls),
+                     "wstyle": int(self._settings.get("wstyle", 0)),
+                     "font": self.a.font or os.environ.get("LYRICVIEW_FONT") or "",
+                     **self._settings}
+
+        self.sock = QLocalSocket(self)
+        self._buf = b""
+        self.sock.readyRead.connect(self._on_ready_read)
+        self.sock.disconnected.connect(self._on_disconnected)
+        for _ in range(30):
+            for name in [self.ipc_name, f"qt-music-ipc-{os.getuid()}", f"lyricview-ipc-{os.getuid()}"]:
+                self.sock.connectToServer(name)
+                if self.sock.waitForConnected(50):
+                    break
+            if self.sock.state() == QLocalSocket.ConnectedState:
+                break
+            time.sleep(0.05)
+        self._send({"cmd": "gui_connect"})
+
+    def _send(self, data):
+        try:
+            line = (json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8")
+            self.sock.write(line)
+            self.sock.flush()
+        except Exception:
+            pass
+
+    def _on_ready_read(self):
+        self._buf += bytes(self.sock.readAll())
+        while b"\n" in self._buf:
+            line, self._buf = self._buf.split(b"\n", 1)
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line.decode("utf-8", errors="replace"))
+                self._handle_msg(msg)
+            except Exception:
+                pass
+
+    def _on_disconnected(self):
+        QApplication.quit()
+
+    def _handle_msg(self, msg):
+        mtype = msg.get("type")
+        if mtype == "init":
+            self._meta_d = msg.get("meta", self._meta_d)
+            self._art_d = msg.get("art", self._art_d)
+            lyr = msg.get("lyrics", {})
+            self._kind = lyr.get("kind", "none")
+            self._src = lyr.get("src", "")
+            self._wordlevel = bool(lyr.get("wordlevel", False))
+            self._raw = lyr.get("raw")
+            self._length = float(lyr.get("length") or 0.0)
+            self._lyr_json = json.dumps(lyr.get("lines", []), ensure_ascii=False)
+            self._offset = float(msg.get("offset", 0.0))
+            self._vol = float(msg.get("volume", 0.8))
+            self._queue_rows = msg.get("queue", [])
+            self._lib_info = msg.get("lib", self._lib_info)
+            if "cfg" in msg:
+                self._cfg.update(msg["cfg"])
+            self.metaChanged.emit()
+            self.artChanged.emit()
+            self.lyricsChanged.emit()
+            self.tuneChanged.emit()
+            self.libChanged.emit()
+            self.sync.emit(float(msg.get("pos", 0.0)), bool(msg.get("playing", False)))
+        elif mtype == "close":
+            QApplication.quit()
+        elif mtype == "sync":
+            self.sync.emit(float(msg["pos"]), bool(msg["playing"]))
+        elif mtype == "meta":
+            self._meta_d = msg["meta"]
+            self.metaChanged.emit()
+        elif mtype == "lyrics":
+            data = msg["data"]
+            if isinstance(data, str):
+                data = json.loads(data)
+            self._kind = data.get("kind", "none")
+            self._src = data.get("src", "")
+            self._wordlevel = bool(data.get("wordlevel", False))
+            self._raw = data.get("raw")
+            self._length = float(data.get("length") or 0.0)
+            self._lyr_json = json.dumps(data.get("lines", []), ensure_ascii=False)
+            self.lyricsChanged.emit()
+        elif mtype == "art":
+            data = msg["data"]
+            if isinstance(data, str):
+                data = json.loads(data)
+            self._art_d = data
+            self.artChanged.emit()
+        elif mtype == "status":
+            self._meta_d["playing"] = bool(msg["playing"])
+            self.metaChanged.emit()
+        elif mtype == "queue":
+            self._queue_rows = msg["rows"]
+        elif mtype == "toast":
+            self.toast.emit(msg["msg"])
+        elif mtype == "thumbsReady":
+            self.thumbsReady.emit()
+        elif mtype == "dlChanged":
+            self.dlChanged.emit(msg["data"] if isinstance(msg["data"], str) else json.dumps(msg["data"], ensure_ascii=False))
+        elif mtype == "libChanged":
+            self.lib.load_cache()
+            self._lib_info = msg.get("info", self._lib_info)
+            self.libChanged.emit()
+        elif mtype == "searchDone":
+            self.searchDone.emit(msg["data"] if isinstance(msg["data"], str) else json.dumps(msg["data"], ensure_ascii=False))
+        elif mtype == "offset":
+            self._offset = float(msg["offset"])
+            self.tuneChanged.emit()
+        elif mtype == "volume":
+            self._vol = float(msg["vol"])
+
+    # ---- properties read by QML
+    @Property("QVariantMap", notify=metaChanged)
+    def meta(self): return self._meta_d
+
+    @Property("QVariantMap", notify=artChanged)
+    def artInfo(self): return self._art_d
+
+    @Property(str, notify=lyricsChanged)
+    def lyrics(self): return self._lyr_json
+
+    @Property(str, notify=lyricsChanged)
+    def kind(self): return self._kind
+
+    @Property(bool, notify=lyricsChanged)
+    def wordLevel(self): return self._wordlevel
+
+    @Property(bool, notify=metaChanged)
+    def isStreaming(self): return bool(self._meta_d.get("key", "").startswith("yt"))
+
+    @Property(float, notify=tuneChanged)
+    def offset(self): return self._offset
+
+    @Property("QVariantMap", constant=True)
+    def cfg(self): return self._cfg
+
+    @Property(str, notify=modeChanged)
+    def mode(self): return "own"
+
+    @Property(float)
+    def vol(self): return self._vol
+
+    @Property("QVariantMap", notify=libChanged)
+    def libInfo(self): return self._lib_info
+
+    # ---- thumb helpers
+    def _thumb_path(self, a):
+        return CACHE / "thumbs" / (hashlib.md5(f"{a['artist']}|{a['name']}".lower().encode()).hexdigest()[:16] + ".jpg")
+
+    def _thumb_url(self, a):
+        p = self._thumb_path(a)
+        return QUrl.fromLocalFile(str(p)).toString() if p.exists() else ""
+
+    @Slot(str, result=str)
+    def pickerData(self, spec):
+        kind, _, rest = spec.partition(":")
+        lib = self.lib
+        if kind == "albums":
+            ids = None
+            if rest.startswith("artist:") and int(rest[7:]) in lib.artists:
+                ids = set(lib.artists[int(rest[7:])]["albums"])
+            rows = [dict(r, thumb=self._thumb_url(lib.albums[r["id"]])) for r in lib.album_list() if ids is None or r["id"] in ids]
+        elif kind == "artists":
+            rows = []
+            for r in lib.artist_list():
+                first = lib.albums[lib.artists[r["id"]]["albums"][0]] if lib.artists[r["id"]]["albums"] else None
+                rows.append(dict(r, thumb=self._thumb_url(first) if first else ""))
+        else:  # songs
+            if rest.startswith("album:") and int(rest[6:]) in lib.albums:
+                idxs = lib.albums[int(rest[6:])]["tracks"]
+            else:
+                idxs = sorted(range(len(lib.tracks)), key=lambda i: (lib.tracks[i]["title"].lower(), lib.tracks[i]["artist"].lower()))
+            rows = [{"id": i, "name": lib.tracks[i]["title"], "sub": f"{lib.tracks[i]['artist']} · {lib.tracks[i]['album']}", "n": 0,
+                     "dur": f"{int(lib.tracks[i]['len'] // 60)}:{int(lib.tracks[i]['len'] % 60):02d}" if lib.tracks[i]["len"] else ""} for i in idxs]
+        return json.dumps(rows, ensure_ascii=False)
+
+    @Slot(result=str)
+    def queueData(self):
+        return json.dumps(self._queue_rows, ensure_ascii=False)
+
+    @Slot()
+    def playPause(self): self._send({"cmd": "playPause"})
+
+    @Slot()
+    def next(self): self._send({"cmd": "next"})
+
+    @Slot()
+    def prev(self): self._send({"cmd": "prev"})
+
+    @Slot(float)
+    def seek(self, sec): self._send({"cmd": "seek", "sec": float(sec)})
+
+    @Slot(float)
+    def volume(self, delta):
+        self._vol = max(0.0, min(1.0, self._vol + delta))
+        self._send({"cmd": "volume", "delta": float(delta)})
+
+    @Slot()
+    def reshuffle(self): self._send({"cmd": "reshuffle"})
+
+    @Slot()
+    def toggleMode(self): self.reshuffle()
+
+    @Slot(str, int, bool)
+    def pick(self, kind, ident, queue_only):
+        self._send({"cmd": "pick", "kind": kind, "ident": ident, "queue_only": queue_only})
+
+    @Slot(str, bool)
+    def pickOnline(self, vid, queue_only):
+        self._send({"cmd": "pickOnline", "vid": vid, "queue_only": queue_only})
+
+    @Slot(str)
+    def queuePlay(self, path): self._send({"cmd": "queuePlay", "path": path})
+
+    @Slot(str)
+    def queueRemove(self, path): self._send({"cmd": "queueRemove", "path": path})
+
+    @Slot(str, int, result=bool)
+    def queueMove(self, path, delta):
+        self._send({"cmd": "queueMove", "path": path, "delta": delta})
+        return True
+
+    @Slot()
+    def queueClear(self): self._send({"cmd": "queueClear"})
+
+    @Slot(str, str)
+    def search(self, query, kind="songs"):
+        self._send({"cmd": "search", "query": query, "kind": kind})
+
+    @Slot(str)
+    def drillAlbum(self, browse_id):
+        self._send({"cmd": "drillAlbum", "browse_id": browse_id})
+
+    @Slot(str, str, str)
+    def dlStart(self, vid, title, sub):
+        self._send({"cmd": "dlStart", "vid": vid, "title": title, "sub": sub})
+
+    @Slot(str)
+    def dlLink(self, url):
+        self._send({"cmd": "dlLink", "url": url})
+
+    @Slot()
+    def rescan(self): self._send({"cmd": "rescan"})
+
+    @Slot(float)
+    def adjustOffset(self, d):
+        self._offset = round(max(-5.0, min(5.0, self._offset + d)), 2)
+        self.tuneChanged.emit()
+        self.toast.emit(f"lyric timing {self._offset:+.1f}s")
+        self._send({"cmd": "adjustOffset", "delta": d, "offset": self._offset})
+
+    @Slot(float)
+    def adjustSpread(self, d):
+        global SPREAD
+        SPREAD = round(max(0.4, min(2.5, SPREAD + d)), 2)
+        if self._raw and self._kind == "synced":
+            self._lyr_json = json.dumps(parse_lrc(self._raw, self._length), ensure_ascii=False)
+            self.lyricsChanged.emit()
+        self.toast.emit(f"word spread ×{SPREAD:.2f}  ( , shorter   . longer )")
+        self._send({"cmd": "adjustSpread", "delta": d})
+
+    @Slot(str, "QVariant")
+    def saveSetting(self, key, val):
+        if hasattr(val, "toVariant"):
+            val = val.toVariant()
+        self._cfg[key] = val
+        self._send({"cmd": "saveSetting", "key": key, "val": val})
+
+    @Slot()
+    def hideWindow(self):
+        try:
+            self._send({"cmd": "hideWindow"})
+        except Exception:
+            pass
+        if self._win:
+            try:
+                self._win.close()
+                self._win.destroy()
+            except Exception:
+                pass
+        QTimer.singleShot(10, QApplication.quit)
+
+    @Slot()
+    def showWindow(self): pass
+
+    @Slot()
+    def toggleWindow(self): self.hideWindow()
+
+    @Slot()
+    def quitApp(self):
+        try:
+            self._send({"cmd": "quitApp"})
+        except Exception:
+            pass
+        QTimer.singleShot(10, QApplication.quit)
+
+    @Slot(result=str)
+    def getClipboard(self):
+        try:
+            return QGuiApplication.clipboard().text() or ""
+        except Exception:
+            return ""
+
+    @Slot(str)
+    def setClipboard(self, s):
+        try:
+            QGuiApplication.clipboard().setText(s)
+        except Exception:
+            pass
+
+
 QML = r"""
 import QtQuick
 import QtMultimedia
@@ -2324,14 +2627,14 @@ import QtQuick.Effects
 
 Window {
     id: win
-    width: 1280; height: 720; visible: true; color: "#050507"
+    width: 1280; height: 720; color: "#050507"
     title: bridge.meta.title ? bridge.meta.artist + " – " + bridge.meta.title : "qt-music"
     visibility: bridge.cfg.windowed ? Window.Windowed : Window.FullScreen
     flags: Qt.Window
 
-    onClosing: (close) => {
-        close.accepted = false
-        bridge.requestDestroyUi()
+    onClosing: function(closeEvent) {
+        closeEvent.accepted = false
+        bridge.hideWindow()
     }
 
     component Icon: Item {
@@ -2489,24 +2792,24 @@ Window {
 
         // ───── responsive layout: wide-short, normal and tall-narrow windows (scratchpads!)
         // Layout polish & progress styling
-        property real coverTitleGap: 14
-        property int progressStyle: 1
-        property bool showProgress: true
+        property real coverTitleGap: (bridge.cfg.coverTitleGap !== undefined ? bridge.cfg.coverTitleGap : 14)
+        property int progressStyle: (bridge.cfg.progressStyle !== undefined ? bridge.cfg.progressStyle : 2)
+        property bool showProgress: (bridge.cfg.showProgress !== undefined ? bridge.cfg.showProgress : true)
 
         // Background & user media
         property string bgType: bridge.cfg.bgType || "clouds" // clouds | backdrop | video | image | none
         property string userBgPath: bridge.cfg.userBgPath || ""
-        property real bgDim: 0.65
+        property real bgDim: (bridge.cfg.bgDim !== undefined ? bridge.cfg.bgDim : 0.65)
         property bool bgVideoError: false
 
         // Element toggles & Clean View
         property bool cleanView: false
-        property bool elemShowLyrics: true
-        property bool elemShowCover: true
-        property bool elemShowTitle: true
-        property bool elemShowProgress: true
-        property bool elemShowBgLayers: true
-        property bool elemShowToasts: true
+        property bool elemShowLyrics: (bridge.cfg.elemShowLyrics !== undefined ? bridge.cfg.elemShowLyrics : true)
+        property bool elemShowCover: (bridge.cfg.elemShowCover !== undefined ? bridge.cfg.elemShowCover : true)
+        property bool elemShowTitle: (bridge.cfg.elemShowTitle !== undefined ? bridge.cfg.elemShowTitle : true)
+        property bool elemShowProgress: (bridge.cfg.elemShowProgress !== undefined ? bridge.cfg.elemShowProgress : true)
+        property bool elemShowBgLayers: (bridge.cfg.elemShowBgLayers !== undefined ? bridge.cfg.elemShowBgLayers : true)
+        property bool elemShowToasts: (bridge.cfg.elemShowToasts !== undefined ? bridge.cfg.elemShowToasts : true)
 
         // Unified Get Music tab
         property string getMusicTab: "songs" // songs | albums
@@ -2574,7 +2877,11 @@ Window {
                 if (L.gap || !L.words) continue
                 for (var k = 0; k < L.words.length; k++) {
                     var w = L.words[k], t = w.w.trim()
-                    if (t !== "") f.push({ t: w.t, e: w.e, w: t, line: i, k: k, n: L.words.length })
+                    if (t !== "") {
+                        var cleanText = t.replace(/[\(\)\[\]\{\}]/g, "").trim()
+                        if (cleanText === "") cleanText = t
+                        f.push({ t: w.t, e: w.e, w: cleanText, orig: t, line: i, k: k, n: L.words.length })
+                    }
                 }
             }
             return f
@@ -2823,7 +3130,7 @@ Window {
             case Qt.Key_S: openOverlay("get-music"); break
             case Qt.Key_D: openOverlay("get-music"); break
             case Qt.Key_Q: if (ctrl) Qt.quit(); else openOverlay("queue"); break
-            case Qt.Key_M: bridge.toggleMode(); break
+            case Qt.Key_M: bridge.reshuffle(); break
             case Qt.Key_B: backdrop = !backdrop; say(backdrop ? "cover backdrop · lyrics focus" : "normal view"); break
             case Qt.Key_R: if (ctrl) bridge.rescan(); break
             case Qt.Key_W:
@@ -2841,8 +3148,7 @@ Window {
             case Qt.Key_BracketRight: bridge.adjustOffset(0.1); break
             case Qt.Key_Comma: bridge.adjustSpread(-0.1); break
             case Qt.Key_Period: bridge.adjustSpread(0.1); break
-            case Qt.Key_F: win.visibility = (win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen); break
-            case Qt.Key_Escape: if (win.visibility === Window.FullScreen) win.visibility = Window.Windowed; break
+            case Qt.Key_Escape: bridge.hideWindow(); break
             }
             wake()
         }
@@ -2924,19 +3230,28 @@ Window {
                 opacity: root.bgDim
             }
 
-            MediaPlayer {
-                id: bgPlayer
-                source: (root.bgType === "video" && root.userBgPath) ? (root.userBgPath.indexOf("file://") === 0 ? root.userBgPath : "file://" + root.userBgPath) : ""
-                loops: MediaPlayer.Infinite
-                audioOutput: null // muted
-                onErrorOccurred: (e, msg) => { root.bgVideoError = true }
-                Component.onCompleted: if (source !== "") play()
-            }
-            VideoOutput {
+            Loader {
+                id: bgVideoLoader
                 anchors.fill: parent
-                fillMode: VideoOutput.PreserveAspectCrop
-                visible: root.bgType === "video" && !root.bgVideoError && bgPlayer.playbackState === MediaPlayer.PlayingState
-                opacity: root.bgDim
+                active: root.bgType === "video" && !root.bgVideoError && root.userBgPath !== ""
+                sourceComponent: Component {
+                    Item {
+                        anchors.fill: parent
+                        MediaPlayer {
+                            id: bgPlayer
+                            source: (root.userBgPath.indexOf("file://") === 0 ? root.userBgPath : "file://" + root.userBgPath)
+                            loops: MediaPlayer.Infinite
+                            audioOutput: null
+                            onErrorOccurred: (e, msg) => { root.bgVideoError = true }
+                            Component.onCompleted: play()
+                        }
+                        VideoOutput {
+                            anchors.fill: parent
+                            fillMode: VideoOutput.PreserveAspectCrop
+                            opacity: root.bgDim
+                        }
+                    }
+                }
             }
         }
 
@@ -3256,21 +3571,29 @@ Window {
             property int rainIdx: 0
             property var spawnedRain: ({})
 
+            property string lastMainWord: ""
+
             onCurItemChanged: {
                 if (curItem && fi !== prevFi) {
                     prevFi = fi
+                    lastMainWord = curItem.w
                     if (st === 1) editWord.trigger()
                     else if (st === 0) root.punch()
                 }
             }
 
-            onStChanged: {
-                
-                spawnedRain = ({})
-                if (st === 1 && curItem) editWord.trigger()
+            onIsGapChanged: {
+                if (isGap) {
+                    lastMainWord = ""
+                }
             }
 
-
+            onStChanged: {
+                spawnedRain = ({})
+                if (st === 1 && curItem) {
+                    editWord.trigger()
+                }
+            }
 
             // Warning badge when lyrics are not word-by-word
             Row {
@@ -3323,10 +3646,13 @@ Window {
                     Behavior on scale { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
                     GlowText {
+                        id: gtStack
                         anchors.centerIn: parent
                         text: stkRow.modelData.w
                         col: stkRow.on ? "white" : Qt.rgba(1, 1, 1, 0.70)
-                        fnt: Qt.font({ family: root.lyricFont.family, pixelSize: Math.round(root.fs * 1.45), weight: stkRow.on ? Font.Black : Font.Bold })
+                        fnt: Qt.font({ family: root.lyricFont.family,
+                                       pixelSize: Math.round(root.fs * 1.45),
+                                       weight: stkRow.on ? Font.Black : Font.Bold })
                         glow: stkRow.on ? 1.0 : 0
                     }
                 }
@@ -3335,18 +3661,17 @@ Window {
             // 2. EDIT STYLE (1): Kinetic typography 'edit video' feel, bold single word, pop-in, tilt, punch, color accents, stretch
             Item {
                 id: editWord
-                visible: wv.st === 1 && wv.curItem !== null && !wv.isGap
+                visible: wv.st === 1 && (wv.curItem !== null || wv.lastMainWord !== "") && !wv.isGap
                 anchors.fill: parent
                 property real popScale: 1.0
                 property real tilt: 0.0
                 property real xShift: 0.0
                 property real yShift: 0.0
                 property color wordCol: "white"
-
                 function trigger() {
-                    if (!wv.curItem) return
+                    var w = wv.curItem ? wv.curItem.w : (wv.lastMainWord !== "" ? wv.lastMainWord : "")
+                    if (!w) return
                     root.punch()
-                    var w = wv.curItem.w
                     var hash = 0
                     for (var i = 0; i < w.length; i++) hash = (hash * 31 + w.charCodeAt(i)) & 0x7fffffff
                     tilt = ((hash % 11) - 5) * 1.9
@@ -3382,7 +3707,7 @@ Window {
                     GlowText {
                         id: gtEdit
                         anchors.centerIn: parent
-                        text: wv.curItem ? wv.curItem.w : ""
+                        text: wv.lastMainWord !== "" ? wv.lastMainWord : (wv.curItem ? wv.curItem.w : "")
                         col: editWord.wordCol
                         fnt: Qt.font({ family: bridge.cfg.font ? bridge.cfg.font : Qt.application.font.family,
                                        pixelSize: Math.max(28, Math.round(Math.min(win.width * 0.16, win.height * 0.22))),
@@ -3392,7 +3717,7 @@ Window {
                 }
             }
 
-            // 3. RAIN STYLE (2): Deterministic audio-clock fall landing on ground line exactly at word.t
+            // 3. RAIN STYLE (2): Deterministic audio-clock fall with water ripples and smooth vapor fade-away
             Item {
                 id: rainView
                 visible: wv.st === 2
@@ -3400,63 +3725,56 @@ Window {
 
                 readonly property real groundY: height * 0.62
                 readonly property real fallDur: 1.0 // exactly 1.0s fall duration
-
-                // Invisible ground guide line
-                Rectangle {
-                    anchors.top: parent.top; anchors.topMargin: rainView.groundY + root.fs * 0.4
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: parent.width * 0.85; height: 2
-                    color: Qt.rgba(1, 1, 1, 0.12)
-                    Rectangle {
-                        anchors.fill: parent
-                        color: root.c1; opacity: 0.35
-                    }
-                }
+                readonly property real fadeDur: 0.85 // smooth vapor fade-away after singing ends
 
                 // Window of words around current playback time (time-bounded lookahead so CJK/dense lyrics never clip)
                 readonly property int curFi: Math.max(0, root.flatIdx(wv.tnow))
-                readonly property var activeRainWords: {
-                    if (!root.flat || !root.flat.length) return []
-                    var res = []
-                    var tn = wv.tnow
-                    var start = Math.max(0, curFi - 8)
-                    for (var i = start; i < root.flat.length; i++) {
-                        var w = root.flat[i]
-                        if (!w) continue
-                        if (w.t > tn + rainView.fallDur) break
-                        if (tn <= w.e + 0.4) {
-                            res.push(w)
-                        }
-                    }
-                    return res
-                }
-
                 Repeater {
-                    model: rainView.activeRainWords
+                    model: 24
                     delegate: Item {
                         id: rDrop
                         required property int index
-                        required property var modelData
 
-                        readonly property real tRemain: modelData ? (modelData.t - wv.tnow) : 0 // seconds until vocal starts
-                        readonly property bool isFalling: modelData ? (tRemain > 0) : false
-                        readonly property bool isSung: modelData ? (tRemain <= 0 && wv.tnow <= modelData.e) : false
+                        // Map fixed pool slot to the unique word index in flat lyrics array
+                        readonly property int wordIdx: {
+                            if (!root.flat || !root.flat.length) return -1
+                            var cf = rainView.curFi
+                            var slot = index
+                            var base = Math.floor((cf - 6) / 24) * 24 + slot
+                            if (base < cf - 6) base += 24
+                            return (base >= 0 && base < root.flat.length) ? base : -1
+                        }
 
-                        // Fall progress from 0 (top of screen) to 1.0 (exact ground line)
-                        readonly property real fallProgress: Math.min(1.0, Math.max(0.0, 1.0 - (tRemain / rainView.fallDur)))
+                        readonly property var wData: wordIdx >= 0 ? root.flat[wordIdx] : null
+                        readonly property real tRemain: wData ? (wData.t - wv.tnow) : 999
+                        readonly property bool isFalling: wData ? (tRemain > 0 && tRemain <= rainView.fallDur) : false
+                        readonly property bool isPastEnd: wData ? (wv.tnow > wData.e) : false
+                        readonly property real tPastEnd: isPastEnd ? (wv.tnow - wData.e) : 0.0
+                        readonly property real fadeProgress: Math.min(1.0, Math.max(0.0, tPastEnd / rainView.fadeDur))
+                        readonly property bool isSung: wData ? (tRemain <= 0 && wv.tnow <= (wData.e + rainView.fadeDur)) : false
 
-                        // Y position: when tRemain == 0, y is EXACTLY groundY
+                        visible: (isFalling || isSung) && (wData !== null)
+
+                        // Fall progress from 0 (top of screen) to 1.0 (exact ground level)
+                        readonly property real fallProgress: isFalling ? Math.min(1.0, Math.max(0.0, 1.0 - (tRemain / rainView.fallDur))) : 1.0
+
+                        // Landing ripple progress (from 0 to 1 over 0.65s after landing)
+                        readonly property real tSinceLand: wData ? (wv.tnow - wData.t) : -1.0
+                        readonly property bool showRipple: wData && (tSinceLand >= 0.0) && (tSinceLand <= 0.65)
+                        readonly property real ripP: showRipple ? Math.min(1.0, Math.max(0.0, tSinceLand / 0.65)) : 0.0
+
+                        // Y position: falls to groundY, then gently drifts upward like vapor while fading
                         y: isFalling
                            ? (fallProgress * fallProgress * (rainView.groundY + height)) - height
-                           : rainView.groundY
+                           : (rainView.groundY - fadeProgress * 16)
 
                         // Stable horizontal lane derived from word metadata
                         readonly property real lane: {
-                            if (!modelData || !modelData.w) return 0.5
+                            if (!wData || !wData.w) return 0.5
                             var hash = 0
-                            var s = modelData.w
+                            var s = wData.w
                             for (var k = 0; k < s.length; k++) hash = (hash * 31 + s.charCodeAt(k)) & 0x7fffffff
-                            return 0.12 + 0.76 * (((modelData.line * 7 + modelData.k * 13 + hash) % 100) / 100.0)
+                            return 0.12 + 0.76 * (((wData.line * 7 + wData.k * 13 + hash) % 100) / 100.0)
                         }
 
                         x: Math.max(16, Math.min(parent.width - width - 16, parent.width * lane - width / 2))
@@ -3465,19 +3783,62 @@ Window {
                         scale: isFalling
                                ? (0.75 + 0.25 * fallProgress)
                                : isSung
-                                 ? (1.0 + 0.22 * Math.sin(Math.min(1.0, (wv.tnow - (modelData ? modelData.t : 0)) / 0.14) * Math.PI))
-                                 : Math.max(0.5, 1.0 - (wv.tnow - (modelData ? modelData.e : 0)) / 0.3)
+                                 ? (isPastEnd
+                                    ? (1.0 + 0.08 * fadeProgress)
+                                    : (1.0 + 0.22 * Math.sin(Math.min(1.0, (wv.tnow - (wData ? wData.t : 0)) / 0.14) * Math.PI)))
+                                 : 0.5
 
                         opacity: isFalling
                                  ? (fallProgress < 0.15 ? fallProgress / 0.15 : 1.0)
-                                 : isSung
-                                   ? 1.0
-                                   : Math.max(0.0, 1.0 - (wv.tnow - (modelData ? modelData.e : 0)) / 0.3)
+                                 : (isPastEnd
+                                    ? Math.max(0.0, Math.pow(1.0 - fadeProgress, 1.8))
+                                    : 1.0)
+
+                        // Water ripple 1: Primary expanding water ring
+                        Rectangle {
+                            visible: rDrop.showRipple
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.verticalCenter: parent.bottom
+                            width: Math.max(36, rText.implicitWidth * (0.6 + 2.2 * rDrop.ripP))
+                            height: width * 0.28
+                            radius: width / 2
+                            color: "transparent"
+                            border.width: Math.max(1.0, 2.0 * (1.0 - rDrop.ripP))
+                            border.color: Qt.rgba(root.c1.r, root.c1.g, root.c1.b, 0.85 * Math.pow(1.0 - rDrop.ripP, 1.3))
+                            z: -2
+                        }
+
+                        // Water ripple 2: Secondary inner echo ring
+                        Rectangle {
+                            readonly property real ripP2: Math.max(0.0, (rDrop.ripP - 0.16) / 0.84)
+                            visible: rDrop.showRipple && rDrop.ripP >= 0.16
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.verticalCenter: parent.bottom
+                            width: Math.max(20, rText.implicitWidth * (0.35 + 1.5 * ripP2))
+                            height: width * 0.28
+                            radius: width / 2
+                            color: "transparent"
+                            border.width: 1.0
+                            border.color: Qt.rgba(root.c2.r, root.c2.g, root.c2.b, 0.6 * Math.pow(1.0 - ripP2, 1.3))
+                            z: -2
+                        }
+
+                        // Water splash droplet glow at point of impact
+                        Rectangle {
+                            visible: rDrop.showRipple && rDrop.ripP < 0.22
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.verticalCenter: parent.bottom
+                            width: Math.max(12, rText.implicitWidth * 0.4 * (1.0 - rDrop.ripP / 0.22))
+                            height: width * 0.35
+                            radius: width / 2
+                            color: Qt.rgba(1, 1, 1, 0.45 * (1.0 - rDrop.ripP / 0.22))
+                            z: -1
+                        }
 
                         GlowText {
                             id: rText
                             anchors.centerIn: parent
-                            text: rDrop.modelData ? rDrop.modelData.w : ""
+                            text: rDrop.wData ? rDrop.wData.w : ""
                             col: rDrop.isSung ? "white" : Qt.rgba(1, 1, 1, 0.85)
                             fnt: Qt.font({ family: root.lyricFont.family,
                                            pixelSize: Math.max(22, Math.round(root.fs * (rDrop.isSung ? 1.5 : 1.3))),
@@ -3517,9 +3878,7 @@ Window {
             Behavior on opacity { NumberAnimation { duration: 500 } }
             Text { anchors.centerIn: parent; horizontalAlignment: Text.AlignHCenter; color: Qt.rgba(1, 1, 1, 0.6); font.pixelSize: Math.round(root.u * 0.04)
                    font.weight: Font.Bold
-                   text: bridge.mode === "own"
-                         ? (bridge.libInfo.ready ? "" : bridge.libInfo.scanning ? "Scanning your music…" : "No songs found in\n" + bridge.libInfo.dir)
-                         : "Nothing playing\nstart a track in Lollypop, or press M to play your library" }
+                   text: bridge.libInfo.ready ? "" : bridge.libInfo.scanning ? "Scanning your music…" : "No songs found in\n" + bridge.libInfo.dir }
         }
 
 
@@ -3761,22 +4120,199 @@ Window {
 """
 
 
+def make_tray_icon():
+    icon = QIcon.fromTheme("audio-x-generic")
+    if icon.isNull():
+        icon = QIcon.fromTheme("media-playback-start")
+    if icon.isNull():
+        from PySide6.QtGui import QPixmap
+        pm = QPixmap(64, 64)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor(168, 85, 247))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(4, 4, 56, 56, 14, 14)
+        p.setPen(QColor(255, 255, 255))
+        f = p.font()
+        f.setPixelSize(36)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(pm.rect(), Qt.AlignCenter, "♫")
+        p.end()
+        icon = QIcon(pm)
+    return icon
+
+
+def main_gui_proc(a, ipc_name):
+    app = QApplication(sys.argv)
+    app.setApplicationName("lyricview")
+
+    from PySide6.QtGui import QPixmapCache
+    QPixmapCache.setCacheLimit(32 * 1024)
+
+    bridge = GuiBridge(a, ipc_name)
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("bridge", bridge)
+    engine.loadData(QML.encode("utf-8"), QUrl("file:///lyricview.qml"))
+    if not engine.rootObjects():
+        sys.exit("could not load the UI - is Qt Quick complete? (sudo pacman -S pyside6 qt6-declarative)")
+    win = engine.rootObjects()[0]
+    bridge._win = win
+    try:
+        win.sceneGraphError.connect(lambda err, msg: print(f"lyricview: sceneGraphError {err}: {msg}", file=sys.stderr))
+    except Exception:
+        pass
+
+    if a.windowed:
+        win.showNormal()
+    else:
+        win.showFullScreen()
+    win.raise_()
+    win.requestActivate()
+
+    def place_on_desktop_5():
+        try:
+            xid = f"0x{int(win.winId()):08x}"
+            subprocess.run(["bspc", "node", xid, "-d", "5", "-f"], check=False)
+            subprocess.run(["bspc", "desktop", "5", "-f"], check=False)
+        except Exception:
+            pass
+
+    place_on_desktop_5()
+    QTimer.singleShot(60, place_on_desktop_5)
+
+    if a.size:
+        win.resize(*[int(v) for v in a.size.lower().split("x")])
+
+    steps = [s for s in (a.keys or "").split(",") if s]
+    if steps:
+        from PySide6.QtTest import QTest
+        def press(i=0):
+            if i >= len(steps): return
+            mods, name = Qt.KeyboardModifier.NoModifier, steps[i]
+            while "+" in name[1:]:
+                m, name = name.split("+", 1)
+                mods |= {"Shift": Qt.KeyboardModifier.ShiftModifier, "Ctrl": Qt.KeyboardModifier.ControlModifier}[m]
+            if name.startswith("wait"):
+                QTimer.singleShot(int(name[4:] or 500), lambda: press(i + 1))
+                return
+            if len(name) == 1: QTest.keyClick(win, name, mods)
+            else: QTest.keyClick(win, getattr(Qt.Key, "Key_" + name), mods)
+            QTimer.singleShot(350, lambda: press(i + 1))
+        QTimer.singleShot(2500, press)
+    if a.screenshot:
+        total = sum(int(s[4:] or 500) if s.startswith("wait") else 350 for s in steps)
+        QTimer.singleShot(3500 + total, lambda: (win.grabWindow().save(a.screenshot), app.quit()))
+
+    sys.exit(app.exec())
+
+
+def main_daemon(a, ipc_names):
+    prune_art()
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("qt-music")
+    app.setQuitOnLastWindowClosed(False)
+
+    bridge = Bridge(a)
+    bridge._ipc_names = ipc_names
+    bridge.start()
+
+    servers = []
+
+    def handle_client(srv):
+        conn = srv.nextPendingConnection()
+        if not conn:
+            return
+
+        def on_read():
+            raw = bytes(conn.readAll()).decode(errors="ignore")
+            for line in raw.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                if line == "toggle":
+                    bridge.toggleWindow()
+                    conn.disconnectFromServer()
+                    return
+                elif line == "show":
+                    bridge.showWindow()
+                    conn.disconnectFromServer()
+                    return
+                elif line == "hide":
+                    bridge.hideWindow()
+                    conn.disconnectFromServer()
+                    return
+                elif line == "quit":
+                    bridge.quitApp()
+                    conn.disconnectFromServer()
+                    return
+                else:
+                    try:
+                        msg = json.loads(line)
+                        if msg.get("cmd") == "gui_connect":
+                            try:
+                                conn.readyRead.disconnect(on_read)
+                            except Exception:
+                                pass
+                            bridge.set_gui_client(conn)
+                            return
+                        else:
+                            bridge._handle_gui_cmd(msg)
+                    except Exception:
+                        pass
+
+        conn.readyRead.connect(on_read)
+        if conn.bytesAvailable() > 0:
+            on_read()
+
+    for s_name in ipc_names:
+        srv = QLocalServer(app)
+        QLocalServer.removeServer(s_name)
+        srv.newConnection.connect(lambda s=srv: handle_client(s))
+        if srv.listen(s_name):
+            servers.append(srv)
+
+    # Tray Icon
+    tray = QSystemTrayIcon(make_tray_icon(), app)
+    tray.setToolTip("qt-music")
+    menu = QMenu()
+    menu.addAction("Show / Hide", bridge.toggleWindow)
+    menu.addSeparator()
+    menu.addAction("Play / Pause", bridge.playPause)
+    menu.addAction("Next", bridge.next)
+    menu.addAction("Previous", bridge.prev)
+    menu.addAction("Reshuffle Library", bridge.reshuffle)
+    menu.addSeparator()
+    menu.addAction("Quit", bridge.quitApp)
+    tray.setContextMenu(menu)
+    tray.activated.connect(lambda r: bridge.toggleWindow() if r in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
+    tray.show()
+
+    if not a.tray:
+        bridge.showWindow()
+
+    app.aboutToQuit.connect(bridge._restore_prev_desktop)
+    sys.exit(app.exec())
+
+
 def main_qt():
-    ap = argparse.ArgumentParser(prog="qt-music", description="Native fullscreen word-by-word lyrics & music player.")
-    ap.add_argument("--toggle", action="store_true", help="toggle visibility of running window")
-    ap.add_argument("--show", action="store_true", help="show running window")
-    ap.add_argument("--hide", action="store_true", help="hide running window")
-    ap.add_argument("--quit", action="store_true", help="quit running instance")
-    ap.add_argument("--headless", "--daemon", action="store_true", dest="headless",
-                    help="start in background as lightweight headless audio engine (loads no QML/GUI until toggled)")
-    ap.add_argument("-p", "--player", help="only follow this player (e.g. lollypop, mpv, spotify)")
-    ap.add_argument("--own", action="store_true", help="start in your-own-library mode even if another player is running")
-    ap.add_argument("--follow", action="store_true", help="start by following other players")
+    ap = argparse.ArgumentParser(prog="qt-music", description="Native fullscreen word-by-word lyrics for your music.")
+    ap.add_argument("-p", "--player", help=argparse.SUPPRESS)
+    ap.add_argument("--own", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--follow", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--mpris-name", default="lollypop", metavar="NAME",
                     help="name other programs (polybar, playerctl) see while playing your library, e.g. Lollypop")
     ap.add_argument("--music", metavar="DIR", help="music folder (default ~/Music or $MUSICD_DIR)")
     ap.add_argument("--controls", action="store_true", help="show the prev/play/next buttons from the start")
     ap.add_argument("--windowed", action="store_true", help="don't start fullscreen")
+    ap.add_argument("--tray", action="store_true", help="start minimized to system tray")
+    ap.add_argument("--gui-proc", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--toggle", action="store_true", help="toggle existing qt-music window visibility via IPC")
+    ap.add_argument("--show", action="store_true", help="show existing qt-music window via IPC")
+    ap.add_argument("--hide", action="store_true", help="hide existing qt-music window via IPC")
+    ap.add_argument("--quit", action="store_true", help="quit running qt-music daemon")
     ap.add_argument("--lite", action="store_true", help="no drifting background or card mask (for weak GPUs)")
     ap.add_argument("--font", help="lyrics font family (default: your system font)")
     ap.add_argument("--screenshot", metavar="FILE", help=argparse.SUPPRESS)
@@ -3785,217 +4321,32 @@ def main_qt():
     ap.add_argument("--track", type=int, help=argparse.SUPPRESS)
     ap.add_argument("--seek", type=float, help=argparse.SUPPRESS)
     a = ap.parse_args()
-
-    # Fast IPC check: if an instance is already running, control it
-    import socket
-    ipc_socket_paths = [f"/tmp/qt-music-ipc-{os.getuid()}", f"/tmp/lyricview-ipc-{os.getuid()}"]
-    _connected = False
-    for _sock_path in ipc_socket_paths:
-        if os.path.exists(_sock_path):
-            _s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                _s.settimeout(0.4)
-                _s.connect(_sock_path)
-                cmd = "toggle" if a.toggle else ("quit" if a.quit else ("hide" if a.hide else "show"))
-                _s.sendall((cmd + "\n").encode())
-                _s.close()
-                _connected = True
-                break
-            except Exception:
-                try:
-                    os.unlink(_sock_path)
-                except OSError:
-                    pass
-
-    if _connected:
-        sys.exit(0)
-
-    if a.quit:
-        sys.exit(0)
-
     if not shutil.which("playerctl"):
         sys.exit("playerctl not found - install it: sudo pacman -S playerctl")
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-    if a.mpris_name != "lyricview" and a.mpris_name != "qt-music":
-        IGNORE.clear()  # we may be pretending to be Lollypop: never hide the real one from ourselves
-    prune_art()
-    app = QGuiApplication(sys.argv)
-    app.setApplicationName("qt-music")
-    app.setQuitOnLastWindowClosed(False)
-    bridge = Bridge(State(a.player), a)
-    bridge.start()
 
-    engine = None
-    win = None
-
-    def set_bypass_compositor(wid, bypass: bool):
-        try:
-            if wid:
-                val = 1 if bypass else 0
-                subprocess.Popen(["xprop", "-id", str(wid), "-f", "_NET_WM_BYPASS_COMPOSITOR", "32c", "-set", "_NET_WM_BYPASS_COMPOSITOR", str(val)],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
-
-    def show_gui():
-        nonlocal engine, win
-        if win is not None:
-            if not a.windowed:
-                win.showFullScreen()
-            else:
-                win.show()
-            win.raise_()
-            win.requestActivate()
-            return
-
-        engine = QQmlApplicationEngine()
-        engine.rootContext().setContextProperty("bridge", bridge)
-        engine.loadData(QML.encode("utf-8"), QUrl("file:///qt-music.qml"))
-        if not engine.rootObjects():
-            print("qt-music: could not load the UI - is Qt Quick complete?", file=sys.stderr)
-            return
-        win = engine.rootObjects()[0]
-        try:
-            win.sceneGraphError.connect(lambda err, msg: print(f"qt-music: sceneGraphError {err}: {msg}", file=sys.stderr))
-        except Exception:
-            pass
-
-        if a.size:
-            win.resize(*[int(v) for v in a.size.lower().split("x")])
-
-        wid = win.winId()
-        QTimer.singleShot(150, lambda: set_bypass_compositor(wid, True))
-
-        if not a.windowed:
-            win.showFullScreen()
-        else:
-            win.show()
-        win.raise_()
-        win.requestActivate()
-
-    def hide_and_destroy_gui():
-        nonlocal engine, win
-        if win is not None:
-            try:
-                wid = win.winId()
-                set_bypass_compositor(wid, False)
-            except Exception:
-                pass
-            try:
-                win.hide()
-            except Exception:
-                pass
-            win = None
-        if engine is not None:
-            try:
-                engine.clearComponentCache()
-                engine.deleteLater()
-            except Exception:
-                pass
-            engine = None
-        import gc
-        gc.collect()
-
-    def toggle_gui():
-        if win is not None and win.isVisible():
-            hide_and_destroy_gui()
-        else:
-            show_gui()
-
-    bridge._on_destroy_ui = hide_and_destroy_gui
-
-    # Set up IPC server on both current and legacy socket names
     ipc_names = [f"qt-music-ipc-{os.getuid()}", f"lyricview-ipc-{os.getuid()}"]
-    servers = []
+    primary_ipc = ipc_names[0]
+
+    if a.gui_proc:
+        main_gui_proc(a, primary_ipc)
+        return
+
     for s_name in ipc_names:
-        srv = QLocalServer()
-        srv.removeServer(s_name)
-        if srv.listen(s_name):
-            servers.append(srv)
+        client_sock = QLocalSocket()
+        client_sock.connectToServer(s_name)
+        if client_sock.waitForConnected(250):
+            cmd = "toggle" if a.toggle else ("hide" if a.hide else ("quit" if a.quit else "show"))
+            client_sock.write((cmd + "\n").encode())
+            client_sock.waitForBytesWritten(250)
+            client_sock.flush()
+            client_sock.waitForDisconnected(250)
+            sys.exit(0)
 
-    _active_clients = []
+    if (a.hide or a.quit) and not a.tray:
+        sys.exit(0)
 
-    def handle_client(srv):
-        client = srv.nextPendingConnection()
-        if not client:
-            return
-        _active_clients.append(client)
-        def cleanup_client():
-            if client in _active_clients:
-                _active_clients.remove(client)
-        client.disconnected.connect(cleanup_client)
-
-        def on_data():
-            raw = bytes(client.readAll()).decode("utf-8", "replace").strip()
-            try:
-                client.write(b"ok\n")
-                client.flush()
-            except Exception:
-                pass
-            for line in raw.splitlines():
-                action = line.strip().lower()
-                if action == "toggle":
-                    toggle_gui()
-                elif action in ("show", "raise"):
-                    show_gui()
-                elif action == "hide":
-                    hide_and_destroy_gui()
-                elif action == "quit":
-                    QTimer.singleShot(20, _cleanup)
-        client.readyRead.connect(on_data)
-        if client.bytesAvailable() > 0:
-            on_data()
-
-    for srv in servers:
-        srv.newConnection.connect(lambda s=srv: handle_client(s))
-
-    def _cleanup():
-        for srv in servers:
-            try:
-                srv.close()
-            except Exception:
-                pass
-        for s_name in ipc_names:
-            QLocalServer.removeServer(s_name)
-        try:
-            if bridge.own:
-                bridge.own.deactivate()
-        except Exception:
-            pass
-        bridge._kill_follow()
-        os._exit(0)
-
-    app.aboutToQuit.connect(_cleanup)
-
-    if not getattr(a, "headless", False):
-        show_gui()
-
-    if win is not None:
-        steps = [s for s in (a.keys or "").split(",") if s]
-        if steps:  # test hook: replay key presses, e.g. --keys Tab,Down,Return
-            from PySide6.QtTest import QTest
-
-            def press(i=0):
-                if i >= len(steps):
-                    return
-                mods, name = Qt.KeyboardModifier.NoModifier, steps[i]
-                while "+" in name[1:]:
-                    m, name = name.split("+", 1)
-                    mods |= {"Shift": Qt.KeyboardModifier.ShiftModifier, "Ctrl": Qt.KeyboardModifier.ControlModifier}[m]
-                if name.startswith("wait"):
-                    QTimer.singleShot(int(name[4:] or 500), lambda: press(i + 1))
-                    return
-                if len(name) == 1:
-                    QTest.keyClick(win, name, mods)
-                else:
-                    QTest.keyClick(win, getattr(Qt.Key, "Key_" + name), mods)
-                QTimer.singleShot(350, lambda: press(i + 1))
-            QTimer.singleShot(2500, press)
-        if a.screenshot:
-            total = sum(int(s[4:] or 500) if s.startswith("wait") else 350 for s in steps)
-            QTimer.singleShot(3500 + total, lambda: (win.grabWindow().save(a.screenshot), app.quit()))
-
-    sys.exit(app.exec())
+    main_daemon(a, ipc_names)
 
 
 if __name__ == "__main__":
