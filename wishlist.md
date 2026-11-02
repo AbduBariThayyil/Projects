@@ -91,3 +91,11 @@ All upgraded components follow the **`sys-`** naming convention (e.g. `sys-notif
   * **Snooze / Dismiss Modal Popup:** Centered GTK3 modal (`sys-alarm-popup`) with instant keyboard controls (<kbd>Space</kbd>/<kbd>Enter</kbd> to Dismiss, <kbd>S</kbd> to Snooze for 5 minutes).
   * **Full Clock GUI App:** Modal window displaying live digital clock, alarm list, on/off toggles, time spin-buttons, repeat modes (daily/weekdays/once/custom), custom folder/track picker, volume slider, and non-blocking audio tester.
   * **Global Hotkey:** `Super + Alt + A` opens the alarm clock.
+
+### 12. 📶 Smart On-Demand Bluetooth Stack (`sys-bt`)
+* **Current:** `bluetoothd` runs 24/7 in background (~5.7 MB RAM + battery draw from active Bluetooth radio polling).
+* **Goal:** Keep Bluetooth daemon and radio hardware powered off by default.
+* **Architecture:**
+  * **On-Demand Activation:** Seamlessly unblocks `rfkill` and starts `bluetoothd` only when triggered (via hotkey, Polybar, or `sys-control --bluetooth`).
+  * **Auto-Powerdown:** Automatically shuts down the daemon and turns off the radio when no devices are connected for a configurable period (e.g. 5 minutes).
+  * **Lightweight Pairing Interface:** Native fast pairing/connecting menu without requiring heavy GTK applets (`blueman-applet`) or background pollers.
