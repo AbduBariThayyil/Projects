@@ -20,7 +20,7 @@
 
 ## System & Window Manager Configs
 - [ ] **New Notification System**
-- [ ] **Low battery warning**
+- [x] **Low battery warning** (Natively integrated into sys-notif via UPower D-Bus & direct sysfs, eliminated polling Bash daemon)
 - [ ] **Make Keyholder ignore sxhkd binds**
 - [ ] **Blueman sxhkd integration / keybindings**
 - [ ] **Add mod keys to mouse**
@@ -28,3 +28,7 @@
 
 ## Fixes & Gaming
 - [ ] **Fix tModLoader 4.5.6**
+
+## Known Bugs & Backlog (Marked Down — Do Not Fix Yet)
+- [ ] **Instagram "Sent a reel to your group" parsed as contact "you"**
+  - **Details:** When multiple reels are shared to a group chat ("Sent a reel to your group"), the card title is parsed as `"you"` instead of the group name. The card displays the friend group's avatar (goldfish), but repeats `"• Sent a reel to your group"` without attributing the real sender or group chat name. (Flagged on 2026-11-02 per user request).

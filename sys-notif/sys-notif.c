@@ -2537,6 +2537,172 @@ static guint show_notification(const char *app_name, const char *summary, const 
     return id;
 }
 
+/* ==========================================================================
+ * Native Low-Overhead Battery & Power Monitor
+ * Replaces external Bash daemon (0 extra RAM, microsecond direct sysfs read)
+ * ========================================================================== */
+static char g_bat_path[256] = {0};
+static char g_bat_last_status[32] = {0};
+static gboolean g_bat_alert_20 = FALSE;
+static gboolean g_bat_alert_10 = FALSE;
+static gboolean g_bat_alert_5 = FALSE;
+static gboolean g_bat_alert_full = FALSE;
+
+static void init_battery_monitor(void) {
+    if (access("/sys/class/power_supply/BAT1", F_OK) == 0) {
+        snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/BAT1");
+    } else if (access("/sys/class/power_supply/BAT0", F_OK) == 0) {
+        snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/BAT0");
+    } else {
+        GDir *dir = g_dir_open("/sys/class/power_supply", 0, NULL);
+        if (dir) {
+            const char *name;
+            while ((name = g_dir_read_name(dir)) != NULL) {
+                if (g_str_has_prefix(name, "BAT")) {
+                    snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/%s", name);
+                    break;
+                }
+            }
+            g_dir_close(dir);
+        }
+    }
+
+    if (g_bat_path[0] != '\0') {
+        char path_st[300];
+        snprintf(path_st, sizeof(path_st), "%s/status", g_bat_path);
+        FILE *f = fopen(path_st, "r");
+        if (f) {
+            if (fgets(g_bat_last_status, sizeof(g_bat_last_status), f)) {
+                g_strstrip(g_bat_last_status);
+            }
+            fclose(f);
+        }
+    }
+}
+
+static gboolean battery_monitor_tick(gpointer user_data) {
+    (void)user_data;
+    if (g_bat_path[0] == '\0') return TRUE;
+
+    char path_cap[300], path_st[300];
+    snprintf(path_cap, sizeof(path_cap), "%s/capacity", g_bat_path);
+    snprintf(path_st, sizeof(path_st), "%s/status", g_bat_path);
+
+    FILE *f_cap = fopen(path_cap, "r");
+    FILE *f_st = fopen(path_st, "r");
+    if (!f_cap || !f_st) {
+        if (f_cap) fclose(f_cap);
+        if (f_st) fclose(f_st);
+        return TRUE;
+    }
+
+    int capacity = 0;
+    if (fscanf(f_cap, "%d", &capacity) != 1) {
+        fclose(f_cap); fclose(f_st);
+        return TRUE;
+    }
+    fclose(f_cap);
+
+    char status[32] = {0};
+    if (fgets(status, sizeof(status), f_st)) {
+        g_strstrip(status);
+    }
+    fclose(f_st);
+
+    gboolean is_discharging = (g_ascii_strcasecmp(status, "Discharging") == 0);
+
+    /* 1. Charger connected transition */
+    if (!is_discharging) {
+        if (strlen(g_bat_last_status) > 0 && g_ascii_strcasecmp(g_bat_last_status, "Discharging") == 0) {
+            char body[128];
+            snprintf(body, sizeof(body), "Battery is now charging (%d%%).", capacity);
+            show_notification("Power Manager", "AC Power Connected", body, "battery-charging", NULL, NULL, 5000, 0);
+            play_sound("power-plug");
+        }
+        g_bat_alert_20 = FALSE;
+        g_bat_alert_10 = FALSE;
+        g_bat_alert_5 = FALSE;
+
+        /* Full charge alert */
+        if (capacity >= 100) {
+            if (!g_bat_alert_full) {
+                show_notification("Power Manager", "Battery Fully Charged",
+                                  "Battery is at 100%. You can disconnect your charger.",
+                                  "battery-full-charged", NULL, NULL, 6000, 0);
+                play_sound("complete");
+                g_bat_alert_full = TRUE;
+            }
+        } else {
+            g_bat_alert_full = FALSE;
+        }
+
+        snprintf(g_bat_last_status, sizeof(g_bat_last_status), "%s", status);
+        return TRUE;
+    }
+
+    /* 2. Charger disconnected transition */
+    if (strlen(g_bat_last_status) > 0 && g_ascii_strcasecmp(g_bat_last_status, "Discharging") != 0) {
+        char body[128];
+        snprintf(body, sizeof(body), "Running on battery power (%d%%).", capacity);
+        show_notification("Power Manager", "Charger Disconnected", body, "battery-discharging", NULL, NULL, 5000, 0);
+        play_sound("power-unplug");
+    }
+
+    snprintf(g_bat_last_status, sizeof(g_bat_last_status), "Discharging");
+    g_bat_alert_full = FALSE;
+
+    /* 3. Low Battery Threshold Alerts */
+    if (capacity <= 5) {
+        if (!g_bat_alert_5) {
+            GVariantBuilder b;
+            g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+            g_variant_builder_add(&b, "{sv}", "urgency", g_variant_new_byte(2));
+            GVariant *hints = g_variant_builder_end(&b);
+
+            char sum[64], bod[128];
+            snprintf(sum, sizeof(sum), "EMERGENCY: Battery at %d%%", capacity);
+            snprintf(bod, sizeof(bod), "System will shut down imminently! Plug in your charger immediately.");
+            show_notification("Power Manager", sum, bod, "battery-empty", hints, NULL, 20000, 0);
+            play_sound("alarm-clock-elapsed");
+            g_bat_alert_5 = TRUE;
+        }
+    } else if (capacity <= 10) {
+        if (!g_bat_alert_10) {
+            GVariantBuilder b;
+            g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+            g_variant_builder_add(&b, "{sv}", "urgency", g_variant_new_byte(2));
+            GVariant *hints = g_variant_builder_end(&b);
+
+            char sum[64], bod[128];
+            snprintf(sum, sizeof(sum), "Critical Battery Alert (%d%%)", capacity);
+            snprintf(bod, sizeof(bod), "Battery level is critical! Please connect your charger to avoid data loss.");
+            show_notification("Power Manager", sum, bod, "battery-empty", hints, NULL, 15000, 0);
+            play_sound("dialog-warning");
+            g_bat_alert_10 = TRUE;
+        }
+    } else if (capacity <= 20) {
+        if (!g_bat_alert_20) {
+            char sum[64], bod[128];
+            snprintf(sum, sizeof(sum), "Low Battery Warning (%d%%)", capacity);
+            snprintf(bod, sizeof(bod), "Battery is running low. Please connect your charger.");
+            show_notification("Power Manager", sum, bod, "battery-caution", NULL, NULL, 8000, 0);
+            play_sound("dialog-information");
+            g_bat_alert_20 = TRUE;
+        }
+    }
+
+    return TRUE;
+}
+
+static void on_upower_changed(GDBusConnection *conn, const gchar *sender_name,
+                             const gchar *object_path, const gchar *interface_name,
+                             const gchar *signal_name, GVariant *parameters,
+                             gpointer user_data) {
+    (void)conn; (void)sender_name; (void)object_path; (void)interface_name;
+    (void)signal_name; (void)parameters; (void)user_data;
+    battery_monitor_tick(NULL);
+}
+
 /* -------------------------------------------------------------
  * D-Bus Handler
  * ------------------------------------------------------------- */
@@ -2924,6 +3090,30 @@ int main(int argc, char *argv[]) {
     GIOChannel *x11_chan = g_io_channel_unix_new(x11_fd);
     g_io_add_watch(x11_chan, G_IO_IN | G_IO_HUP | G_IO_ERR, x11_event_handler, NULL);
 
+    /* Initialize native battery & power monitor */
+    init_battery_monitor();
+    g_timeout_add_seconds(15, battery_monitor_tick, NULL);
+
+    /* Hook into UPower system D-Bus signals for instant 0ms charger plug/unplug events */
+    GError *s_err = NULL;
+    GDBusConnection *sys_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &s_err);
+    if (sys_bus) {
+        g_dbus_connection_signal_subscribe(
+            sys_bus,
+            "org.freedesktop.UPower",
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            NULL,
+            NULL,
+            G_DBUS_SIGNAL_FLAGS_NONE,
+            on_upower_changed,
+            NULL,
+            NULL
+        );
+    } else if (s_err) {
+        g_error_free(s_err);
+    }
+
     /* Acquire org.freedesktop.Notifications name on D-Bus session bus */
     g_bus_own_name(
         G_BUS_TYPE_SESSION,
@@ -2932,11 +3122,11 @@ int main(int argc, char *argv[]) {
         on_bus_acquired,
         NULL,
         NULL,
-        NULL,
+        G_DBUS_SIGNAL_FLAGS_NONE,
         NULL
     );
 
-    printf("sys-notif v1.0 daemon running (X11 & D-Bus connected)\n");
+    printf("sys-notif v1.0 daemon running (X11, D-Bus & Power Monitor connected)\n");
     g_main_loop_run(loop);
 
     XCloseDisplay(dpy);

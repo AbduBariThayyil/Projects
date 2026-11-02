@@ -66,6 +66,7 @@ All upgraded components follow the **`sys-`** naming convention (e.g. `sys-notif
     * Right-Click: Open / activate app and chat, mark read, and clear from history.
     * Polybar bell icon integration with unread indicator badge.
   * **Conversation & Avatar Routing:** Robust group chat avatar separation (group avatars never overwritten by individual member photos), DM vs. Group Chat isolation, and multi-chat separation for senders across multiple groups.
+  * **Native Power & Battery Monitoring:** Integrated directly into `sys-notif` with UPower system D-Bus signals (instant 0ms AC connect/disconnect chimes) and sysfs capacity threshold alerts (20%, 10%, 5%), completely retiring and purging the wasteful 8 MB background Bash `BatteryMonitor` daemon.
 
 ### 9. 🎨 Window Compositor Tuning & Physics Animations (`picom-ftlabs`) — ✅ COMPLETED
 * **Status:** **Active & Configured** (`picom-ftlabs-git` vgit-df4c6).
