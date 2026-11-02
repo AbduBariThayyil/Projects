@@ -81,12 +81,12 @@ All upgraded components follow the **`sys-`** naming convention (e.g. `sys-notif
 * **Goal:** A dedicated lightweight PAM-authenticated C locker with pre-cached blur or hardware-accelerated GLSL shader blur, displaying clock and battery with zero lag.
 
 ### 11. ⏰ High-Volume Native Alarm Clock & RTC Wake System (`sys-alarm`) — ✅ COMPLETED
-* **Status:** **Active & Production-Ready** (`sys-alarm.service` and `/home/vibecoder/.local/bin/sys-alarm`).
+* **Status:** **Active & Production-Ready** (`sys-alarm-wake.timer` and `/home/vibecoder/.local/bin/sys-alarm`).
 * **Source:** `/home/vibecoder/Projects/sys-alarm/sys-alarm.c`.
 * **Achieved Features & Metrics:**
   * **Precision RTC Suspend-Wake:** Native ACPI RTC wake timer synchronization via systemd user timer `sys-alarm-wake.timer` (`WakeSystem=true`) and direct RTC wakealarm fallback.
+  * **Zero Background RAM (0.0 MB):** Eliminates 24/7 background daemons completely; systemd's existing epoll event loop triggers `sys-alarm ring` at the exact second with zero memory overhead.
   * **Guaranteed Audio Blasting:** Unmutes the internal hardware speaker (`alsa_output.pci*`), overrides volume to 150%, and loops random music tracks from `~/Music` continuously until user action.
   * **Snooze / Dismiss Modal Popup:** Centered GTK3 modal (`sys-alarm-popup`) with instant keyboard controls (<kbd>Space</kbd>/<kbd>Enter</kbd> to Dismiss, <kbd>S</kbd> to Snooze for 5 minutes).
-  * **Full Clock GUI App:** Modal window displaying live digital clock, alarm list, on/off toggles, time spin-buttons, repeat modes (daily/weekdays/once/custom), custom folder/track picker, volume slider, and test sound launcher.
+  * **Full Clock GUI App:** Modal window displaying live digital clock, alarm list, on/off toggles, time spin-buttons, repeat modes (daily/weekdays/once/custom), custom folder/track picker, volume slider, and non-blocking audio tester.
   * **Global Hotkey:** `Super + Alt + A` opens the alarm clock.
-  * **Resource Footprint:** Consumes ~1.7 MB RAM and 0.0% CPU as background service.

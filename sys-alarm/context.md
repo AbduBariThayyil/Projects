@@ -14,7 +14,7 @@
 1. **Multi-Alarm Scheduling**: Pre-configured with user wake-up times (04:00 AM primary and 04:05 AM backup), supporting daily, weekdays, weekends, or one-off repeats.
 2. **Audio Blasting**: Overrides mute, forces volume to 150%, isolates the internal laptop speakers, and continuously loops a randomized track from `~/Music` (or a chosen folder/file).
 3. **BSPWM Snooze / Dismiss Modal**: Centered modal popup (`sys-alarm-popup`) with keyboard shortcuts (<kbd>Space</kbd>/<kbd>Enter</kbd> to Dismiss, <kbd>S</kbd> to Snooze for 5 minutes).
-4. **Persistent Daemon & Service**: Runs via `sys-alarm.service` in systemd user space.
+4. **Zero-Overhead Systemd Wake Timer**: Managed directly by `sys-alarm-wake.timer` in systemd user space with `WakeSystem=true` (0.0 MB persistent background RAM footprint).
 
 ## Commands
 ```bash
