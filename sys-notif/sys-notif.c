@@ -910,6 +910,15 @@ static void dismiss_all_notifications(void) {
     }
 }
 
+/* Notify Polybar notif badge instantly via IPC (0 polling) */
+static void update_polybar_notif_badge(void) {
+    if (fork() == 0) {
+        setsid();
+        execlp("polybar-msg", "polybar-msg", "action", "#notif.hook.0", NULL);
+        _exit(0);
+    }
+}
+
 /* Check if Do Not Disturb is enabled */
 static gboolean is_dnd_active(void) {
     return (access("/home/vibecoder/.cache/sys-notif/dnd", F_OK) == 0);
@@ -940,6 +949,7 @@ static void toggle_dnd(void) {
             _exit(0);
         }
     }
+    update_polybar_notif_badge();
 }
 
 /* Calculate dynamic card height to fit stacked messages (up to 5) and overflow badge comfortably */
@@ -1103,6 +1113,7 @@ static void clear_conversation_from_history(const char *app_name, const char *su
     fclose(f);
 
     for (int i = 0; i < count; i++) free(lines[i]);
+    update_polybar_notif_badge();
 }
 
 
@@ -1804,6 +1815,7 @@ static void append_history(const char *app, const char *summary, const char *bod
     }
 
     for (int i = 0; i < count; i++) free(lines[i]);
+    update_polybar_notif_badge();
 }
 
 /* -------------------------------------------------------------
@@ -3002,6 +3014,7 @@ int main(int argc, char *argv[]) {
     /* Fast CLI: Clear History */
     if (argc >= 2 && strcmp(argv[1], "--clear") == 0) {
         unlink("/home/vibecoder/.cache/sys-notif/history.txt");
+        update_polybar_notif_badge();
         printf("Notification history cleared.\n");
         return 0;
     }
