@@ -3096,6 +3096,27 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    /* Fast single-instance check for daemon mode */
+    const char *lock_file = "/tmp/.sys_notif_daemon.pid";
+    FILE *lf = fopen(lock_file, "r");
+    if (lf) {
+        pid_t existing_pid = 0;
+        if (fscanf(lf, "%d", &existing_pid) == 1 && existing_pid > 0) {
+            if (kill(existing_pid, 0) == 0 && existing_pid != getpid()) {
+                fprintf(stderr, "sys-notif: another daemon instance is already running (PID %d). Exiting.\n", existing_pid);
+                fclose(lf);
+                XCloseDisplay(dpy);
+                return 0;
+            }
+        }
+        fclose(lf);
+    }
+    lf = fopen(lock_file, "w");
+    if (lf) {
+        fprintf(lf, "%d\n", getpid());
+        fclose(lf);
+    }
+
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
 
     /* Hook X11 file descriptor into GLib main loop */
@@ -3143,5 +3164,6 @@ int main(int argc, char *argv[]) {
     g_main_loop_run(loop);
 
     XCloseDisplay(dpy);
+    unlink(lock_file);
     return 0;
 }

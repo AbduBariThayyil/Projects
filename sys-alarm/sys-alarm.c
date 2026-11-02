@@ -689,12 +689,13 @@ static void sync_system_timers(AlarmConfig *cfg) {
             close(rtc_fd);
         }
 
-        /* Reload user systemd units */
+        /* Reload user systemd units and ensure timer is enabled across reboots */
         system("systemctl --user daemon-reload >/dev/null 2>&1");
+        system("systemctl --user enable --now sys-alarm-wake.timer >/dev/null 2>&1");
         system("systemctl --user restart sys-alarm-wake.timer >/dev/null 2>&1");
     } else {
-        /* No upcoming alarms, stop timer */
-        system("systemctl --user stop sys-alarm-wake.timer >/dev/null 2>&1");
+        /* No upcoming alarms, stop and disable timer */
+        system("systemctl --user disable --now sys-alarm-wake.timer >/dev/null 2>&1");
     }
 
     g_free(timer_file);
