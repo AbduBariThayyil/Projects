@@ -158,6 +158,38 @@ static void render_hud(void) {
     XFlush(dpy);
 }
 
+static guint idle_exit_timer_id = 0;
+
+static gboolean idle_exit_cb(gpointer data) {
+    (void)data;
+    if (loop && g_main_loop_is_running(loop)) {
+        g_main_loop_quit(loop);
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static void schedule_idle_exit(guint delay_ms) {
+    if (idle_exit_timer_id) {
+        g_source_remove(idle_exit_timer_id);
+        idle_exit_timer_id = 0;
+    }
+    idle_exit_timer_id = g_timeout_add(delay_ms, idle_exit_cb, NULL);
+}
+
+static void cancel_idle_exit(void) {
+    if (idle_exit_timer_id) {
+        g_source_remove(idle_exit_timer_id);
+        idle_exit_timer_id = 0;
+    }
+}
+
+static void sig_handler(int sig) {
+    (void)sig;
+    if (loop && g_main_loop_is_running(loop)) {
+        g_main_loop_quit(loop);
+    }
+}
+
 /* Hide callback */
 static gboolean hide_timer_cb(gpointer data) {
     (void)data;
@@ -167,6 +199,8 @@ static gboolean hide_timer_cb(gpointer data) {
         is_visible = FALSE;
     }
     hide_timer_id = 0;
+    /* Auto-exit after being hidden if no new command arrives */
+    schedule_idle_exit(2500);
     return G_SOURCE_REMOVE;
 }
 
@@ -187,8 +221,12 @@ static void update_hud_state(const char *mode, const char *title, const char *su
             XFlush(dpy);
             is_visible = FALSE;
         }
+        schedule_idle_exit(2000);
         return;
     }
+
+    /* Active activity: cancel idle exit */
+    cancel_idle_exit();
 
     render_hud();
 
@@ -361,6 +399,10 @@ int main(int argc, char **argv) {
 
     GIOChannel *x_channel = g_io_channel_unix_new(ConnectionNumber(dpy));
     g_io_add_watch(x_channel, G_IO_IN | G_IO_PRI, x11_event_cb, NULL);
+
+    signal(SIGTERM, sig_handler);
+    signal(SIGINT, sig_handler);
+    schedule_idle_exit(10000);
 
     loop = g_main_loop_new(NULL, FALSE);
     g_main_loop_run(loop);

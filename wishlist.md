@@ -44,12 +44,12 @@ All upgraded components follow the **`sys-`** naming convention (e.g. `sys-notif
   * **Zero Breaking Changes:** Fully compatible with `sxhkdrc` and existing CLI invocations. Fixed `--bar` and `--node` parameter parsing so `Win + Alt + H` status bar hide/show toggles without IPC errors.
 
 ### 7. ⌨️ KeyHolder Floating HUD (`keyholder-hud`) — ✅ COMPLETED
-* **Status:** **Active & Running** as systemd service (`keyholder-hud.service`).
+* **Status:** **Active & On-Demand** (0.0 MB RAM when idle; auto-spawned by `KeyHolder` keybinds and auto-exits when finished).
 * **Source:** `/home/vibecoder/Projects/keyholder-hud/keyholder-hud.c`.
 * **Achieved Features & Metrics:**
-  * Consumes ~2.2 MB RAM and 0.0% CPU.
+  * **Zero Idle Footprint:** Consumes 0.0 MB RAM in background; launches on-demand and auto-terminates after idle timeout.
   * Positioned smoothly under Polybar right edge.
-  * High-speed non-blocking FIFO IPC at `/tmp/keyholder_hud.fifo`.
+  * High-speed non-blocking FIFO IPC at `/tmp/keyholder-hud.fifo`.
   * Replaced all notification spam from `KeyHolder` and handles keyd debounce/exclusions.
 
 ### 8. 📬 Notification Daemon & Center (`sys-notif` & `sys-notif-center`) — ✅ COMPLETED
