@@ -757,18 +757,19 @@ static int cmd_ring(const char *alarm_id_or_null) {
     if (audio_pid == 0) {
         /* In child: play audio continuously */
         while (1) {
-            char vol_str[16];
-            snprintf(vol_str, sizeof(vol_str), "%d", volume);
-            char dev_str[256];
-            snprintf(dev_str, sizeof(dev_str), "pulse/%s", sink);
+            char opt_vol[64];
+            snprintf(opt_vol, sizeof(opt_vol), "--volume=%d", volume);
+            char opt_dev[512];
+            snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
 
             pid_t mpv_pid = fork();
             if (mpv_pid == 0) {
                 execlp("mpv", "mpv",
+                       "--no-config",
                        "--no-video",
                        "--loop-file=inf",
-                       "--volume", vol_str,
-                       "--audio-device", dev_str,
+                       opt_vol,
+                       opt_dev,
                        song_file,
                        NULL);
                 _exit(1);
@@ -883,23 +884,32 @@ static int cmd_snooze(int minutes) {
 }
 
 static int cmd_test(void) {
-    printf("Testing alarm sound and popup (5 seconds)...\n");
+    printf("Testing alarm sound on built-in speaker at 150%% volume (4 seconds)...\n");
     AlarmConfig *cfg = config_load();
     char *sink = cfg->default_speaker_sink ? g_strdup(cfg->default_speaker_sink) : detect_speaker_sink();
     char *song = pick_audio_file(SOUND_RANDOM_MUSIC, DEFAULT_MUSIC_DIR);
+    if (!song) song = g_strdup("/home/vibecoder/Downloads/nuclear_alarm.mp3");
 
     /* Unmute and set 150% */
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0", sink);
+    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0; pactl set-sink-volume %s 150%%; pactl set-sink-port %s analog-output-speaker 2>/dev/null", sink, sink, sink);
     system(cmd);
-    snprintf(cmd, sizeof(cmd), "pactl set-sink-volume %s 150%%", sink);
-    system(cmd);
+
+    char opt_vol[64];
+    snprintf(opt_vol, sizeof(opt_vol), "--volume=150");
+    char opt_dev[512];
+    snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
 
     pid_t pid = fork();
     if (pid == 0) {
-        char dev_str[256];
-        snprintf(dev_str, sizeof(dev_str), "pulse/%s", sink);
-        execlp("mpv", "mpv", "--no-video", "--volume", "150", "--audio-device", dev_str, song, NULL);
+        execlp("mpv", "mpv",
+               "--no-config",
+               "--no-video",
+               "--loop-file=inf",
+               opt_vol,
+               opt_dev,
+               song,
+               NULL);
         _exit(1);
     }
 
@@ -1038,10 +1048,20 @@ static void on_popup_snooze_clicked(GtkButton *btn, gpointer user_data) {
     gtk_main_quit();
 }
 
+static gboolean on_popup_delete_event(GtkWidget *widget, GdkEvent *event, gpointer user_data) {
+    (void)widget;
+    (void)event;
+    (void)user_data;
+    cmd_dismiss();
+    return FALSE;
+}
+
 static void run_popup_window(const char *alarm_name, const char *track_title, int volume) {
     if (!gtk_init_check(NULL, NULL)) {
         return;
     }
+
+    g_set_prgname("sys-alarm-popup");
 
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_data(css, STYLE_CSS, -1, NULL);
@@ -1054,7 +1074,6 @@ static void run_popup_window(const char *alarm_name, const char *track_title, in
     GtkWidget *win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(win), "⏰ WAKE UP - sys-alarm");
     gtk_window_set_role(GTK_WINDOW(win), "sys-alarm-popup");
-    gtk_window_set_wmclass(GTK_WINDOW(win), "sys-alarm-popup", "sys-alarm-popup");
     gtk_window_set_default_size(GTK_WINDOW(win), 580, 420);
     gtk_window_set_position(GTK_WINDOW(win), GTK_WIN_POS_CENTER_ALWAYS);
     gtk_window_set_keep_above(GTK_WINDOW(win), TRUE);
@@ -1063,6 +1082,7 @@ static void run_popup_window(const char *alarm_name, const char *track_title, in
     gtk_style_context_add_class(ctx, "popup-window");
 
     g_signal_connect(win, "key-press-event", G_CALLBACK(on_popup_key_press), NULL);
+    g_signal_connect(win, "delete-event", G_CALLBACK(on_popup_delete_event), NULL);
     g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
@@ -1136,8 +1156,12 @@ typedef struct {
     GtkWidget *alarm_list_box;
     GtkWidget *lbl_clock;
     GtkWidget *lbl_next_alarm;
+    GtkWidget *btn_test;
     AlarmConfig *cfg;
 } GuiApp;
+
+static pid_t test_audio_pid = 0;
+static guint test_timeout_id = 0;
 
 static void refresh_alarm_list(GuiApp *app);
 
@@ -1333,10 +1357,69 @@ static void on_add_alarm_clicked(GtkButton *btn, gpointer user_data) {
     open_edit_dialog(app, NULL);
 }
 
+static gboolean on_test_timeout(gpointer user_data) {
+    GuiApp *app = (GuiApp *)user_data;
+    if (test_audio_pid > 0) {
+        kill(test_audio_pid, SIGTERM);
+        kill(test_audio_pid, SIGKILL);
+        test_audio_pid = 0;
+    }
+    test_timeout_id = 0;
+    if (app && app->btn_test) {
+        gtk_button_set_label(GTK_BUTTON(app->btn_test), "🔔 Test Audio (150%)");
+    }
+    return G_SOURCE_REMOVE;
+}
+
 static void on_test_alarm_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    (void)user_data;
-    cmd_test();
+    GuiApp *app = (GuiApp *)user_data;
+
+    if (test_audio_pid > 0) {
+        /* Already playing: stop immediately */
+        if (test_timeout_id > 0) {
+            g_source_remove(test_timeout_id);
+            test_timeout_id = 0;
+        }
+        kill(test_audio_pid, SIGTERM);
+        kill(test_audio_pid, SIGKILL);
+        test_audio_pid = 0;
+        gtk_button_set_label(btn, "🔔 Test Audio (150%)");
+        return;
+    }
+
+    AlarmConfig *cfg = app->cfg;
+    char *sink = cfg->default_speaker_sink ? g_strdup(cfg->default_speaker_sink) : detect_speaker_sink();
+    char *song = pick_audio_file(SOUND_RANDOM_MUSIC, DEFAULT_MUSIC_DIR);
+    if (!song) song = g_strdup("/home/vibecoder/Downloads/nuclear_alarm.mp3");
+
+    /* Unmute speaker and set 150% asynchronously without blocking */
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0; pactl set-sink-volume %s 150%%; pactl set-sink-port %s analog-output-speaker 2>/dev/null", sink, sink, sink);
+    system(cmd);
+
+    char opt_vol[64];
+    snprintf(opt_vol, sizeof(opt_vol), "--volume=150");
+    char opt_dev[512];
+    snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
+
+    test_audio_pid = fork();
+    if (test_audio_pid == 0) {
+        execlp("mpv", "mpv",
+               "--no-config",
+               "--no-video",
+               "--loop-file=inf",
+               opt_vol,
+               opt_dev,
+               song,
+               NULL);
+        _exit(1);
+    }
+
+    g_free(sink);
+    g_free(song);
+
+    gtk_button_set_label(btn, "⏹️ Stop Test Audio");
+    test_timeout_id = g_timeout_add_seconds(5, on_test_timeout, app);
 }
 
 static void refresh_alarm_list(GuiApp *app) {
@@ -1427,6 +1510,8 @@ static void run_gui_app(int argc, char **argv) {
     GuiApp *app = g_new0(GuiApp, 1);
     app->cfg = config_load();
 
+    g_set_prgname("sys-alarm");
+
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_data(css, STYLE_CSS, -1, NULL);
     gtk_style_context_add_provider_for_screen(
@@ -1438,7 +1523,6 @@ static void run_gui_app(int argc, char **argv) {
     app->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(app->window), "⏰ sys-alarm");
     gtk_window_set_role(GTK_WINDOW(app->window), "sys-alarm");
-    gtk_window_set_wmclass(GTK_WINDOW(app->window), "sys-alarm", "sys-alarm");
     gtk_window_set_default_size(GTK_WINDOW(app->window), 540, 620);
     gtk_window_set_position(GTK_WINDOW(app->window), GTK_WIN_POS_CENTER);
 
@@ -1483,6 +1567,7 @@ static void run_gui_app(int argc, char **argv) {
     gtk_box_pack_start(GTK_BOX(tools), btn_add, FALSE, FALSE, 0);
 
     GtkWidget *btn_test = gtk_button_new_with_label("🔔 Test Audio (150%)");
+    app->btn_test = btn_test;
     GtkStyleContext *t_ctx = gtk_widget_get_style_context(btn_test);
     gtk_style_context_add_class(t_ctx, "btn-danger");
     g_signal_connect(btn_test, "clicked", G_CALLBACK(on_test_alarm_clicked), app);
