@@ -247,10 +247,60 @@ static void extract_conversation_key(const char *norm_app, const char *sum_str, 
         g_strstrip(grp);
         char *snd = strdup(bullet + strlen(" • "));
         g_strstrip(snd);
+
+        /* Auto-heal corrupted legacy history entry where group had ": <Message>" and sender was generic app */
+        if (g_ascii_strcasecmp(snd, norm_app) == 0 && strchr(grp, ':')) {
+            const char *col = strchr(grp, ':');
+            if (col && (col - grp) >= 2) {
+                char *actual_grp = g_strndup(grp, (int)(col - grp));
+                g_strstrip(actual_grp);
+                char *actual_msg = strdup(col + 1);
+                g_strstrip(actual_msg);
+
+                *out_group = actual_grp;
+                *out_sender = strdup(bod); /* bod contained the sender */
+                *out_body = actual_msg;    /* actual message was inside group */
+                free(grp);
+                free(snd);
+                return;
+            }
+        }
+
         *out_group = grp;
         *out_sender = snd;
-        *out_body = strdup(bod);
+        /* Strip sender prefix if body already has "Sender: " */
+        char pfx[128];
+        snprintf(pfx, sizeof(pfx), "%s: ", snd);
+        if (g_str_has_prefix(bod, pfx)) {
+            *out_body = strdup(bod + strlen(pfx));
+        } else {
+            *out_body = strdup(bod);
+        }
         return;
+    }
+
+    /* Pattern: "<Sender> to <Group>: <Message>" in bod */
+    const char *to_in_bod = strcasestr(bod, " to ");
+    if (to_in_bod && (to_in_bod - bod) >= 2) {
+        const char *grp_start = to_in_bod + 4;
+        while (*grp_start == ' ') grp_start++;
+        const char *col = strchr(grp_start, ':');
+        if (col && (col - grp_start) >= 2) {
+            char *snd = g_strndup(bod, (int)(to_in_bod - bod));
+            g_strstrip(snd);
+            char *grp = g_strndup(grp_start, (int)(col - grp_start));
+            g_strstrip(grp);
+            int glen = (int)strlen(grp);
+            while (glen > 0 && (grp[glen-1] == '.' || grp[glen-1] == ':' || grp[glen-1] == ',')) {
+                grp[--glen] = '\0';
+            }
+            const char *msg = col + 1;
+            while (*msg == ' ') msg++;
+            *out_group = grp;
+            *out_sender = snd;
+            *out_body = strdup(msg);
+            return;
+        }
     }
 
     /* Pattern: "Sender to Group" in summary */
@@ -260,6 +310,10 @@ static void extract_conversation_key(const char *norm_app, const char *sum_str, 
         g_strstrip(snd);
         char *grp = strdup(to_kw + 4);
         g_strstrip(grp);
+        int glen = (int)strlen(grp);
+        while (glen > 0 && (grp[glen-1] == '.' || grp[glen-1] == ':' || grp[glen-1] == ',')) {
+            grp[--glen] = '\0';
+        }
         *out_group = grp;
         *out_sender = snd;
         *out_body = strdup(bod);
@@ -267,14 +321,18 @@ static void extract_conversation_key(const char *norm_app, const char *sum_str, 
     }
 
     /* Pattern: "Sent a ... to Group" in body */
-    const char *to_in_body = strcasestr(bod, " to ");
-    if (to_in_body && (to_in_body - bod) >= 3) {
-        const char *grp_start = to_in_body + 4;
+    if (to_in_bod && (to_in_bod - bod) >= 3) {
+        const char *grp_start = to_in_bod + 4;
         while (*grp_start == ' ') grp_start++;
         if (strlen(grp_start) > 0 && strcasecmp(grp_start, "your group") != 0 && strcasecmp(grp_start, "the group") != 0) {
-            *out_group = strdup(grp_start);
+            char *grp = strdup(grp_start);
+            int glen = (int)strlen(grp);
+            while (glen > 0 && (grp[glen-1] == '.' || grp[glen-1] == ':' || grp[glen-1] == ',')) {
+                grp[--glen] = '\0';
+            }
+            *out_group = grp;
             *out_sender = strdup(sum);
-            *out_body = g_strndup(bod, (int)(to_in_body - bod));
+            *out_body = g_strndup(bod, (int)(to_in_bod - bod));
             g_strstrip(*out_body);
             return;
         }
@@ -338,6 +396,21 @@ static void extract_conversation_key(const char *norm_app, const char *sum_str, 
             free(snd);
         }
     }
+}
+
+static const char *clean_message_body_sender_prefix(const char *body, const char *sender) {
+    if (!body) return "";
+    if (!sender || strlen(sender) == 0) return body;
+    int s_len = (int)strlen(sender);
+    if (g_ascii_strncasecmp(body, sender, s_len) == 0) {
+        const char *p = body + s_len;
+        if (*p == ':' || *p == ' ') {
+            if (*p == ':') p++;
+            while (*p == ' ') p++;
+            return p;
+        }
+    }
+    return body;
 }
 
 /* --------------------------------------------------------------------------
@@ -922,8 +995,9 @@ static GtkWidget *create_conversation_card(ConversationGroup *cg) {
         int idx = 0;
         for (GList *l = cg->messages; l != NULL && idx < earlier_count; l = l->next, idx++) {
             MessageItem *m = (MessageItem *)l->data;
+            const char *clean_b = clean_message_body_sender_prefix(m->body, m->sender);
             char *esc_sender = safe_markup_escape(m->sender);
-            char *esc_body = safe_markup_escape(m->body);
+            char *esc_body = safe_markup_escape(clean_b);
             char *line_str = NULL;
             if (m->sender && strlen(m->sender) > 0 && g_ascii_strcasecmp(m->sender, cg->app) != 0) {
                 line_str = g_strdup_printf("• <span foreground='#89b4fa'><b>%s:</b></span> <span foreground='#a6adc8'>%s</span>",
@@ -957,8 +1031,9 @@ static GtkWidget *create_conversation_card(ConversationGroup *cg) {
         GList *latest_start = g_list_nth(cg->messages, earlier_count);
         for (GList *l = latest_start; l != NULL; l = l->next) {
             MessageItem *m = (MessageItem *)l->data;
+            const char *clean_b = clean_message_body_sender_prefix(m->body, m->sender);
             char *esc_sender = safe_markup_escape(m->sender);
-            char *esc_body = safe_markup_escape(m->body);
+            char *esc_body = safe_markup_escape(clean_b);
             char *line_str = NULL;
             if (m->sender && strlen(m->sender) > 0 && g_ascii_strcasecmp(m->sender, cg->app) != 0) {
                 line_str = g_strdup_printf("• <span foreground='#89b4fa'><b>%s:</b></span> %s",
@@ -981,8 +1056,9 @@ static GtkWidget *create_conversation_card(ConversationGroup *cg) {
         /* All messages shown directly inside this single block without truncation */
         for (GList *l = cg->messages; l != NULL; l = l->next) {
             MessageItem *m = (MessageItem *)l->data;
+            const char *clean_b = clean_message_body_sender_prefix(m->body, m->sender);
             char *esc_sender = safe_markup_escape(m->sender);
-            char *esc_body = safe_markup_escape(m->body);
+            char *esc_body = safe_markup_escape(clean_b);
             char *line_str = NULL;
             if (m->sender && strlen(m->sender) > 0 && g_ascii_strcasecmp(m->sender, cg->app) != 0) {
                 line_str = g_strdup_printf("• <span foreground='#89b4fa'><b>%s:</b></span> %s",

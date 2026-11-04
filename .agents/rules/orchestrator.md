@@ -21,3 +21,8 @@
    - `flash`: Fast lint checks, syntax formatting, or single-file test runs.
    - `inherit` (Gemini 3.8 Flash High): Standard coding and bugfixes without compromising quality.
    - `pro`: Deep architectural reasoning, complex C pointer/memory debugging, or concurrency issues.
+7. **New Project Auto-Adaptation**:
+   - Whenever asked to create a new subproject, automatically scaffold `<name>/context.md` following the standardized format.
+   - Register it via `python3 .agents/scripts/blackboard.py register-project <name> <type> <stack> <description>`.
+   - Log the new addition in `.agents/brain/journal.md`.
+   - The new project is immediately accessible and routable across all future subagents without restarting.

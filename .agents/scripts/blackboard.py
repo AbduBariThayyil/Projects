@@ -153,9 +153,58 @@ def cmd_get_context(project_name):
         print(f"# Context for {project_name}\n{p.get('description')}")
 
 
+def cmd_register_project(project_name, project_type, stack_csv, description):
+    if not PROJECTS_FILE.exists():
+        proj_data = {"workspace": str(BASE_DIR.parent), "projects": {}}
+    else:
+        with open(PROJECTS_FILE, "r") as f:
+            proj_data = json.load(f)
+
+    stack_list = [s.strip() for s in stack_csv.split(",") if s.strip()]
+    proj_dir = Path(BASE_DIR.parent) / project_name
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    ctx_file = proj_dir / "context.md"
+
+    proj_data.setdefault("projects", {})[project_name] = {
+        "path": project_name,
+        "context": f"{project_name}/context.md",
+        "type": project_type,
+        "stack": stack_list,
+        "description": description
+    }
+
+    tmp_file = PROJECTS_FILE.with_suffix(".tmp")
+    with open(tmp_file, "w") as f:
+        json.dump(proj_data, f, indent=2)
+    os.replace(tmp_file, PROJECTS_FILE)
+
+    if not ctx_file.exists():
+        template = f"""# Context: {project_name} ({description})
+
+## Overview
+**{project_name}** is a {project_type} engineered for Arch Linux and BSPWM.
+
+## Architecture & Technology
+- **Stack**: {', '.join(stack_list)}
+- **Design Pattern**: Low latency, lightweight footprint.
+
+## Core Features
+1. Initial implementation.
+
+## Commands & Build
+```bash
+# Build / Run commands for {project_name}
+```
+"""
+        with open(ctx_file, "w") as f:
+            f.write(template)
+
+    print(f"[Blackboard] Registered new project '{project_name}' and generated {ctx_file}.")
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: blackboard.py <status|register-agent|unregister-agent|lock|unlock|check-lock|get-context> [args...]")
+        print("Usage: blackboard.py <status|register-agent|unregister-agent|lock|unlock|check-lock|get-context|register-project> [args...]")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -174,6 +223,8 @@ def main():
         cmd_check_lock(sys.argv[2], agent_id)
     elif cmd == "get-context" and len(sys.argv) >= 3:
         cmd_get_context(sys.argv[2])
+    elif cmd == "register-project" and len(sys.argv) >= 6:
+        cmd_register_project(sys.argv[2], sys.argv[3], sys.argv[4], " ".join(sys.argv[5:]))
     else:
         print(f"Invalid command or arguments: {' '.join(sys.argv)}")
         sys.exit(1)

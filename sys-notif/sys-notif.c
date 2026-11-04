@@ -427,18 +427,43 @@ static void parse_chat_conversation(const char *app_name, const char *summary, c
         return;
     }
 
-    /* 3. Pattern: Body contains "Sent a ... to Group" */
+    /* 3. Pattern: Body contains "<Sender> to <Group>: <Message>" or "Sent a ... to Group" */
     const char *to_in_body = strcasestr(bod, " to ");
-    if (to_in_body && (to_in_body - bod) >= 3) {
+    if (to_in_body && (to_in_body - bod) >= 2) {
         const char *grp_start = to_in_body + 4;
         while (*grp_start == ' ') grp_start++;
-        if (strlen(grp_start) > 0 &&
-            strcasecmp(grp_start, "your group") != 0 &&
-            strcasecmp(grp_start, "the group") != 0) {
-            *out_group = strdup(grp_start);
-            *out_sender = strdup(sum);
+        const char *col = strchr(grp_start, ':');
+        char *grp = NULL;
+        if (col && (col - grp_start) >= 2) {
+            grp = g_strndup(grp_start, (int)(col - grp_start));
+        } else {
+            grp = strdup(grp_start);
+        }
+        g_strstrip(grp);
+        int glen = (int)strlen(grp);
+        while (glen > 0 && (grp[glen-1] == '.' || grp[glen-1] == ':' || grp[glen-1] == ',')) {
+            grp[--glen] = '\0';
+        }
+
+        if (strlen(grp) > 0 &&
+            strcasecmp(grp, "your group") != 0 &&
+            strcasecmp(grp, "the group") != 0) {
+            *out_group = grp;
+            if (sum && strlen(sum) > 0 &&
+                g_ascii_strcasecmp(sum, "Instagram") != 0 &&
+                g_ascii_strcasecmp(sum, "Notification") != 0 &&
+                g_ascii_strcasecmp(sum, "Direct") != 0 &&
+                g_ascii_strcasecmp(sum, "WhatsApp") != 0 &&
+                g_ascii_strcasecmp(sum, "Discord") != 0) {
+                *out_sender = strdup(sum);
+            } else {
+                char *snd = g_strndup(bod, (int)(to_in_body - bod));
+                g_strstrip(snd);
+                *out_sender = snd;
+            }
             return;
         }
+        free(grp);
     }
 
     /* 4. Single chat / direct message fallback */
@@ -1818,6 +1843,27 @@ static void append_history(const char *app, const char *summary, const char *bod
     update_polybar_notif_badge();
 }
 
+static gboolean is_single_system_alert(const char *app_name, const char *summary) {
+    if (!app_name) return FALSE;
+    char lower[128];
+    g_strlcpy(lower, app_name, sizeof(lower));
+    for (int i = 0; lower[i]; i++) lower[i] = g_ascii_tolower(lower[i]);
+
+    if (strstr(lower, "power") || strstr(lower, "battery") ||
+        strstr(lower, "volume") || strstr(lower, "brightness") ||
+        strstr(lower, "backlight") || strstr(lower, "osd") ||
+        strstr(lower, "screenshot") || strstr(lower, "terminal") ||
+        strstr(lower, "system") || strstr(lower, "sys-control")) {
+        return TRUE;
+    }
+    if (summary) {
+        if (strcasestr(summary, "battery") || strcasestr(summary, "charging") ||
+            strcasestr(summary, "volume") || strcasestr(summary, "brightness") ||
+            strcasestr(summary, "screenshot")) return TRUE;
+    }
+    return FALSE;
+}
+
 /* -------------------------------------------------------------
  * Intelligent Title & Body Normalizer (Username & Group Parser)
  * ------------------------------------------------------------- */
@@ -1835,6 +1881,17 @@ static void normalize_notification_content(const char *app_name,
     /* 1. Strip whitespace from edges */
     g_strstrip(sum);
     g_strstrip(bod);
+
+    /* 0. Protect single system alerts (Battery, Power, Volume, Brightness, Screenshot, Terminal) from chat normalizer */
+    if (is_single_system_alert(app_name, sum) ||
+        (app_name && (strcasestr(app_name, "power") || strcasestr(app_name, "battery") ||
+                      strcasestr(app_name, "volume") || strcasestr(app_name, "brightness") ||
+                      strcasestr(app_name, "screenshot") || strcasestr(app_name, "terminal") ||
+                      strcasestr(app_name, "system") || strcasestr(app_name, "sys-control")))) {
+        snprintf(out_summary, sum_sz, "%s", sum);
+        snprintf(out_body, body_sz, "%s", bod);
+        return;
+    }
 
     /* 2. Strip generic domain names if summary is a URL */
     if (g_str_has_prefix(sum, "https://") || g_str_has_prefix(sum, "http://")) {
@@ -1942,41 +1999,71 @@ static void normalize_notification_content(const char *app_name,
             }
         }
 
-        /* Pattern A: "Sender: Message" */
-        const char *colon = strchr(bod, ':');
-        if (colon && (colon - bod) >= 2 && (colon - bod) <= 36) {
-            char sender[64] = {0};
-            int s_len = (int)(colon - bod);
-            snprintf(sender, sizeof(sender), "%.*s", s_len, bod);
-            g_strstrip(sender);
-
-            const char *msg = colon + 1;
-            while (*msg == ' ') msg++;
-
-            if (is_generic_sum) {
-                /* Promote sender to summary */
-                snprintf(sum, sizeof(sum), "%s", sender);
-                snprintf(bod, sizeof(bod), "%s", msg);
-                is_generic_sum = FALSE;
-            } else {
-                /* Group conversation: isolate base group name if it already has bullet */
+        /* Pattern 1: "<Sender> to <Group>: <Message>" (e.g. "aydin_shadu to Unemployment final bosses: Speak english y'all 😭") */
+        const char *to_kw = strcasestr(bod, " to ");
+        if (to_kw && (to_kw - bod) >= 2) {
+            const char *grp_start = to_kw + 4;
+            while (*grp_start == ' ') grp_start++;
+            const char *col = strchr(grp_start, ':');
+            if (col && (col - grp_start) >= 2) {
+                char sender[64] = {0};
                 char group[128] = {0};
-                const char *bullet = strstr(sum, " • ");
-                if (bullet) {
-                    snprintf(group, sizeof(group), "%.*s", (int)(bullet - sum), sum);
-                } else {
-                    snprintf(group, sizeof(group), "%s", sum);
+                int s_len = (int)(to_kw - bod);
+                if (s_len < (int)sizeof(sender)) {
+                    snprintf(sender, sizeof(sender), "%.*s", s_len, bod);
+                    g_strstrip(sender);
                 }
-                g_strstrip(group);
+                int g_len = (int)(col - grp_start);
+                if (g_len < (int)sizeof(group)) {
+                    snprintf(group, sizeof(group), "%.*s", g_len, grp_start);
+                    g_strstrip(group);
+                    int glen = (int)strlen(group);
+                    while (glen > 0 && (group[glen-1] == '.' || group[glen-1] == ':' || group[glen-1] == ',')) {
+                        group[--glen] = '\0';
+                    }
+                }
+                const char *msg = col + 1;
+                while (*msg == ' ') msg++;
 
-                snprintf(sum, sizeof(sum), "%s • %s", group, sender);
-                /* For groups, preserve "Sender: Message" so threaded cards display who sent each message */
-                snprintf(bod, sizeof(bod), "%s: %s", sender, msg);
+                if (strlen(sender) > 0 && strlen(group) > 0 &&
+                    strcasecmp(group, "your group") != 0 && strcasecmp(group, "the group") != 0) {
+                    snprintf(sum, sizeof(sum), "%s • %s", group, sender);
+                    snprintf(bod, sizeof(bod), "%s", msg);
+                    is_generic_sum = FALSE;
+                }
             }
         }
 
-        /* Pattern B: Social media actions like "Alex sent a reel...", "Alex liked your story", etc. */
-        if (is_generic_sum) {
+        /* Pattern A: "Sender: Message" (when summary is generic or already has group) */
+        if (is_generic_sum || (strstr(sum, " • ") == NULL && !is_generic_sum)) {
+            const char *colon = strchr(bod, ':');
+            if (colon && (colon - bod) >= 2 && (colon - bod) <= 36) {
+                char sender[64] = {0};
+                int s_len = (int)(colon - bod);
+                snprintf(sender, sizeof(sender), "%.*s", s_len, bod);
+                g_strstrip(sender);
+
+                const char *msg = colon + 1;
+                while (*msg == ' ') msg++;
+
+                if (is_generic_sum) {
+                    /* Promote sender to summary */
+                    snprintf(sum, sizeof(sum), "%s", sender);
+                    snprintf(bod, sizeof(bod), "%s", msg);
+                    is_generic_sum = FALSE;
+                } else if (strstr(sum, " • ") == NULL) {
+                    /* Group conversation: sum is already group name (e.g. "Unemployment final bosses") */
+                    char group[128] = {0};
+                    snprintf(group, sizeof(group), "%s", sum);
+                    g_strstrip(group);
+                    snprintf(sum, sizeof(sum), "%s • %s", group, sender);
+                    snprintf(bod, sizeof(bod), "%s", msg);
+                }
+            }
+        }
+
+        /* Pattern B: Social media actions like "Alex sent a photo to Group", "Alex sent a reel...", etc. */
+        if (is_generic_sum || strstr(sum, " • ") == NULL) {
             static const char *action_verbs[] = {
                 " sent you a sticker", " sent a sticker",
                 " sent you a gif", " sent a gif",
@@ -1999,35 +2086,68 @@ static void normalize_notification_content(const char *app_name,
                     snprintf(sender, sizeof(sender), "%.*s", s_len, bod);
                     g_strstrip(sender);
 
-                    /* Capitalize the action description in body */
-                    char clean_action[256];
+                    /* Action description in body */
                     const char *action_start = pos + 1;
+                    char clean_action[256];
                     snprintf(clean_action, sizeof(clean_action), "%s", action_start);
                     if (clean_action[0] >= 'a' && clean_action[0] <= 'z') {
                         clean_action[0] -= 32;
                     }
 
-                    snprintf(sum, sizeof(sum), "%s", sender);
-                    snprintf(bod, sizeof(bod), "%s", clean_action);
-                    is_generic_sum = FALSE;
+                    /* Check if the action has "... to <Group>" */
+                    const char *act_to = strcasestr(clean_action, " to ");
+                    if (act_to && (act_to - clean_action) >= 3) {
+                        const char *grp_start = act_to + 4;
+                        while (*grp_start == ' ') grp_start++;
+                        if (strlen(grp_start) > 0 &&
+                            strcasecmp(grp_start, "your group") != 0 &&
+                            strcasecmp(grp_start, "the group") != 0) {
+                            char grp[128] = {0};
+                            snprintf(grp, sizeof(grp), "%s", grp_start);
+                            g_strstrip(grp);
+                            int glen = (int)strlen(grp);
+                            while (glen > 0 && (grp[glen-1] == '.' || grp[glen-1] == ':' || grp[glen-1] == ',')) {
+                                grp[--glen] = '\0';
+                            }
+                            snprintf(sum, sizeof(sum), "%s • %s", grp, sender);
+
+                            /* Cut " to <Group>" from action body */
+                            char act_only[256] = {0};
+                            snprintf(act_only, sizeof(act_only), "%.*s", (int)(act_to - clean_action), clean_action);
+                            g_strstrip(act_only);
+                            snprintf(bod, sizeof(bod), "%s", act_only);
+                            is_generic_sum = FALSE;
+                            break;
+                        }
+                    }
+
+                    if (is_generic_sum) {
+                        snprintf(sum, sizeof(sum), "%s", sender);
+                        snprintf(bod, sizeof(bod), "%s", clean_action);
+                        is_generic_sum = FALSE;
+                    }
                     break;
                 }
             }
         }
 
         /* Pattern C: "Sender to Group" in summary (e.g. "yaarouse capitan to 10th gc", "ALOO to 10th gc") */
-        const char *to_kw = strcasestr(sum, " to ");
-        if (to_kw && (to_kw - sum) >= 2) {
+        const char *to_in_sum = strcasestr(sum, " to ");
+        if (to_in_sum && (to_in_sum - sum) >= 2) {
             char sender[64] = {0};
             char group[128] = {0};
-            int s_len = (int)(to_kw - sum);
+            int s_len = (int)(to_in_sum - sum);
             snprintf(sender, sizeof(sender), "%.*s", s_len, sum);
             g_strstrip(sender);
 
-            const char *grp_start = to_kw + 4;
+            const char *grp_start = to_in_sum + 4;
             while (*grp_start == ' ') grp_start++;
             snprintf(group, sizeof(group), "%s", grp_start);
             g_strstrip(group);
+            int glen = (int)strlen(group);
+            while (glen > 0 && (group[glen-1] == '.' || group[glen-1] == ':' || group[glen-1] == ',')) {
+                group[--glen] = '\0';
+            }
 
             if (strlen(group) > 0 && strlen(sender) > 0) {
                 snprintf(sum, sizeof(sum), "%s • %s", group, sender);
@@ -2054,6 +2174,10 @@ static void normalize_notification_content(const char *app_name,
                 while (*grp_start == ' ') grp_start++;
                 snprintf(group, sizeof(group), "%s", grp_start);
                 g_strstrip(group);
+                int glen = (int)strlen(group);
+                while (glen > 0 && (group[glen-1] == '.' || group[glen-1] == ':' || group[glen-1] == ',')) {
+                    group[--glen] = '\0';
+                }
 
                 if (strlen(group) > 0 && strlen(sender) > 0) {
                     snprintf(sum, sizeof(sum), "%s • %s", group, sender);
@@ -2062,18 +2186,28 @@ static void normalize_notification_content(const char *app_name,
             }
         }
 
-        /* Pattern E: Body has "... to Group" when summary is just a single name/sender (e.g. "Sent a photo to 10th gc") */
-        if (strstr(sum, " • ") == NULL && strlen(bod) > 0) {
+        /* Pattern E: Body has "... to Group" when summary is already a single sender name (e.g. "Sent a photo to 10th gc") */
+        if (!is_generic_sum && strstr(sum, " • ") == NULL && strlen(bod) > 0) {
             const char *to_in_body = strcasestr(bod, " to ");
             if (to_in_body && (to_in_body - bod) >= 3) {
                 const char *grp_start = to_in_body + 4;
                 while (*grp_start == ' ') grp_start++;
-                if (strlen(grp_start) > 0 && strcasecmp(grp_start, "your group") != 0 && strcasecmp(grp_start, "the group") != 0) {
+                /* Ensure no colon exists in grp_start */
+                if (strchr(grp_start, ':') == NULL && strlen(grp_start) > 0 &&
+                    strcasecmp(grp_start, "your group") != 0 && strcasecmp(grp_start, "the group") != 0) {
                     char sender[64] = {0};
                     snprintf(sender, sizeof(sender), "%s", sum);
                     g_strstrip(sender);
 
-                    snprintf(sum, sizeof(sum), "%s • %s", grp_start, sender);
+                    char group[128] = {0};
+                    snprintf(group, sizeof(group), "%s", grp_start);
+                    g_strstrip(group);
+                    int glen = (int)strlen(group);
+                    while (glen > 0 && (group[glen-1] == '.' || group[glen-1] == ':' || group[glen-1] == ',')) {
+                        group[--glen] = '\0';
+                    }
+
+                    snprintf(sum, sizeof(sum), "%s • %s", group, sender);
 
                     /* Truncate " to <Group>" from body */
                     char clean_b[512] = {0};
@@ -2082,7 +2216,6 @@ static void normalize_notification_content(const char *app_name,
                     if (strlen(clean_b) > 0) {
                         snprintf(bod, sizeof(bod), "%s", clean_b);
                     }
-                    is_generic_sum = FALSE;
                 }
             }
         }
@@ -2123,22 +2256,6 @@ static void normalize_notification_content(const char *app_name,
     snprintf(out_body, body_sz, "%s", bod);
 }
 
-static gboolean is_single_system_alert(const char *app_name, const char *summary) {
-    if (!app_name) return FALSE;
-    char lower[128];
-    g_strlcpy(lower, app_name, sizeof(lower));
-    for (int i = 0; lower[i]; i++) lower[i] = g_ascii_tolower(lower[i]);
-
-    if (strstr(lower, "power") || strstr(lower, "battery") ||
-        strstr(lower, "volume") || strstr(lower, "brightness") ||
-        strstr(lower, "backlight") || strstr(lower, "osd")) {
-        return TRUE;
-    }
-    if (summary) {
-        if (strcasestr(summary, "battery") || strcasestr(summary, "charging")) return TRUE;
-    }
-    return FALSE;
-}
 
 static guint show_notification(const char *app_name, const char *summary, const char *body,
                               const char *icon_name, GVariant *hints, GVariant *actions, int timeout_ms, guint replaces_id) {
