@@ -1,0 +1,30 @@
+{
+  "boundary-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "edit_file|write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/enforce-boundary.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "syntax-linter": {
+    "PostToolUse": [
+      {
+        "matcher": "edit_file|write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/lint-verify.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

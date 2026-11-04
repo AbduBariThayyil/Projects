@@ -1,0 +1,83 @@
+{
+  "workspace": "/home/vibecoder/Projects",
+  "description": "Multi-project Arch Linux / BSPWM desktop ecosystem",
+  "projects": {
+    "ani-cast": {
+      "path": "ani-cast",
+      "context": "ani-cast/context.md",
+      "type": "streaming-suite",
+      "stack": ["Python", "PySide6", "MPV", "Lua", "HLS"],
+      "description": "Anime streaming, Chromecast casting, MPV resume hooks, and PySide6 player GUI."
+    },
+    "ant-gm320": {
+      "path": "ant-gm320",
+      "context": "ant-gm320/context.md",
+      "type": "hardware-gui",
+      "stack": ["Python", "PySide6", "USB HID"],
+      "description": "Native Linux GUI for Ant Esports GM320 mouse (RGB lighting, DPI, button remapping)."
+    },
+    "keyholder-hud": {
+      "path": "keyholder-hud",
+      "context": "keyholder-hud/context.md",
+      "type": "desktop-overlay",
+      "stack": ["C", "Xlib", "Cairo", "Pango"],
+      "description": "Zero-latency X11 floating HUD overlay for keylock status, modes, and keystroke indicators."
+    },
+    "polybar-music": {
+      "path": "polybar-music",
+      "context": "polybar-music/context.md",
+      "type": "status-bar-module",
+      "stack": ["C", "D-Bus", "Xlib"],
+      "description": "High-efficiency C streaming D-Bus media widget for Polybar with dynamic track animation."
+    },
+    "qt-music": {
+      "path": "qt-music",
+      "context": "qt-music/context.md",
+      "type": "audio-suite",
+      "stack": ["Python", "Qt", "D-Bus", "MPV"],
+      "description": "Low-resource music player, synchronized lyrics renderer, and background audio daemon."
+    },
+    "sys-alarm": {
+      "path": "sys-alarm",
+      "context": "sys-alarm/context.md",
+      "type": "system-utility",
+      "stack": ["C", "GTK3", "PipeWire", "systemd", "RTC"],
+      "description": "High-volume alarm clock with systemd RTC suspend-wake synchronization and PipeWire speaker routing."
+    },
+    "sys-control": {
+      "path": "sys-control",
+      "context": "sys-control/context.md",
+      "type": "system-utility",
+      "stack": ["C", "Xlib", "BSPWM"],
+      "description": "Sub-2ms hotkey, brightness, screenshot, and window management daemon replacing shell scripts."
+    },
+    "sys-notif": {
+      "path": "sys-notif",
+      "context": "sys-notif/context.md",
+      "type": "desktop-daemon",
+      "stack": ["C", "Xlib", "Cairo", "Catppuccin"],
+      "description": "Modern lightweight desktop notification daemon and OSD server replacing Dunst/Mako."
+    },
+    "sys-notif-center": {
+      "path": "sys-notif-center",
+      "context": "sys-notif-center/context.md",
+      "type": "desktop-gui",
+      "stack": ["Python", "GTK3", "Catppuccin"],
+      "description": "Notification center GUI and persistent message history viewer with grouping and filters."
+    },
+    "Toshiba Porteger r700": {
+      "path": "Toshiba Porteger r700",
+      "context": "Toshiba Porteger r700/context.md",
+      "type": "hardware-spec",
+      "stack": ["Markdown", "ACPI", "Linux Kernel"],
+      "description": "Hardware architecture specifications and device tuning for host laptop (Toshiba Portégé R700)."
+    },
+    "xmodmap-watcher": {
+      "path": "xmodmap-watcher",
+      "context": "xmodmap-watcher/context.md",
+      "type": "system-daemon",
+      "stack": ["C", "libX11"],
+      "description": "Auto-reloads ~/.Xmodmap on X11 MappingNotify and USB keyboard hotplug events."
+    }
+  }
+}

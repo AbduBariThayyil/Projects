@@ -1,12 +1,23 @@
 # Repository Guidelines & Automation Rules
 
+## Smart Terminal Orchestrator Architecture
+This workspace operates under a **Single Smart Terminal Orchestration** model powered by `.agents/`:
+1. **Central Terminal Entrypoint**: The primary terminal acts as the lead orchestrator across all subprojects (`ani-cast`, `ant-gm320`, `keyholder-hud`, `polybar-music`, `qt-music`, `sys-alarm`, `sys-control`, `sys-notif`, `sys-notif-center`, `Toshiba Porteger r700`, `xmodmap-watcher`).
+2. **Subagent Delegation**: The main terminal decomposes complex user requests and spawns specialized subagents (`invoke_subagent`). Subagents execute directly in the workspace with active file locking.
+3. **Progressive Context Routing**: Subagents are supplied only with their target project's `context.md` (via `.agents/brain/projects.json`). Context is never dumped indiscriminately into the main context window.
+4. **Zero-Token Guardrails (`.agents/hooks.json`)**: PreToolUse and PostToolUse hooks enforce file locks, project boundary confinement, and structural AST lint checks automatically with zero prompt token overhead.
+5. **Dynamic Model Tiering**:
+   - `flash`: Lightweight verification, syntax linting, formatting, or single-file test runs.
+   - `inherit` (Gemini 3.8 Flash High): Standard coding, bugfixes, and feature development.
+   - `pro`: Deep architectural reasoning, complex C pointer/memory debugging, or concurrency issues.
+
 ## Automated Git Commit & Push Workflow
 Whenever the agent completes a bugfix, implements a feature, or modifies code/configurations in this repository:
 1. **Verify**: Check `git status` and test the fix/changes to ensure no unintended edits or broken syntax.
 2. **Auto-Commit**: Stage the relevant modified files and commit them using the Conventional Commits specification:
    - `fix(<scope>): <short description of the bug fixed>`
    - `feat(<scope>): <short description of the feature>`
-   - `refactor(<scope>): <description>`
+   - `refactor(<scope>): <short description>`
 3. **Auto-Push**: Immediately push the new commit to GitHub:
    ```bash
    git push origin master
@@ -18,4 +29,3 @@ Whenever the agent completes a bugfix, implements a feature, or modifies code/co
 - **Consecutive Failure Halting**: If an automated fix fails twice consecutively, halt background execution and surface the diff overview immediately.
 - **Clarification Over Assumptions**: Proactively prompt with clarification questions whenever behavior parameters are ambiguous; do not assume unlikely implementation traits.
 - **Non-Intrusive Live Testing**: Verify fixes took place by live testing without covering the user's screen (e.g., execute in another desktop workspace, run headless via `xvfb-run`, or in the background). Do not interrupt fullscreen applications.
-
