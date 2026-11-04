@@ -39,7 +39,8 @@ class AniCastWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_title("AniCast")
-        self.set_default_size(980, 680)
+        self.set_default_size(960, 620)
+        self.set_size_request(580, 440)
 
         # Managers
         self.device_mgr = DeviceManager(on_update_callback=self._on_devices_updated)
@@ -102,10 +103,12 @@ class AniCastWindow(Adw.ApplicationWindow):
         # Right side controls: Device Selector Popover, Quality, Mode Toggle
         # 1. Device Selector MenuButton
         self.device_btn = Gtk.MenuButton()
-        self.device_btn.set_tooltip_text("Target Device")
+        self.device_btn.set_tooltip_text("Target Device (Local MPV or Chromecast TV)")
         self.device_btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.device_icon = Gtk.Image.new_from_icon_name("video-display-symbolic")
+        self.device_icon = Gtk.Image.new_from_icon_name("computer-symbolic")
         self.device_label = Gtk.Label(label="This Device")
+        self.device_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.device_label.set_max_width_chars(15)
         self.device_btn_box.append(self.device_icon)
         self.device_btn_box.append(self.device_label)
         self.device_btn.set_child(self.device_btn_box)
@@ -139,24 +142,31 @@ class AniCastWindow(Adw.ApplicationWindow):
     def _build_device_popover(self):
         self.device_popover = Gtk.Popover()
         pop_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        pop_box.set_margin_top(10)
-        pop_box.set_margin_bottom(10)
-        pop_box.set_margin_start(10)
-        pop_box.set_margin_end(10)
+        pop_box.set_margin_top(8)
+        pop_box.set_margin_bottom(8)
+        pop_box.set_margin_start(8)
+        pop_box.set_margin_end(8)
+        pop_box.set_size_request(260, -1)
 
-        header_lbl = Gtk.Label(label="Select Target Device")
+        header_lbl = Gtk.Label(label="Select Playback Target")
         header_lbl.add_css_class("heading")
         header_lbl.set_halign(Gtk.Align.START)
         pop_box.append(header_lbl)
 
-        # List of devices
+        # Scrolled container for device list to prevent overflow on 1366x768 screens
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_max_content_height(240)
+        scrolled.set_propagate_natural_height(True)
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
         self.device_list_box = Gtk.ListBox()
         self.device_list_box.add_css_class("boxed-list")
         self.device_list_box.set_selection_mode(Gtk.SelectionMode.NONE)
-        pop_box.append(self.device_list_box)
+        scrolled.set_child(self.device_list_box)
+        pop_box.append(scrolled)
 
         # Scan button
-        scan_btn = Gtk.Button(label="Scan Local Network (mDNS)")
+        scan_btn = Gtk.Button(label="Scan Network Chromecasts")
         scan_btn.set_icon_name("view-refresh-symbolic")
         scan_btn.connect("clicked", self._on_scan_devices_clicked)
         pop_box.append(scan_btn)
@@ -179,9 +189,9 @@ class AniCastWindow(Adw.ApplicationWindow):
             icon_name = "computer-symbolic" if is_local else "tv-symbolic"
             row.add_prefix(Gtk.Image.new_from_icon_name(icon_name))
 
-            title = dev["name"]
+            title = "This Device (Local Screen / MPV)" if is_local else dev["name"]
             row.set_title(title)
-            subtitle = dev.get("ip", "") if not is_local else "Direct Playback on Monitor"
+            subtitle = "Direct Local Playback (Default)" if is_local else (dev.get("ip", "") or "Google Cast")
             if subtitle:
                 row.set_subtitle(subtitle)
 
@@ -218,11 +228,12 @@ class AniCastWindow(Adw.ApplicationWindow):
         is_local = dev.get("is_local", False)
         icon_name = "computer-symbolic" if is_local else "tv-symbolic"
         self.device_icon.set_from_icon_name(icon_name)
-        short_name = dev["name"]
         if is_local:
-            short_name = "This Device (Local)"
-        elif len(short_name) > 18:
-            short_name = short_name[:16] + "..."
+            short_name = "This Device"
+        else:
+            short_name = dev.get("name", "TV")
+            if len(short_name) > 16:
+                short_name = short_name[:14] + "..."
         self.device_label.set_label(short_name)
 
     def _on_scan_devices_clicked(self, btn):
@@ -271,13 +282,16 @@ class AniCastWindow(Adw.ApplicationWindow):
         self.stack.set_visible_child_name("home")
 
     def _create_home_page(self):
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
         clamp = Adw.Clamp()
-        clamp.set_maximum_size(780)
+        clamp.set_maximum_size(820)
         clamp.set_tightening_threshold(600)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        box.set_margin_top(20)
-        box.set_margin_bottom(24)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        box.set_margin_top(14)
+        box.set_margin_bottom(20)
         box.set_margin_start(16)
         box.set_margin_end(16)
 
@@ -297,11 +311,9 @@ class AniCastWindow(Adw.ApplicationWindow):
         self.history_group.set_title("Recent Watch History")
         box.append(self.history_group)
 
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_propagate_natural_height(True)
-        scrolled.set_child(box)
-        clamp.set_child(scrolled)
-        return clamp
+        clamp.set_child(box)
+        scrolled.set_child(clamp)
+        return scrolled
 
     def refresh_continue_watching(self):
         clear_container(self.hero_container)
@@ -333,24 +345,24 @@ class AniCastWindow(Adw.ApplicationWindow):
         hero_card.add_css_class("card")
         hero_card.add_css_class("hero-card")
 
-        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
-        main_box.set_margin_top(16)
-        main_box.set_margin_bottom(16)
-        main_box.set_margin_start(16)
-        main_box.set_margin_end(16)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        main_box.set_margin_top(12)
+        main_box.set_margin_bottom(12)
+        main_box.set_margin_start(14)
+        main_box.set_margin_end(14)
 
         # Poster image (left side)
         poster_frame = Gtk.Frame()
         poster_frame.add_css_class("poster-frame")
         self.hero_poster = Gtk.Picture()
-        self.hero_poster.set_size_request(90, 130)
+        self.hero_poster.set_size_request(85, 120)
         self.hero_poster.set_content_fit(Gtk.ContentFit.COVER)
         self.hero_poster.add_css_class("poster-img")
         poster_frame.set_child(self.hero_poster)
         main_box.append(poster_frame)
 
         # Info Box (right side)
-        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         info_box.set_hexpand(True)
 
         header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -386,21 +398,21 @@ class AniCastWindow(Adw.ApplicationWindow):
 
         # Action Button: 1-click Continue Watching
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        btn_box.set_margin_top(8)
+        btn_box.set_margin_top(6)
 
         dev = self.device_mgr.get_selected_device()
-        dev_short = dev["name"] if dev else "This Device"
-        if len(dev_short) > 20:
-            dev_short = dev_short[:18] + "..."
+        dev_short = "This Device" if (dev and dev.get("is_local")) else (dev["name"] if dev else "This Device")
+        if len(dev_short) > 18:
+            dev_short = dev_short[:16] + "..."
 
         continue_btn = Gtk.Button()
         continue_btn.add_css_class("suggested-action")
         continue_btn.add_css_class("pill")
         c_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        c_content.set_margin_start(16)
-        c_content.set_margin_end(16)
-        c_content.set_margin_top(8)
-        c_content.set_margin_bottom(8)
+        c_content.set_margin_start(14)
+        c_content.set_margin_end(14)
+        c_content.set_margin_top(6)
+        c_content.set_margin_bottom(6)
         c_content.append(Gtk.Image.new_from_icon_name("media-playback-start-symbolic"))
         c_content.append(Gtk.Label(label=f"Continue on {dev_short}"))
         continue_btn.set_child(c_content)
@@ -570,28 +582,32 @@ class AniCastWindow(Adw.ApplicationWindow):
     # Search Page Setup
     def _create_search_page(self):
         scrolled = Gtk.ScrolledWindow()
-        clamp = Adw.Clamp()
-        clamp.set_maximum_size(920)
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        box.set_margin_top(16)
-        box.set_margin_bottom(24)
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(960)
+        clamp.set_tightening_threshold(680)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(14)
+        box.set_margin_bottom(20)
         box.set_margin_start(16)
         box.set_margin_end(16)
 
         self.search_header_lbl = Gtk.Label(label="Search Results")
-        self.search_header_lbl.add_css_class("title-2")
+        self.search_header_lbl.add_css_class("title-3")
         self.search_header_lbl.set_halign(Gtk.Align.START)
         box.append(self.search_header_lbl)
 
-        # Flowbox / Grid for cards
+        # Flowbox / Grid for cards (responsive sizing for 1366x768)
         self.results_flowbox = Gtk.FlowBox()
         self.results_flowbox.set_valign(Gtk.Align.START)
-        self.results_flowbox.set_max_children_per_line(4)
+        self.results_flowbox.set_max_children_per_line(5)
         self.results_flowbox.set_min_children_per_line(2)
         self.results_flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.results_flowbox.set_column_spacing(16)
-        self.results_flowbox.set_row_spacing(16)
+        self.results_flowbox.set_column_spacing(12)
+        self.results_flowbox.set_row_spacing(12)
+        self.results_flowbox.set_homogeneous(True)
         box.append(self.results_flowbox)
 
         clamp.set_child(box)
@@ -638,17 +654,18 @@ class AniCastWindow(Adw.ApplicationWindow):
             self.results_flowbox.append(card)
 
     def _create_anime_card(self, anime):
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card.set_size_request(180, 290)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card.set_size_request(160, 260)
         card.add_css_class("card")
-        card.set_margin_top(4)
-        card.set_margin_bottom(4)
-        card.set_margin_start(4)
-        card.set_margin_end(4)
+        card.add_css_class("anime-card")
+        card.set_margin_top(2)
+        card.set_margin_bottom(2)
+        card.set_margin_start(2)
+        card.set_margin_end(2)
 
         # Poster Image
         pic = Gtk.Picture()
-        pic.set_size_request(170, 230)
+        pic.set_size_request(150, 205)
         pic.set_content_fit(Gtk.ContentFit.COVER)
         pic.add_css_class("poster-img")
         card.append(pic)
@@ -662,10 +679,10 @@ class AniCastWindow(Adw.ApplicationWindow):
         title_lbl = Gtk.Label(label=anime["title"])
         title_lbl.set_halign(Gtk.Align.CENTER)
         title_lbl.set_wrap(True)
-        title_lbl.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        title_lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         title_lbl.set_lines(2)
         title_lbl.set_ellipsize(Pango.EllipsizeMode.END)
-        title_lbl.add_css_class("heading")
+        title_lbl.add_css_class("anime-card-title")
         card.append(title_lbl)
 
         # Click gesture to load episodes
@@ -678,12 +695,15 @@ class AniCastWindow(Adw.ApplicationWindow):
     # Episodes Page Setup
     def _create_episodes_page(self):
         scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
         clamp = Adw.Clamp()
         clamp.set_maximum_size(860)
+        clamp.set_tightening_threshold(650)
 
-        self.ep_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        self.ep_content_box.set_margin_top(16)
-        self.ep_content_box.set_margin_bottom(24)
+        self.ep_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        self.ep_content_box.set_margin_top(14)
+        self.ep_content_box.set_margin_bottom(20)
         self.ep_content_box.set_margin_start(16)
         self.ep_content_box.set_margin_end(16)
 
@@ -692,9 +712,13 @@ class AniCastWindow(Adw.ApplicationWindow):
         self.ep_header_card.add_css_class("card")
         self.ep_content_box.append(self.ep_header_card)
 
-        # Season selector row
+        # Season selector row with horizontal scrolling to prevent screen overflow
+        self.season_scroll = Gtk.ScrolledWindow()
+        self.season_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        self.season_scroll.set_propagate_natural_width(True)
         self.season_selector_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.ep_content_box.append(self.season_selector_box)
+        self.season_scroll.set_child(self.season_selector_box)
+        self.ep_content_box.append(self.season_scroll)
 
         # Live Season Download Banner (visible only while downloading)
         self.download_banner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -734,14 +758,14 @@ class AniCastWindow(Adw.ApplicationWindow):
         self.stack.set_visible_child_name("episodes")
 
         # Set up header card
-        h_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
-        h_box.set_margin_top(16)
-        h_box.set_margin_bottom(16)
-        h_box.set_margin_start(16)
-        h_box.set_margin_end(16)
+        h_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        h_box.set_margin_top(12)
+        h_box.set_margin_bottom(12)
+        h_box.set_margin_start(14)
+        h_box.set_margin_end(14)
 
         ep_poster = Gtk.Picture()
-        ep_poster.set_size_request(85, 120)
+        ep_poster.set_size_request(80, 115)
         ep_poster.set_content_fit(Gtk.ContentFit.COVER)
         ep_poster.add_css_class("poster-img")
         h_box.append(ep_poster)
@@ -749,13 +773,14 @@ class AniCastWindow(Adw.ApplicationWindow):
         if anime.get("poster"):
             load_texture_async(anime["poster"], lambda tex: ep_poster.set_paintable(tex))
 
-        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         right_box.set_hexpand(True)
 
         a_title = Gtk.Label(label=anime["title"])
-        a_title.add_css_class("title-2")
+        a_title.add_css_class("title-3")
         a_title.set_halign(Gtk.Align.START)
         a_title.set_wrap(True)
+        a_title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         right_box.append(a_title)
 
         # Action Buttons: Play Season, Download Season

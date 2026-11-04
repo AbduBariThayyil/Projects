@@ -1,11 +1,12 @@
 /* AniCast GTK 4 / Libadwaita Stylesheet */
+/* Tuned for 1366x768 & BSPWM High DPI / Low DPI responsiveness */
 
 .hero-card {
     background: linear-gradient(135deg, alpha(@accent_bg_color, 0.18), alpha(@window_bg_color, 0.85));
     border: 1px solid alpha(@accent_color, 0.35);
-    border-radius: 14px;
-    padding: 16px;
-    margin-bottom: 12px;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
 }
 
 .hero-card:hover {
@@ -13,28 +14,46 @@
 }
 
 .hero-title {
-    font-size: 1.25rem;
-    font-weight: 800;
+    font-size: 1.15rem;
+    font-weight: 700;
 }
 
 .hero-subtitle {
-    font-size: 0.95rem;
+    font-size: 0.88rem;
     color: @accent_color;
     font-weight: 600;
 }
 
 .hero-time {
-    font-size: 0.85rem;
+    font-size: 0.80rem;
     opacity: 0.8;
 }
 
 .poster-frame {
-    border-radius: 10px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
 }
 
 .poster-img {
     border-radius: 8px;
+}
+
+.anime-card {
+    background-color: alpha(@window_fg_color, 0.04);
+    border: 1px solid alpha(@window_fg_color, 0.08);
+    border-radius: 10px;
+    transition: background-color 180ms ease, border-color 180ms ease;
+}
+
+.anime-card:hover {
+    background-color: alpha(@accent_bg_color, 0.12);
+    border-color: alpha(@accent_color, 0.45);
+}
+
+.anime-card-title {
+    font-size: 0.84rem;
+    font-weight: 600;
+    padding: 2px 4px;
 }
 
 .badge-watched {
@@ -42,7 +61,7 @@
     color: #2ec27e;
     border-radius: 6px;
     padding: 2px 8px;
-    font-size: 0.8rem;
+    font-size: 0.76rem;
     font-weight: 600;
 }
 
@@ -51,7 +70,7 @@
     color: #3584e4;
     border-radius: 6px;
     padding: 2px 8px;
-    font-size: 0.8rem;
+    font-size: 0.76rem;
     font-weight: 600;
 }
 
@@ -59,6 +78,19 @@
     background-color: alpha(@accent_bg_color, 0.12);
     border: 1px solid alpha(@accent_color, 0.25);
     border-radius: 10px;
-    padding: 10px 14px;
-    margin-bottom: 12px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+}
+
+/* Compact search entry that does not overflow */
+searchentry {
+    min-height: 36px;
+    padding: 2px 8px;
+}
+
+/* Compact row styling for list preferences to fit 768p displays */
+preferencesgroup list > row {
+    min-height: 38px;
+    padding-top: 4px;
+    padding-bottom: 4px;
 }

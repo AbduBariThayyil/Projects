@@ -1,12 +1,12 @@
 # Context: ani-cast (Anime Desktop Streaming & Chromecast Engine)
 
 ## Overview
-**ani-cast** is a complete anime streaming, local desktop playback, and Google Chromecast casting suite tailored for Arch Linux and BSPWM. It features a CLI runner, an interactive dmenu/rofi-style selector, a PySide6 dark desktop GUI, a custom local HLS proxy server, and MPV resume tracking via Lua.
+**ani-cast** is a complete anime streaming, local desktop playback, and Google Chromecast casting suite tailored for Arch Linux and BSPWM. It features a CLI runner, an interactive dmenu/rofi-style selector, a GTK 4 / Libadwaita dark desktop GUI, a custom local HLS proxy server, and MPV resume tracking via Lua.
 
 ## Architecture & Technology
-- **Languages**: Python 3 (PySide6 / Qt6, HTTP server, HLS proxy), Bash, Lua (MPV hooks).
+- **Languages**: Python 3 (PyGObject / GTK 4 / Libadwaita, HTTP server, HLS proxy), Bash, Lua (MPV hooks).
 - **Styling**: Catppuccin Mocha / TokyoNight dark palette (`gui/style.css`).
-- **Dependencies**: `python-pyside6`, `mpv`, `ffmpeg`, `socat`, `yt-dlp` (optional).
+- **Dependencies**: `python-gobject`, `gtk4`, `libadwaita`, `mpv`, `ffmpeg`, `socat`, `yt-dlp` (optional).
 
 ## Core Components & Structure
 - **CLI (`bin/ani-cast`)**:
@@ -17,7 +17,7 @@
 - **Chromecast Pipeline (`bin/mpv-chromecast`)**:
   - Bridges local or remote HLS video streams to network Chromecast devices.
 - **GUI Application (`gui/`)**:
-  - `app.py` & `window.py`: PySide6 GUI window with dark mode, search bar, and grid display.
+  - `app.py` & `window.py`: GTK 4 / Libadwaita GUI window with dark mode, search bar, and grid display.
   - `playback_manager.py`: Controls MPV IPC socket, play/pause, volume, and timeline scrub.
   - `download_manager.py`: Multi-threaded background episode downloader with progress tracking.
   - `device_manager.py`: Discovers local Chromecast devices on LAN.

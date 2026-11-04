@@ -24,7 +24,8 @@ if LIB_DIR not in sys.path:
 import anicast_engine
 
 RESUME_FILE = os.path.expanduser("~/.local/state/ani-cast/resume_state.json")
-HLS_STREAMER_PY = "/home/vibecoder/Videos/Anime/hls_streamer.py"
+LOCAL_HLS = os.path.abspath(os.path.join(LIB_DIR, "hls_streamer.py"))
+HLS_STREAMER_PY = LOCAL_HLS if os.path.exists(LOCAL_HLS) else "/home/vibecoder/Videos/Anime/hls_streamer.py"
 
 
 def save_resume_state(title: str, position: float, duration: float = 0.0, finished: bool = False):
@@ -107,17 +108,26 @@ class PlaybackManager:
         episode_num: int,
         ep_id: str,
         episodes_list: list,
-        target_device: dict,
+        target_device: dict = None,
         mode: str = "sub",
         quality: str = "1080p",
         explicit_start_time: float = None,
     ):
         """
-        Resolves stream and starts playback on target_device.
+        Resolves stream and starts playback on target_device (defaults to local screen).
         Runs in background thread so UI doesn't hitch.
         """
         self.stop_playback()
         self._stop_requested = False
+
+        if not target_device:
+            target_device = {
+                "name": "This Device (Local Screen / MPV)",
+                "id": "local",
+                "ip": "127.0.0.1",
+                "model": "Local Screen",
+                "is_local": True,
+            }
 
         base_anime, _, _ = anicast_engine.parse_anime_title(anime_title)
         self.current_anime = base_anime

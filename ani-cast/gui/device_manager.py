@@ -87,18 +87,7 @@ class DeviceManager:
                 self.selected_device_id = saved
                 return
 
-        # No explicit user preference saved: default to TV if found, else local
-        self._default_to_tv_or_local()
-
-    def _default_to_tv_or_local(self):
-        duaa = next((d for d in self.devices if not d.get("is_local") and "duaa" in d["name"].lower()), None)
-        if duaa:
-            self.selected_device_id = duaa["id"]
-            return
-        any_tv = next((d for d in self.devices if not d.get("is_local")), None)
-        if any_tv:
-            self.selected_device_id = any_tv["id"]
-            return
+        # Out-of-the-box default: always local playback on This Device
         self.selected_device_id = "local"
 
     def save_selected_device(self, dev_id):
@@ -150,8 +139,7 @@ class DeviceManager:
                             self.devices.append(new_dev)
 
                         self._save_cached_devices()
-                        if not os.path.exists(LAST_DEVICE_FILE) and self.selected_device_id == "local":
-                            self._default_to_tv_or_local()
+                        # Keep local default intact unless user previously explicitly selected this TV
                         if self.on_update_callback:
                             GLib.idle_add(self.on_update_callback, list(self.devices))
 
