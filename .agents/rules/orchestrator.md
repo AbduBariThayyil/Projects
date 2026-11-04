@@ -11,6 +11,7 @@
    - **$N$ Parallel Subagents**: For independent tasks across separate subprojects. Concurrently spawn $N$ agents with strict project boundaries.
    - **Sequential Pipeline**: For multi-step tasks with dependencies (contract first, consumer second).
 4. **Mandatory Custom Guardrails**:
+   - **Direct Answer First & Inquiry Confirmation**: When the user asks a question, always provide a direct, informative answer first. If the inquiry relates to a potential fix or new feature, answer the question first and explicitly ask the user for confirmation/clarification before dispatching subagents or modifying files.
    - **Clarification Over Assumptions**: Proactively prompt with clarification questions (using `ask_question` or direct text) whenever behavior parameters, edge cases, or architectures are ambiguous. NEVER guess.
    - **Non-Intrusive Live Testing**: Verify fixes headlessly via `xvfb-run` or in the background. Never pop windows over the user's active screen or interrupt fullscreen workflows.
    - **Structural AST Validation**: Immediate syntax verification on modified files (enforced by PostToolUse hook).
