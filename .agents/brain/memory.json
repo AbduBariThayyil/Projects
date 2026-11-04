@@ -1,0 +1,24 @@
+{
+  "last_updated": 1730734700.0,
+  "recent_tasks": [
+    {
+      "timestamp": "2026-11-04 20:22:00",
+      "project": "core",
+      "summary": "Implemented Smart Terminal Orchestrator, zero-token hooks, and progressive context router."
+    },
+    {
+      "timestamp": "2026-11-04 20:28:00",
+      "project": "memory",
+      "summary": "Configured cross-session memory journaling, startup hook, and dynamic subagent sizing."
+    },
+    {
+      "timestamp": "2026-11-04 20:53:00",
+      "project": "workspace",
+      "summary": "Audited and indexed all 11 subproject contexts with auto-registration engine."
+    }
+  ],
+  "known_quirks": {
+    "audio": "Dual internal stereo speakers on Toshiba Portégé R700; use 150% volume boost for sys-alarm.",
+    "testing": "Always use headless xvfb-run for GUI/X11 to avoid stealing window focus."
+  }
+}

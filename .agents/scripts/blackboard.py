@@ -132,7 +132,30 @@ def cmd_check_lock(file_path, agent_id=None):
 
 def cmd_status():
     bb = read_blackboard()
-    print(json.dumps(bb, indent=2))
+    projects = {}
+    if PROJECTS_FILE.exists():
+        try:
+            with open(PROJECTS_FILE, "r") as f:
+                proj_data = json.load(f)
+                projects = {
+                    name: {
+                        "type": p.get("type", "unknown"),
+                        "stack": p.get("stack", []),
+                        "context_ready": (Path(BASE_DIR.parent) / p.get("context", "")).exists()
+                    }
+                    for name, p in proj_data.get("projects", {}).items()
+                }
+        except Exception:
+            pass
+
+    status_report = {
+        "orchestrator_status": "ready",
+        "total_projects_indexed": len(projects),
+        "indexed_projects": projects,
+        "active_subagents": bb.get("active_agents", {}),
+        "active_file_locks": bb.get("file_locks", {})
+    }
+    print(json.dumps(status_report, indent=2))
 
 
 def cmd_get_context(project_name):
