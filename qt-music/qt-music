@@ -953,6 +953,12 @@ class Mpris:
             warnings.simplefilter("ignore")  # Gio.DBusConnection.register_object is deprecated but still the portable call
             for iface in self.info.interfaces:
                 conn.register_object(MPRIS_PATH, iface, self._call, self._get, None)
+        try:
+            poly_bin = os.path.expanduser("~/.config/bspwm/bin/PolybarMusic")
+            if os.path.exists(poly_bin):
+                subprocess.Popen([poly_bin, "--fifo"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
     def _call(self, conn, sender, path, iface, method, params, inv):
         a = params.unpack()
@@ -1602,7 +1608,7 @@ class Bridge(QObject):
             except Exception as e:
                 self._engine_err = f"{type(e).__name__}: {e}"[:120]
         if eng:
-            self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self._settings.get("mpris_name") or self.a.mpris_name or "lollypop")
+            self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self._settings.get("mpris_name") or self.a.mpris_name or "qt-music")
         self.lib.load_cache()
         self._start_thumbs()
         self.setMode("own", announce=False)
@@ -1649,7 +1655,7 @@ class Bridge(QObject):
         if not self.own:
             try:
                 eng = QtEngine()
-                self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self._settings.get("mpris_name") or self.a.mpris_name or "lollypop")
+                self.own = OwnPlayer(self, self.lib, eng, float(self._settings.get("volume", 0.8)), self._settings.get("mpris_name") or self.a.mpris_name or "qt-music")
             except Exception as e:
                 self._engine_err = f"{type(e).__name__}: {e}"[:120]
                 self.toast.emit("can't play audio here - install qt6-multimedia (" + (self._engine_err or "unavailable") + ")")
@@ -4313,8 +4319,8 @@ def main_qt():
     ap.add_argument("-p", "--player", help=argparse.SUPPRESS)
     ap.add_argument("--own", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--follow", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--mpris-name", default="lollypop", metavar="NAME",
-                    help="name other programs (polybar, playerctl) see while playing your library, e.g. Lollypop")
+    ap.add_argument("--mpris-name", default="qt-music", metavar="NAME",
+                    help="name other programs (polybar, playerctl) see while playing your library, e.g. qt-music")
     ap.add_argument("--music", metavar="DIR", help="music folder (default ~/Music or $MUSICD_DIR)")
     ap.add_argument("--controls", action="store_true", help="show the prev/play/next buttons from the start")
     ap.add_argument("--windowed", action="store_true", help="don't start fullscreen")

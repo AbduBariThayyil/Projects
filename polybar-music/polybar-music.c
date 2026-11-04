@@ -6,10 +6,17 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/file.h>
+#include <sys/stat.h>
 
-#define LAUNCH_CMD   "LyricViewLauncher"
-#define CLOSE_CMD    "lyricview --quit 2>/dev/null || playerctl -p lyricview,qt-music quit 2>/dev/null"
-#define PLAYER_PARAM "lyricview,qt-music"
+#define LAUNCH_CMD   "QtMusicLauncher"
+#define CLOSE_CMD    "qt-music --quit 2>/dev/null || lyricview --quit 2>/dev/null || playerctl -p qt-music,lyricview,lollypop quit 2>/dev/null"
+#define PLAYER_PARAM "qt-music,lyricview,lollypop"
+
+#define FIFO_PATH    "/tmp/polybar_music.fifo"
+#define LOCK_PATH    "/tmp/polybar_music.lock"
 
 #define TITLE_MAX_CHARS  16
 #define BAR_CHARS        8
@@ -27,11 +34,14 @@ static const char *FACES[] = {
 
 static GMainLoop *main_loop = NULL;
 static GDBusConnection *dbus_conn = NULL;
-static guint watcher_lyricview = 0;
 static guint watcher_qtmusic = 0;
+static guint watcher_lyricview = 0;
+static guint watcher_lollypop = 0;
 static guint prop_sub_id = 0;
 static guint seeked_sub_id = 0;
 static guint tick_timer_id = 0;
+static guint startup_timer_id = 0;
+static int lock_fd = -1;
 
 static char active_bus_name[128] = {0};
 static gboolean is_player_active = FALSE;
@@ -42,6 +52,19 @@ static gint64 current_pos_us = 0;
 static gint64 current_len_us = 0;
 static time_t last_sync_time = 0;
 static int face_idx = 0;
+
+static void notify_polybar(const char *action) {
+    if (!action || !*action) return;
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "polybar-msg action \"%s\" >/dev/null 2>&1", action);
+    g_spawn_command_line_async(cmd, NULL);
+}
+
+/* Clear the Polybar music output */
+static void render_clear(void) {
+    printf("\n");
+    fflush(stdout);
+}
 
 /* Output the padded 'No Music' view */
 static void render_no_music(void) {
@@ -122,7 +145,7 @@ static void render_active_music(void) {
     printf("%%{O45}"
            "%%{A4:playerctl -p %s position 5+:}"
            "%%{A5:playerctl -p %s position 5-:}"
-           "%%{A3:lyricview --toggle:}"
+           "%%{A3:qt-music --toggle:}"
            "%%{A1:%s:}%%{F#bd93f9}%s%%{F-}  %%{F#f8f8f2}%s%%{F-}%%{A}  "
            "%%{F#50fa7b}%%{A1:playerctl -p %s play-pause:}%s%%{A}%%{F-} "
            "%%{F#8be9fd}%%{A1:playerctl -p %s previous:}󰒮%%{A}%%{F-} "
@@ -311,12 +334,30 @@ static void on_seeked_signal(GDBusConnection *connection,
     render_active_music();
 }
 
-/* LyricView appeared on D-Bus */
+/* Startup grace period timeout: if no player appeared, exit cleanly */
+static gboolean on_startup_timeout(gpointer user_data) {
+    (void)user_data;
+    startup_timer_id = 0;
+    if (!is_player_active) {
+        if (main_loop && g_main_loop_is_running(main_loop)) {
+            g_main_loop_quit(main_loop);
+        }
+    }
+    return G_SOURCE_REMOVE;
+}
+
+/* Player appeared on D-Bus */
 static void on_player_appeared(GDBusConnection *conn,
                                const gchar *name,
                                const gchar *name_owner,
                                gpointer user_data) {
     (void)conn; (void)name_owner; (void)user_data;
+
+    if (startup_timer_id > 0) {
+        g_source_remove(startup_timer_id);
+        startup_timer_id = 0;
+    }
+
     g_strlcpy(active_bus_name, name, sizeof(active_bus_name));
     is_player_active = TRUE;
 
@@ -350,15 +391,16 @@ static void on_player_appeared(GDBusConnection *conn,
         );
     }
 
+    notify_polybar("#music_center.module_show");
     fetch_player_state();
 }
 
-/* LyricView vanished from D-Bus */
+/* Player vanished from D-Bus */
 static void on_player_vanished(GDBusConnection *conn,
                                const gchar *name,
                                gpointer user_data) {
     (void)conn; (void)user_data;
-    if (strcmp(active_bus_name, name) == 0) {
+    if (is_player_active && strcmp(active_bus_name, name) == 0) {
         is_player_active = FALSE;
         active_bus_name[0] = '\0';
         g_strlcpy(current_status, "Stopped", sizeof(current_status));
@@ -373,35 +415,67 @@ static void on_player_vanished(GDBusConnection *conn,
             seeked_sub_id = 0;
         }
 
-        render_no_music();
+        render_clear();
+        notify_polybar("#music_center.module_hide");
+
+        /* Zero-RAM lifecycle: Player is gone, exit PolybarMusic immediately */
+        if (main_loop && g_main_loop_is_running(main_loop)) {
+            g_main_loop_quit(main_loop);
+        }
     }
 }
 
-int main(void) {
-    /* Set line buffering on stdout for streaming to Polybar */
+int main(int argc, char **argv) {
+    gboolean use_fifo = FALSE;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--fifo") == 0) {
+            use_fifo = TRUE;
+        }
+    }
+
+    /* Singleton lock check: ensure only one PolybarMusic process runs */
+    lock_fd = open(LOCK_PATH, O_CREAT | O_RDWR, 0600);
+    if (lock_fd >= 0) {
+        if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+            /* Another instance is already actively streaming; exit cleanly */
+            close(lock_fd);
+            return 0;
+        }
+    }
+
+    /* Handle FIFO streaming if requested or when FIFO exists */
+    if (use_fifo) {
+        struct stat st;
+        if (stat(FIFO_PATH, &st) != 0 || !S_ISFIFO(st.st_mode)) {
+            unlink(FIFO_PATH);
+            mkfifo(FIFO_PATH, 0666);
+        }
+        int fifo_fd = open(FIFO_PATH, O_WRONLY | O_NONBLOCK);
+        if (fifo_fd >= 0) {
+            int flags = fcntl(fifo_fd, F_GETFL);
+            if (flags != -1) {
+                fcntl(fifo_fd, F_SETFL, flags & ~O_NONBLOCK);
+            }
+            dup2(fifo_fd, STDOUT_FILENO);
+            close(fifo_fd);
+        }
+    }
+
+    /* Set line buffering on stdout for streaming */
     setvbuf(stdout, NULL, _IOLBF, 0);
 
     GError *err = NULL;
     dbus_conn = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
     if (!dbus_conn) {
-        render_no_music();
+        if (err) g_error_free(err);
+        if (lock_fd >= 0) { flock(lock_fd, LOCK_UN); close(lock_fd); }
         return 1;
     }
 
-    /* Print initial state immediately so Polybar has a line right away */
-    render_no_music();
+    /* Set 1.5s startup timeout: if player is not currently running, exit */
+    startup_timer_id = g_timeout_add(1500, on_startup_timeout, NULL);
 
-    /* Strictly monitor ONLY lyricview and qt-music */
-    watcher_lyricview = g_bus_watch_name(
-        G_BUS_TYPE_SESSION,
-        "org.mpris.MediaPlayer2.lyricview",
-        G_BUS_NAME_WATCHER_FLAGS_NONE,
-        on_player_appeared,
-        on_player_vanished,
-        NULL,
-        NULL
-    );
-
+    /* Monitor target players */
     watcher_qtmusic = g_bus_watch_name(
         G_BUS_TYPE_SESSION,
         "org.mpris.MediaPlayer2.qt-music",
@@ -412,12 +486,62 @@ int main(void) {
         NULL
     );
 
+    watcher_lyricview = g_bus_watch_name(
+        G_BUS_TYPE_SESSION,
+        "org.mpris.MediaPlayer2.lyricview",
+        G_BUS_NAME_WATCHER_FLAGS_NONE,
+        on_player_appeared,
+        on_player_vanished,
+        NULL,
+        NULL
+    );
+
+    watcher_lollypop = g_bus_watch_name(
+        G_BUS_TYPE_SESSION,
+        "org.mpris.MediaPlayer2.lollypop",
+        G_BUS_NAME_WATCHER_FLAGS_NONE,
+        on_player_appeared,
+        on_player_vanished,
+        NULL,
+        NULL
+    );
+
     main_loop = g_main_loop_new(NULL, FALSE);
     g_main_loop_run(main_loop);
 
-    g_bus_unwatch_name(watcher_lyricview);
+    /* Cleanup */
+    if (startup_timer_id > 0) {
+        g_source_remove(startup_timer_id);
+        startup_timer_id = 0;
+    }
+    if (tick_timer_id > 0) {
+        g_source_remove(tick_timer_id);
+        tick_timer_id = 0;
+    }
+    if (prop_sub_id > 0) {
+        g_dbus_connection_signal_unsubscribe(dbus_conn, prop_sub_id);
+        prop_sub_id = 0;
+    }
+    if (seeked_sub_id > 0) {
+        g_dbus_connection_signal_unsubscribe(dbus_conn, seeked_sub_id);
+        seeked_sub_id = 0;
+    }
+
     g_bus_unwatch_name(watcher_qtmusic);
+    g_bus_unwatch_name(watcher_lyricview);
+    g_bus_unwatch_name(watcher_lollypop);
     g_object_unref(dbus_conn);
+
+    if (main_loop) {
+        g_main_loop_unref(main_loop);
+        main_loop = NULL;
+    }
+
+    if (lock_fd >= 0) {
+        flock(lock_fd, LOCK_UN);
+        close(lock_fd);
+        lock_fd = -1;
+    }
 
     return 0;
 }
