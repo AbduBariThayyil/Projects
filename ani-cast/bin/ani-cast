@@ -189,7 +189,7 @@ QUERY="${POSITIONAL_ARGS[*]}"
 
 # Handle --continue flag
 if [ "$CONTINUE_MODE" = "1" ]; then
-    TARGET_JSON=$(python3 "$ENGINE_PY" continue "$CONTINUE_QUERY")
+    TARGET_JSON=$(python3 "$ENGINE_PY" continue "${CONTINUE_QUERY:-$QUERY}")
     if [ -z "$TARGET_JSON" ]; then
         echo -e "\033[1;31m[!] No matching watch history found to continue.\033[0m"
         exit 1
@@ -200,6 +200,7 @@ if [ "$CONTINUE_MODE" = "1" ]; then
     START_TS=$(echo "$TARGET_JSON" | jq -r '.timestamp // empty' 2>/dev/null || python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('timestamp',''))" <<< "$TARGET_JSON")
     TIME_STR=$(echo "$TARGET_JSON" | jq -r '.time_str // empty' 2>/dev/null || python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('time_str',''))" <<< "$TARGET_JSON")
     WAS_COMPL=$(echo "$TARGET_JSON" | jq -r '.was_completed // empty' 2>/dev/null || python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('was_completed',''))" <<< "$TARGET_JSON")
+    SEASON_NUM=$(echo "$TARGET_JSON" | jq -r '.season // empty' 2>/dev/null || python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('season',''))" <<< "$TARGET_JSON")
 
     if [ "$WAS_COMPL" = "true" ] || [ "$WAS_COMPL" = "True" ]; then
         echo -e "\033[1;32m==>\033[0m Advancing to next episode: \033[1;36m${SEARCH_TITLE} Episode ${EP_NUM}\033[0m..."
@@ -209,6 +210,7 @@ if [ "$CONTINUE_MODE" = "1" ]; then
 
     QUERY="$SEARCH_TITLE"
     EPISODE="$EP_NUM"
+    [ -n "$SEASON_NUM" ] && SEASON="$SEASON_NUM"
     export ANI_CAST_START_TIME="$START_TS"
 fi
 
@@ -231,9 +233,11 @@ while true; do
     [ -n "$QUALITY" ] && CLI_ARGS+=("-q" "$QUALITY")
     [ "$DUB_FLAG" = "1" ] && CLI_ARGS+=("--dub")
 
-    # If season was specified or determined
-    if [ -n "$CURRENT_SEASON" ] && [[ "$CURRENT_SEASON" =~ ^[0-9]+$ ]]; then
-        CLI_ARGS+=("-S" "$CURRENT_SEASON")
+    # If season was specified or determined (>1), ensure title includes season name if not already present
+    if [ -n "$CURRENT_SEASON" ] && [ "$CURRENT_SEASON" -gt 1 ] 2>/dev/null; then
+        if [[ ! "${CURRENT_QUERY,,}" =~ season[[:space:]]*[0-9]+ ]]; then
+            CURRENT_QUERY="$CURRENT_QUERY Season $CURRENT_SEASON"
+        fi
     fi
 
     if [ -n "$EPISODE" ]; then

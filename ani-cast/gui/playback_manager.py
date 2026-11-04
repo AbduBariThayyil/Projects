@@ -55,7 +55,7 @@ def get_resume_position(title: str) -> float:
             if not v.get("finished", False):
                 pos = float(v.get("position", 0.0))
                 dur = float(v.get("duration", 0.0))
-                if dur > 0 and pos >= (dur - 25.0):
+                if dur > 0 and (pos >= (dur - 25.0) or pos >= (dur * 0.92)):
                     return 0.0
                 return pos
             return 0.0
@@ -119,7 +119,8 @@ class PlaybackManager:
         self.stop_playback()
         self._stop_requested = False
 
-        self.current_anime = anime_title
+        base_anime, _, _ = anicast_engine.parse_anime_title(anime_title)
+        self.current_anime = base_anime
         self.current_season = season_num
         self.current_ep = episode_num
         self.current_episodes_list = episodes_list
@@ -128,9 +129,9 @@ class PlaybackManager:
         self.current_quality = quality
 
         full_title = (
-            f"{anime_title} Season {season_num} Episode {episode_num}"
+            f"{base_anime} Season {season_num} Episode {episode_num}"
             if season_num > 1
-            else f"{anime_title} Episode {episode_num}"
+            else f"{base_anime} Episode {episode_num}"
         )
         self.current_title = full_title
 
@@ -212,7 +213,11 @@ class PlaybackManager:
         def _monitor_ipc():
             last_pos = start_time or 0.0
             last_dur = 0.0
+            last_saved_pos = last_pos
+            last_save_time = time.time()
+            eof_reached = False
             client = None
+            sock_file = None
 
             # Connect to socket
             for _ in range(25):
@@ -220,31 +225,84 @@ class PlaybackManager:
                     try:
                         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                         client.connect(sock_path)
-                        client.settimeout(1.5)
+                        client.settimeout(1.0)
+                        sock_file = client.makefile("r", encoding="utf-8")
                         break
                     except Exception:
-                        pass
+                        if client:
+                            try:
+                                client.close()
+                            except Exception:
+                                pass
+                        client = None
+                        sock_file = None
                 time.sleep(0.15)
 
             while proc.poll() is None and not self._stop_requested:
-                if client:
+                if client and sock_file:
                     try:
-                        # Query time-pos
-                        client.sendall(json.dumps({"command": ["get_property", "time-pos"]}).encode("utf-8") + b"\n")
-                        res = json.loads(client.recv(1024).decode("utf-8", errors="ignore"))
-                        if "data" in res and res["data"] is not None:
-                            last_pos = float(res["data"])
+                        client.sendall(json.dumps({"command": ["get_property", "time-pos"], "request_id": 1}).encode("utf-8") + b"\n")
+                        client.sendall(json.dumps({"command": ["get_property", "duration"], "request_id": 2}).encode("utf-8") + b"\n")
 
-                        # Query duration
-                        client.sendall(json.dumps({"command": ["get_property", "duration"]}).encode("utf-8") + b"\n")
-                        res = json.loads(client.recv(1024).decode("utf-8", errors="ignore"))
-                        if "data" in res and res["data"] is not None:
-                            last_dur = float(res["data"])
+                        for _ in range(10):
+                            try:
+                                line = sock_file.readline()
+                            except (socket.timeout, TimeoutError):
+                                break
+                            if not line:
+                                break
+                            try:
+                                msg = json.loads(line)
+                            except Exception:
+                                continue
+
+                            if msg.get("event") == "end-file":
+                                if msg.get("reason") == "eof":
+                                    eof_reached = True
+
+                            req_id = msg.get("request_id")
+                            if req_id == 1 and msg.get("data") is not None:
+                                try:
+                                    last_pos = float(msg["data"])
+                                except (ValueError, TypeError):
+                                    pass
+                            elif req_id == 2:
+                                if msg.get("data") is not None:
+                                    try:
+                                        last_dur = float(msg["data"])
+                                    except (ValueError, TypeError):
+                                        pass
+                                break
                     except Exception:
                         pass
 
-                time.sleep(2.0)
+                    now = time.time()
+                    if last_pos > 0 and (abs(last_pos - last_saved_pos) >= 3.0 or (now - last_save_time) >= 5.0):
+                        save_resume_state(title, last_pos, last_dur, finished=False)
+                        last_saved_pos = last_pos
+                        last_save_time = now
 
+                time.sleep(1.5)
+
+            # Drain any final events from MPV
+            if client and sock_file:
+                try:
+                    client.settimeout(0.3)
+                    for _ in range(10):
+                        line = sock_file.readline()
+                        if not line:
+                            break
+                        msg = json.loads(line)
+                        if msg.get("event") == "end-file" and msg.get("reason") == "eof":
+                            eof_reached = True
+                except Exception:
+                    pass
+
+            if sock_file:
+                try:
+                    sock_file.close()
+                except Exception:
+                    pass
             if client:
                 try:
                     client.close()
@@ -256,11 +314,10 @@ class PlaybackManager:
                 except Exception:
                     pass
 
-            ret = proc.poll()
             finished = False
-            if last_dur > 0 and last_pos >= (last_dur - 25.0):
+            if eof_reached:
                 finished = True
-            elif ret == 0 and last_dur > 0:
+            elif last_dur > 0 and (last_pos >= (last_dur - 25.0) or last_pos >= (last_dur * 0.92)):
                 finished = True
 
             if finished:
@@ -367,6 +424,7 @@ class PlaybackManager:
                 self.current_device,
                 mode=self.current_mode,
                 quality=self.current_quality,
+                explicit_start_time=0.0,
             )
             return
 
@@ -402,6 +460,7 @@ class PlaybackManager:
                         self.current_device,
                         mode=self.current_mode,
                         quality=self.current_quality,
+                        explicit_start_time=0.0,
                     )
 
         threading.Thread(target=_check_next_season, daemon=True).start()

@@ -5,6 +5,7 @@ REF=""
 TITLE="Anime Episode"
 VIDEO_URL=""
 SUB_URL=""
+EXTRA_ARGS=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -29,6 +30,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         *)
+            EXTRA_ARGS+=("$1")
             shift
             ;;
     esac
@@ -53,7 +55,7 @@ else
     fi
 fi
 
-# Ensure subsequent episodes in the same session start at 00:00
+# Ensure subsequent episodes in the same session start at 00:00 unless prior resume state exists
 FIRST_EP_FLAG="${XDG_RUNTIME_DIR:-/tmp}/ani_cast_first_ep_done"
 if [ -f "$FIRST_EP_FLAG" ]; then
     unset ANI_CAST_START_TIME
@@ -61,10 +63,54 @@ else
     touch "$FIRST_EP_FLAG" 2>/dev/null || true
 fi
 
-# 1. Kill old processes
+# Check for Local Mode (-l or ANI_CAST_LOCAL=1 or target device is local)
+if [ "$ANI_CAST_LOCAL" = "1" ] || [ "${ANI_CAST_DEVICE,,}" = "local" ] || [ "$ANI_CAST_DEVICE" = "0" ] || [ "${ANI_CAST_DEVICE,,}" = "this" ]; then
+    MPV_ARGS=(
+        "--force-media-title=$TITLE"
+        "--script=/home/vibecoder/Projects/ani-cast/lib/ani_cast_mpv_resume.lua"
+    )
+    [ -n "$REF" ] && MPV_ARGS+=("--referrer=$REF")
+    if [ "$ANI_CAST_NO_SUB" = "1" ]; then
+        MPV_ARGS+=("--no-sub")
+    elif [ -f "$SUB_FILE" ] && [ -s "$SUB_FILE" ]; then
+        MPV_ARGS+=("--sub-file=$SUB_FILE")
+    elif [ -n "$SUB_URL" ]; then
+        MPV_ARGS+=("--sub-file=$SUB_URL")
+    fi
+
+    # Resume position: Check ANI_CAST_START_TIME first, then fallback to resume_state.json if not set
+    START_POS="${ANI_CAST_START_TIME:-}"
+    if [ -z "$START_POS" ] || [ "$START_POS" = "0" ] || [ "$START_POS" = "0.0" ]; then
+        START_POS=$(python3 -c "
+import json, os, sys
+title = '''$TITLE'''.strip().lower()
+rf = os.path.expanduser('~/.local/state/ani-cast/resume_state.json')
+if os.path.exists(rf):
+    try:
+        data = json.load(open(rf))
+        for k, v in data.items():
+            if k.strip().lower() == title and not v.get('finished', False):
+                pos = float(v.get('position', 0))
+                dur = float(v.get('duration', 0))
+                if dur <= 0 or pos < (dur - 25):
+                    print(pos)
+                    sys.exit(0)
+    except Exception:
+        pass
+" 2>/dev/null || true)
+    fi
+
+    if [ -n "$START_POS" ] && [ "$START_POS" != "0" ] && [ "$START_POS" != "0.0" ]; then
+        MPV_ARGS+=("--start=$START_POS")
+    fi
+
+    export ANI_CAST_TITLE="$TITLE"
+    exec mpv "${MPV_ARGS[@]}" "${EXTRA_ARGS[@]}" "$VIDEO_URL"
+fi
+
+# CAST MODE: Stream directly to TV via Chromecast as usual
 killall -q catt 2>/dev/null || true
 pkill -f hls_streamer.py 2>/dev/null || true
 sleep 0.3
 
-# 2. Stream directly to TV or local device with automatic reconnect & resume
 exec python3 /home/vibecoder/Videos/Anime/hls_streamer.py "$REF" "$VIDEO_URL" "$SUB_FILE" "$TITLE" "${ANI_CAST_START_TIME:-}"

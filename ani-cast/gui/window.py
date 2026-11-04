@@ -77,6 +77,13 @@ class AniCastWindow(Adw.ApplicationWindow):
         self.refresh_continue_watching()
         self.device_mgr.start_discovery(timeout=3.5)
 
+        # Handle window close to ensure subprocesses terminate
+        self.connect("close-request", self._on_close_request)
+
+    def _on_close_request(self, win):
+        self.playback_mgr.stop_playback()
+        return False
+
     def _build_header_bar(self):
         self.header = Adw.HeaderBar()
         self.toolbar_view.add_top_bar(self.header)
@@ -212,7 +219,9 @@ class AniCastWindow(Adw.ApplicationWindow):
         icon_name = "computer-symbolic" if is_local else "tv-symbolic"
         self.device_icon.set_from_icon_name(icon_name)
         short_name = dev["name"]
-        if len(short_name) > 18:
+        if is_local:
+            short_name = "This Device (Local)"
+        elif len(short_name) > 18:
             short_name = short_name[:16] + "..."
         self.device_label.set_label(short_name)
 
@@ -224,6 +233,7 @@ class AniCastWindow(Adw.ApplicationWindow):
 
     def _on_devices_updated(self, devices):
         self._populate_device_list()
+        self.refresh_continue_watching()
 
     def _on_quality_changed(self, dropdown, _pspec):
         item = dropdown.get_selected_item()
@@ -814,7 +824,7 @@ class AniCastWindow(Adw.ApplicationWindow):
         self.episodes_group.set_title(f"Season {current_season_num} Episodes ({len(episodes)} total)")
 
         resume_data = anicast_engine.load_resume_state()
-        clean_anime = self.current_anime["title"]
+        base_anime, _, _ = anicast_engine.parse_anime_title(self.current_anime["title"])
 
         for ep in episodes:
             row = Adw.ActionRow()
@@ -822,9 +832,9 @@ class AniCastWindow(Adw.ApplicationWindow):
             row.set_title(f"Episode {ep_num}")
 
             full_title = (
-                f"{clean_anime} Season {current_season_num} Episode {ep_num}"
+                f"{base_anime} Season {current_season_num} Episode {ep_num}"
                 if current_season_num > 1
-                else f"{clean_anime} Episode {ep_num}"
+                else f"{base_anime} Episode {ep_num}"
             )
 
             # Check resume state
@@ -844,11 +854,14 @@ class AniCastWindow(Adw.ApplicationWindow):
             # Check if file exists on disk
             try:
                 ep_int = int(float(ep_num))
-                fname = f"{clean_anime} - Episode {ep_int:02d}.mp4"
+                fname = f"{base_anime} - Episode {ep_int:02d}.mp4"
             except Exception:
-                fname = f"{clean_anime} - Episode {ep_num}.mp4"
-            dest_dir = os.path.join(BASE_ANIME_DIR, clean_anime)
+                fname = f"{base_anime} - Episode {ep_num}.mp4"
+            season_dir = f"{base_anime} Season {current_season_num}" if current_season_num > 1 else base_anime
+            dest_dir = os.path.join(BASE_ANIME_DIR, season_dir)
             local_path = os.path.join(dest_dir, fname)
+            if not os.path.exists(local_path):
+                local_path = os.path.join(BASE_ANIME_DIR, base_anime, fname)
             if os.path.exists(local_path) and os.path.getsize(local_path) > 5 * 1024 * 1024:
                 dl_badge = Gtk.Label(label="Downloaded ✓")
                 dl_badge.add_css_class("badge-watched")
@@ -894,8 +907,10 @@ class AniCastWindow(Adw.ApplicationWindow):
         except Exception:
             ep_int = 1
 
+        base_title, _, _ = anicast_engine.parse_anime_title(self.current_anime["title"])
+
         self.playback_mgr.play_episode(
-            self.current_anime["title"],
+            base_title,
             self.current_season_num,
             ep_int,
             ep_obj["id"],
@@ -969,6 +984,8 @@ class AniCastWindow(Adw.ApplicationWindow):
         elif status == "stopped":
             self.stop_btn.set_visible(False)
             self.refresh_continue_watching()
+            if self.stack.get_visible_child_name() == "episodes" and self.current_episodes:
+                self._display_episodes_and_seasons(self.current_episodes, self.current_seasons, self.current_season_num)
         elif status == "error":
             self.stop_btn.set_visible(False)
             self.show_toast(f"Playback error: {detail}")
@@ -976,6 +993,8 @@ class AniCastWindow(Adw.ApplicationWindow):
     def _on_auto_advance(self, anime_title, season_num, episode_num, _ep_id):
         self.show_toast(f"Auto-advancing: Season {season_num} Episode {episode_num}")
         self.refresh_continue_watching()
+        if self.stack.get_visible_child_name() == "episodes" and self.current_episodes:
+            self._display_episodes_and_seasons(self.current_episodes, self.current_seasons, self.current_season_num)
 
     def show_toast(self, text):
         toast = Adw.Toast.new(text)

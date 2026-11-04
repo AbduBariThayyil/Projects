@@ -60,7 +60,8 @@ class DownloadManager:
 
         def _worker():
             try:
-                clean_anime = re.sub(r'[/\\?%*:|"<>]', "_", anime_title.strip())
+                base_anime, _, _ = anicast_engine.parse_anime_title(anime_title)
+                clean_anime = re.sub(r'[/\\?%*:|"<>]', "_", base_anime.strip())
                 season_str = f" Season {season_num}" if season_num > 1 else ""
                 dest_dir_name = f"{clean_anime}{season_str}"
                 dest_dir = os.path.join(BASE_ANIME_DIR, dest_dir_name)
@@ -82,9 +83,9 @@ class DownloadManager:
                         ep_int = ep_num
 
                     full_ep_title = (
-                        f"{anime_title} Season {season_num} Episode {ep_num}"
+                        f"{base_anime} Season {season_num} Episode {ep_num}"
                         if season_num > 1
-                        else f"{anime_title} Episode {ep_num}"
+                        else f"{base_anime} Episode {ep_num}"
                     )
                     out_filename = f"{clean_anime} - Episode {ep_int:02d}.mp4" if isinstance(ep_int, int) else f"{clean_anime} - Episode {ep_int}.mp4"
                     out_path = os.path.join(dest_dir, out_filename)
