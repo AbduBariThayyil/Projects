@@ -1,10 +1,23 @@
 # Smart Terminal Orchestrator Rules
 
-1. **Single Entry Point**: This terminal session is the central coordinator for all projects in `/home/vibecoder/Projects`. Never require the user to open separate chat sessions for different subprojects.
-2. **Subagent Delegation**: The main terminal does not directly edit code or run heavy builds across subprojects. It decomposes tasks, consults `.agents/brain/projects.json`, and spawns specialized subagents (`invoke_subagent`).
-3. **Progressive Context Scoping**: Only inject the specific project's `context.md` (or run `python3 .agents/scripts/blackboard.py get-context <project>`) into the subagent's prompt. Do NOT pollute context with unrelated project data.
-4. **Dynamic Model Tiering**:
-   - Assign lightweight verification, formatting, or single-file test runs to `flash`.
-   - Assign complex debugging, core feature writing, or C pointer refactoring to `inherit` (Gemini 3.8 Flash High) or `pro` without compromising quality.
-5. **No Guessing**: Always proactively prompt the user with clarifying questions whenever requirements or behaviors are ambiguous.
-6. **Task & Lock Coordination**: Register tasks and check file locks in `.agents/brain/blackboard.json` before and after dispatching subagents.
+1. **Single Entry Point**: This terminal session is the central coordinator for all projects in `/home/vibecoder/Projects`. You handle multi-project operations from this one terminal without asking the user to switch chats.
+2. **Cross-Session Memory Continuity**:
+   - The shared brain persists in `.agents/brain/journal.md` and `memory.json`.
+   - On starting any new conversation, the session automatically initializes previous context and recent task history.
+   - After completing any task, log it via `python3 .agents/scripts/journal.py log-task <project> "<summary>"`.
+3. **Dynamic Subagent Sizing**:
+   - **0 Subagents**: Direct answer for informational/spec queries.
+   - **1 Subagent**: For localized, single-project changes. Never over-parallelize a single project.
+   - **$N$ Parallel Subagents**: For independent tasks across separate subprojects. Concurrently spawn $N$ agents with strict project boundaries.
+   - **Sequential Pipeline**: For multi-step tasks with dependencies (contract first, consumer second).
+4. **Mandatory Custom Guardrails**:
+   - **Clarification Over Assumptions**: Proactively prompt with clarification questions (using `ask_question` or direct text) whenever behavior parameters, edge cases, or architectures are ambiguous. NEVER guess.
+   - **Non-Intrusive Live Testing**: Verify fixes headlessly via `xvfb-run` or in the background. Never pop windows over the user's active screen or interrupt fullscreen workflows.
+   - **Structural AST Validation**: Immediate syntax verification on modified files (enforced by PostToolUse hook).
+   - **Consecutive Failure Halting**: If an automated fix fails twice consecutively, halt background execution and present the diff overview immediately.
+   - **Auto-Commit & Auto-Push**: Stage modified files, commit using Conventional Commits (`feat`, `fix`, `refactor`), and push immediately to `origin master`.
+5. **Progressive Context Scoping**: Subagents receive ONLY their target project's `context.md` (via `.agents/brain/projects.json`). Never dump unrelated project contexts into the active prompt.
+6. **Dynamic Model Tiering**:
+   - `flash`: Fast lint checks, syntax formatting, or single-file test runs.
+   - `inherit` (Gemini 3.8 Flash High): Standard coding and bugfixes without compromising quality.
+   - `pro`: Deep architectural reasoning, complex C pointer/memory debugging, or concurrency issues.

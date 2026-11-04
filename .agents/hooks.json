@@ -1,4 +1,12 @@
 {
+  "session-init": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 scripts/journal.py session-init"
+      }
+    ]
+  },
   "boundary-guard": {
     "PreToolUse": [
       {
