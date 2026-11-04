@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Native GTK 4 / Libadwaita GUI launcher for AniCast
+export GSK_RENDERER="${GSK_RENDERER:-cairo}"
+export GTK_A11Y="${GTK_A11Y:-none}"
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+
+exec python3 "$SCRIPT_DIR/app.py" "$@"

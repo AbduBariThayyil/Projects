@@ -1,0 +1,64 @@
+/* AniCast GTK 4 / Libadwaita Stylesheet */
+
+.hero-card {
+    background: linear-gradient(135deg, alpha(@accent_bg_color, 0.18), alpha(@window_bg_color, 0.85));
+    border: 1px solid alpha(@accent_color, 0.35);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+
+.hero-card:hover {
+    border-color: alpha(@accent_color, 0.55);
+}
+
+.hero-title {
+    font-size: 1.25rem;
+    font-weight: 800;
+}
+
+.hero-subtitle {
+    font-size: 0.95rem;
+    color: @accent_color;
+    font-weight: 600;
+}
+
+.hero-time {
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+
+.poster-frame {
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.poster-img {
+    border-radius: 8px;
+}
+
+.badge-watched {
+    background-color: alpha(#2ec27e, 0.2);
+    color: #2ec27e;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.badge-progress {
+    background-color: alpha(#3584e4, 0.2);
+    color: #3584e4;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.download-banner {
+    background-color: alpha(@accent_bg_color, 0.12);
+    border: 1px solid alpha(@accent_color, 0.25);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+}

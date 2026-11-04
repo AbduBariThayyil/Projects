@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -e
+
+REF=""
+TITLE="Anime Episode"
+VIDEO_URL=""
+SUB_URL=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --referrer=*)
+            REF="${1#*=}"
+            shift
+            ;;
+        --sub-file=*)
+            SUB_URL="${1#*=}"
+            shift
+            ;;
+        --force-media-title=*)
+            TITLE="${1#*=}"
+            shift
+            ;;
+        --no-sub|--no-subs)
+            ANI_CAST_NO_SUB=1
+            shift
+            ;;
+        http*|/*)
+            VIDEO_URL="$1"
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$VIDEO_URL" ]; then
+    echo "Error: No video URL provided."
+    exit 1
+fi
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ani-cast"
+mkdir -p "$CACHE_DIR"
+
+if [ "$ANI_CAST_NO_SUB" = "1" ]; then
+    SUB_FILE=""
+    rm -f "$CACHE_DIR/subtitles.vtt" 2>/dev/null || true
+else
+    SUB_FILE="$CACHE_DIR/subtitles.vtt"
+    # Fetch subtitles if available (0.1s)
+    if [ -n "$SUB_URL" ]; then
+        curl -sL -A "Mozilla/5.0" -e "$REF" "$SUB_URL" -o "$SUB_FILE" || true
+    fi
+fi
+
+# Ensure subsequent episodes in the same session start at 00:00
+FIRST_EP_FLAG="${XDG_RUNTIME_DIR:-/tmp}/ani_cast_first_ep_done"
+if [ -f "$FIRST_EP_FLAG" ]; then
+    unset ANI_CAST_START_TIME
+else
+    touch "$FIRST_EP_FLAG" 2>/dev/null || true
+fi
+
+# 1. Kill old processes
+killall -q catt 2>/dev/null || true
+pkill -f hls_streamer.py 2>/dev/null || true
+sleep 0.3
+
+# 2. Stream directly to TV or local device with automatic reconnect & resume
+exec python3 /home/vibecoder/Videos/Anime/hls_streamer.py "$REF" "$VIDEO_URL" "$SUB_FILE" "$TITLE" "${ANI_CAST_START_TIME:-}"

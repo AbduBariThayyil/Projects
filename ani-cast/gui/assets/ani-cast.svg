@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3584e4"/>
+      <stop offset="50%" stop-color="#7856ff"/>
+      <stop offset="100%" stop-color="#e01b24"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#241f31"/>
+      <stop offset="100%" stop-color="#181520"/>
+    </linearGradient>
+  </defs>
+  <!-- App Base Card -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#bg)"/>
+  <!-- TV Bezel -->
+  <rect x="20" y="24" width="88" height="64" rx="10" fill="url(#screen)" stroke="#ffffff" stroke-width="2" stroke-opacity="0.3"/>
+  <!-- TV Stand -->
+  <path d="M52 94 L76 94 M64 88 L64 94" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <!-- Casting Waves / Anime Play Icon -->
+  <polygon points="56,42 78,56 56,70" fill="#f6d32d"/>
+  <!-- Cast WiFi arcs -->
+  <path d="M26 78 A 8 8 0 0 1 34 86" stroke="#3584e4" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M26 70 A 16 16 0 0 1 42 86" stroke="#3584e4" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <circle cx="26" cy="86" r="2.5" fill="#3584e4"/>
+</svg>

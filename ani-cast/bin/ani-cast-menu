@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# ani-cast-menu: Smart menu wrapper for ani-cli
+# Bypasses fzf when advancing episodes so TV playback streams automatically
+
+ACTION_FILE="${XDG_RUNTIME_DIR:-/tmp}/ani_cast_action"
+
+prompt=""
+for arg in "$@"; do
+    if [[ "$arg" =~ ^Playing\ episode\ .* ]] || [[ "$arg" =~ ^Select\ .* ]] || [[ "$arg" =~ ^Search\ .* ]]; then
+        prompt="$arg"
+        break
+    fi
+done
+
+# If this is the initial search prompt (e.g. when running plain 'ani-cast' without query)
+if [[ "$prompt" =~ ^Search\ anime.* ]] || [[ "$prompt" =~ ^Search.* ]]; then
+    query=""
+    if [ -t 0 ]; then
+        while [ -z "$query" ]; do
+            printf "\33[2K\r\033[1;36mSearch anime: \033[0m" >&2
+            read -r query || break
+        done
+    else
+        # Stdin was piped (ani-cli pipes ': | menu' for external menus)
+        if read -r -t 0.1 piped_query && [ -n "$piped_query" ]; then
+            query="$piped_query"
+        elif [ -c /dev/tty ]; then
+            while [ -z "$query" ]; do
+                printf "\33[2K\r\033[1;36mSearch anime: \033[0m" >&2
+                read -r query </dev/tty || break
+            done
+        fi
+    fi
+    printf "%s\n" "$query"
+    exit 0
+fi
+
+# If this is the post-episode menu ("Playing episode X of Y...")
+if [[ "$prompt" =~ ^Playing\ episode\ .* ]]; then
+    action=""
+    if [ -f "$ACTION_FILE" ]; then
+        action=$(cat "$ACTION_FILE" 2>/dev/null || true)
+        rm -f "$ACTION_FILE" 2>/dev/null || true
+    fi
+
+    if [ "$action" = "next" ]; then
+        # User pressed 'n' on keyboard -> immediately stream next episode!
+        printf "next\n"
+        exit 0
+    elif [ "$action" = "next_season" ]; then
+        # User pressed 'n' on season finale -> advance to next season!
+        touch "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_next_season_pending" 2>/dev/null || true
+        printf "quit\n"
+        exit 0
+    elif [ "$action" = "auto_next_season" ]; then
+        # Season finale finished naturally -> countdown then advance to next season
+        printf "\n\033[1;32m==> Season complete! Streaming Next Season in 3s... (Press 'q' to stop, Enter to stream now)\033[0m\n" >&2
+        user_input=""
+        if [ -c /dev/tty ]; then
+            read -r -t 3 user_input </dev/tty || true
+        else
+            read -r -t 3 user_input || true
+        fi
+        if [ "$user_input" = "q" ] || [ "$user_input" = "Q" ]; then
+            printf "quit\n"
+            exit 0
+        else
+            touch "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_next_season_pending" 2>/dev/null || true
+            printf "quit\n"
+            exit 0
+        fi
+    elif [ "$action" = "auto_next" ]; then
+        # Episode finished naturally on TV -> countdown then auto-stream next episode
+        printf "\n\033[1;32m==> Episode finished! Streaming next episode in 3s... (Press 'q' to stop, Enter to stream now)\033[0m\n" >&2
+        user_input=""
+        if [ -c /dev/tty ]; then
+            read -r -t 3 user_input </dev/tty || true
+        else
+            read -r -t 3 user_input || true
+        fi
+        if [ "$user_input" = "q" ] || [ "$user_input" = "Q" ]; then
+            printf "quit\n"
+            exit 0
+        else
+            printf "next\n"
+            exit 0
+        fi
+    fi
+fi
+
+# Standard interactive selection (Select anime, Select episode, Select Quality, etc.)
+fzf_flags=()
+for arg in "$@"; do
+    if [ -n "$arg" ] && [ "$arg" != "$prompt" ]; then
+        fzf_flags+=("$arg")
+    fi
+done
+
+exec fzf --reverse --cycle --prompt "$prompt" "${fzf_flags[@]}"
