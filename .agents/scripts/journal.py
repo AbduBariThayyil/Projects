@@ -80,7 +80,10 @@ def cmd_session_init():
         "injectSteps": [
             {
                 "systemMessage": {
-                    "systemMessage": msg
+                    "systemMessage": msg,
+                    "metadata": {
+                        "user_markdown": msg
+                    }
                 }
             }
         ]
