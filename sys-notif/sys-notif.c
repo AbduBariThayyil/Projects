@@ -141,6 +141,8 @@ typedef struct {
 static OSDState osd = {0};
 
 #define MAX_GROUP_MSGS 5
+#define MAX_LOG_HISTORY 500
+#define MAX_VISIBLE_NOTIFS 5
 
 /* Notification Item */
 typedef struct NotificationItem {
@@ -228,8 +230,8 @@ static void init_visual() {
 static void play_sound(const char *sound_id) {
     gint64 now = g_get_monotonic_time();
     gint64 delta_us = now - last_sound_time;
-    /* Debounce: only play if at least 120ms has passed since last tick */
-    if (delta_us < 120000) {
+    /* Debounce: only play if at least 350ms has passed since last tick */
+    if (delta_us < 350000) {
         return;
     }
     last_sound_time = now;
@@ -705,7 +707,13 @@ static void render_osd() {
     cairo_fill_preserve(cr);
 
     /* Border (accent or boost color) */
-    if (osd.percent > 100) {
+    if (strcmp(osd.type, "touchpad") == 0) {
+        if (osd.percent > 0) {
+            cairo_set_source_rgba(cr, COLOR_GREEN_R, COLOR_GREEN_G, COLOR_GREEN_B, 0.50);
+        } else {
+            cairo_set_source_rgba(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B, 0.50);
+        }
+    } else if (osd.percent > 100) {
         cairo_set_source_rgba(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B, 0.70);
     } else {
         cairo_set_source_rgba(cr, COLOR_BLUE_R, COLOR_BLUE_G, COLOR_BLUE_B, 0.50);
@@ -713,9 +721,11 @@ static void render_osd() {
     cairo_set_line_width(cr, 1.5);
     cairo_stroke(cr);
 
-    /* Icon / Glyph: Dynamic adaptive icons for brightness and volume */
+    /* Icon / Glyph: Dynamic adaptive icons for brightness, volume, and touchpad */
     const char *icon_glyph = "󰕾";
-    if (strcmp(osd.type, "brightness") == 0) {
+    if (strcmp(osd.type, "touchpad") == 0) {
+        icon_glyph = "󰟀";
+    } else if (strcmp(osd.type, "brightness") == 0) {
         if (osd.percent <= 33) {
             icon_glyph = "󰃞"; /* Low brightness */
         } else if (osd.percent <= 66) {
@@ -739,7 +749,13 @@ static void render_osd() {
     pango_layout_set_font_description(layout_icon, f_osd_icon);
     pango_layout_set_text(layout_icon, icon_glyph, -1);
 
-    if (osd.is_muted) {
+    if (strcmp(osd.type, "touchpad") == 0) {
+        if (osd.percent > 0) {
+            cairo_set_source_rgb(cr, COLOR_GREEN_R, COLOR_GREEN_G, COLOR_GREEN_B);
+        } else {
+            cairo_set_source_rgb(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B);
+        }
+    } else if (osd.is_muted) {
         cairo_set_source_rgb(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B);
     } else if (osd.percent > 100) {
         cairo_set_source_rgb(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B);
@@ -752,7 +768,9 @@ static void render_osd() {
 
     /* Format percentage text */
     char pct_str[24];
-    if (osd.is_muted) {
+    if (strcmp(osd.type, "touchpad") == 0) {
+        snprintf(pct_str, sizeof(pct_str), "%s", (osd.percent > 0) ? "ON" : "OFF");
+    } else if (osd.is_muted) {
         snprintf(pct_str, sizeof(pct_str), "MUTE");
     } else {
         snprintf(pct_str, sizeof(pct_str), "%d%%", osd.percent);
@@ -769,7 +787,13 @@ static void render_osd() {
     int text_x = w - pct_w - 18;
     int text_y = (h - pct_h) / 2;
 
-    if (osd.is_muted) {
+    if (strcmp(osd.type, "touchpad") == 0) {
+        if (osd.percent > 0) {
+            cairo_set_source_rgb(cr, COLOR_GREEN_R, COLOR_GREEN_G, COLOR_GREEN_B);
+        } else {
+            cairo_set_source_rgb(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B);
+        }
+    } else if (osd.is_muted) {
         cairo_set_source_rgb(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B);
     } else if (osd.percent > 100) {
         cairo_set_source_rgb(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B);
@@ -793,48 +817,63 @@ static void render_osd() {
     cairo_set_source_rgba(cr, COLOR_SURFACE_R, COLOR_SURFACE_G, COLOR_SURFACE_B, 0.9);
     cairo_fill(cr);
 
-    /* Handle volume max: up to 150% boost */
-    double max_scale = (strcmp(osd.type, "volume") == 0) ? 150.0 : 100.0;
-    double pct_100_ratio = 100.0 / max_scale; /* ~0.667 for 150% max */
-    double x_100 = track_x + (track_w * pct_100_ratio);
-
-    /* Subtle tick at 100% boundary if scale is 150% */
-    if (max_scale > 100.0) {
-        cairo_set_source_rgba(cr, COLOR_SUBTEXT_R, COLOR_SUBTEXT_G, COLOR_SUBTEXT_B, 0.4);
-        cairo_set_line_width(cr, 1.0);
-        cairo_move_to(cr, x_100, track_y - 2.0);
-        cairo_line_to(cr, x_100, track_y + track_h + 2.0);
-        cairo_stroke(cr);
-    }
-
-    if (!osd.is_muted && osd.percent > 0) {
-        double current_val = (double)osd.percent;
-        if (current_val > max_scale) current_val = max_scale;
-
-        if (current_val <= 100.0) {
-            /* Base blue fill */
-            double fill_ratio = current_val / max_scale;
-            double fill_w = track_w * fill_ratio;
-            if (fill_w < 6.0) fill_w = 6.0;
-
-            draw_rounded_rect(cr, track_x, track_y, fill_w, track_h, 4.0);
-            cairo_set_source_rgb(cr, COLOR_BLUE_R, COLOR_BLUE_G, COLOR_BLUE_B);
+    if (strcmp(osd.type, "touchpad") == 0) {
+        if (osd.percent > 0) {
+            /* Pill track filled with green when enabled */
+            draw_rounded_rect(cr, track_x, track_y, track_w, track_h, 4.0);
+            cairo_set_source_rgb(cr, COLOR_GREEN_R, COLOR_GREEN_G, COLOR_GREEN_B);
             cairo_fill(cr);
         } else {
-            /* 0% to 100% filled with Blue */
-            double base_w = track_w * pct_100_ratio;
-            draw_rounded_rect(cr, track_x, track_y, base_w, track_h, 4.0);
-            cairo_set_source_rgb(cr, COLOR_BLUE_R, COLOR_BLUE_G, COLOR_BLUE_B);
-            cairo_fill(cr);
+            /* Empty / red track outline when disabled */
+            draw_rounded_rect(cr, track_x, track_y, track_w, track_h, 4.0);
+            cairo_set_source_rgba(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B, 0.50);
+            cairo_set_line_width(cr, 1.2);
+            cairo_stroke(cr);
+        }
+    } else {
+        /* Handle volume max: up to 150% boost */
+        double max_scale = (strcmp(osd.type, "volume") == 0) ? 150.0 : 100.0;
+        double pct_100_ratio = 100.0 / max_scale; /* ~0.667 for 150% max */
+        double x_100 = track_x + (track_w * pct_100_ratio);
 
-            /* >100% portion filled with Peach/Boost color */
-            double boost_ratio = (current_val - 100.0) / max_scale;
-            double boost_w = track_w * boost_ratio;
-            if (boost_w < 4.0) boost_w = 4.0;
+        /* Subtle tick at 100% boundary if scale is 150% */
+        if (max_scale > 100.0) {
+            cairo_set_source_rgba(cr, COLOR_SUBTEXT_R, COLOR_SUBTEXT_G, COLOR_SUBTEXT_B, 0.4);
+            cairo_set_line_width(cr, 1.0);
+            cairo_move_to(cr, x_100, track_y - 2.0);
+            cairo_line_to(cr, x_100, track_y + track_h + 2.0);
+            cairo_stroke(cr);
+        }
 
-            draw_rounded_rect(cr, x_100, track_y, boost_w, track_h, 4.0);
-            cairo_set_source_rgb(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B);
-            cairo_fill(cr);
+        if (!osd.is_muted && osd.percent > 0) {
+            double current_val = (double)osd.percent;
+            if (current_val > max_scale) current_val = max_scale;
+
+            if (current_val <= 100.0) {
+                /* Base blue fill */
+                double fill_ratio = current_val / max_scale;
+                double fill_w = track_w * fill_ratio;
+                if (fill_w < 6.0) fill_w = 6.0;
+
+                draw_rounded_rect(cr, track_x, track_y, fill_w, track_h, 4.0);
+                cairo_set_source_rgb(cr, COLOR_BLUE_R, COLOR_BLUE_G, COLOR_BLUE_B);
+                cairo_fill(cr);
+            } else {
+                /* 0% to 100% filled with Blue */
+                double base_w = track_w * pct_100_ratio;
+                draw_rounded_rect(cr, track_x, track_y, base_w, track_h, 4.0);
+                cairo_set_source_rgb(cr, COLOR_BLUE_R, COLOR_BLUE_G, COLOR_BLUE_B);
+                cairo_fill(cr);
+
+                /* >100% portion filled with Peach/Boost color */
+                double boost_ratio = (current_val - 100.0) / max_scale;
+                double boost_w = track_w * boost_ratio;
+                if (boost_w < 4.0) boost_w = 4.0;
+
+                draw_rounded_rect(cr, x_100, track_y, boost_w, track_h, 4.0);
+                cairo_set_source_rgb(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B);
+                cairo_fill(cr);
+            }
         }
     }
 
@@ -859,7 +898,11 @@ static void show_osd(const char *type, int percent, gboolean is_muted, const cha
     osd.percent = percent;
     osd.is_muted = is_muted;
     strncpy(osd.type, type ? type : "volume", sizeof(osd.type) - 1);
-    if (label) strncpy(osd.label, label, sizeof(osd.label) - 1);
+    osd.type[sizeof(osd.type) - 1] = '\0';
+    if (label) {
+        strncpy(osd.label, label, sizeof(osd.label) - 1);
+        osd.label[sizeof(osd.label) - 1] = '\0';
+    }
 
     if (!osd.win) {
         XSetWindowAttributes attrs;
@@ -1304,6 +1347,35 @@ static gboolean notif_timeout_callback(gpointer data) {
     malloc_trim(0);
 
     return G_SOURCE_REMOVE;
+}
+
+static int count_visible_notifs(void) {
+    int count = 0;
+    NotificationItem *cur = notif_list;
+    while (cur) {
+        count++;
+        cur = cur->next;
+    }
+    return count;
+}
+
+static void prune_oldest_notif_if_needed(void) {
+    while (count_visible_notifs() >= MAX_VISIBLE_NOTIFS) {
+        /* Find oldest non-critical card (furthest down notif_list with urgency < 2) */
+        NotificationItem *oldest_non_crit = NULL;
+        NotificationItem *cur = notif_list;
+        while (cur) {
+            if (cur->urgency < 2) {
+                oldest_non_crit = cur;
+            }
+            cur = cur->next;
+        }
+        if (oldest_non_crit) {
+            notif_timeout_callback(oldest_non_crit);
+        } else {
+            break;
+        }
+    }
 }
 
 static gboolean notif_progress_tick(gpointer data) {
@@ -1759,6 +1831,7 @@ static void append_history(const char *app, const char *summary, const char *bod
         g_ascii_strcasecmp(app, "sys-notif") == 0 ||
         g_ascii_strcasecmp(app, "sys-control") == 0 ||
         g_ascii_strcasecmp(app, "notify-send") == 0 ||
+        g_ascii_strcasecmp(app, "touchpad") == 0 ||
         strcasestr(app, "terminal") != NULL ||
         strcasestr(app, "kitty") != NULL ||
         strcasestr(app, "alacritty") != NULL ||
@@ -1787,12 +1860,18 @@ static void append_history(const char *app, const char *summary, const char *bod
     snprintf(path, sizeof(path), "%s/history.txt", cache_dir);
 
     FILE *f = fopen(path, "r");
-    char *lines[35];
+    char *lines[MAX_LOG_HISTORY];
     int count = 0;
     if (f) {
         char buf[1024];
-        while (fgets(buf, sizeof(buf), f) && count < 30) {
-            lines[count++] = strdup(buf);
+        while (fgets(buf, sizeof(buf), f)) {
+            if (count < MAX_LOG_HISTORY) {
+                lines[count++] = strdup(buf);
+            } else {
+                free(lines[0]);
+                memmove(&lines[0], &lines[1], sizeof(char *) * (MAX_LOG_HISTORY - 1));
+                lines[MAX_LOG_HISTORY - 1] = strdup(buf);
+            }
         }
         fclose(f);
     }
@@ -1831,7 +1910,7 @@ static void append_history(const char *app, const char *summary, const char *bod
 
     f = fopen(path, "w");
     if (f) {
-        int start = (count >= 25) ? (count - 24) : 0;
+        int start = (count >= MAX_LOG_HISTORY) ? (count - (MAX_LOG_HISTORY - 1)) : 0;
         for (int i = start; i < count; i++) {
             fputs(lines[i], f);
         }
@@ -2565,6 +2644,9 @@ static guint show_notification(const char *app_name, const char *summary, const 
     int x = screen_w - w - 16;
     int y = 45;
 
+    /* Burst queue throttling: ensure at most MAX_VISIBLE_NOTIFS cards exist simultaneously */
+    prune_oldest_notif_if_needed();
+
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;
     attrs.colormap = colormap;
@@ -2902,6 +2984,9 @@ static void handle_method_call(GDBusConnection *conn,
                 } else if (g_str_has_prefix(tag, "cbright") || g_str_has_prefix(tag, "brightness")) {
                     is_osd = TRUE;
                     osd_type = "brightness";
+                } else if (g_str_has_prefix(tag, "ctouch") || g_str_has_prefix(tag, "touchpad")) {
+                    is_osd = TRUE;
+                    osd_type = "touchpad";
                 }
                 g_variant_unref(tag_v);
             }
@@ -2920,6 +3005,10 @@ static void handle_method_call(GDBusConnection *conn,
                        g_ascii_strncasecmp(summary, "brightness", 10) == 0) {
                 is_osd = TRUE;
                 osd_type = "brightness";
+            } else if ((app_name && g_ascii_strcasecmp(app_name, "touchpad") == 0) ||
+                       g_ascii_strncasecmp(summary, "touchpad", 8) == 0) {
+                is_osd = TRUE;
+                osd_type = "touchpad";
             }
         }
 
@@ -2933,18 +3022,35 @@ static void handle_method_call(GDBusConnection *conn,
                     if (strncasecmp(p, "muted", 5) == 0) {
                         is_muted = TRUE;
                         osd_val = 0;
+                    } else if (strncasecmp(p, "off", 3) == 0 || strncasecmp(p, "disabled", 8) == 0) {
+                        osd_val = 0;
+                    } else if (strncasecmp(p, "on", 2) == 0 || strncasecmp(p, "enabled", 7) == 0) {
+                        osd_val = 100;
                     } else {
                         osd_val = atoi(p);
                     }
                 } else if (strstr(summary, "Muted")) {
                     is_muted = TRUE;
                     osd_val = 0;
+                } else if (strcasestr(summary, "disabled") || strcasestr(summary, "off")) {
+                    osd_val = 0;
+                } else if (strcasestr(summary, "enabled") || strcasestr(summary, "on")) {
+                    osd_val = 100;
                 } else if (sscanf(summary, "%*[^0-9]%d", &osd_val) <= 0) {
                     osd_val = 50;
                 }
             }
             if (strstr(summary, "Muted") || strstr(body, "Muted")) {
                 is_muted = TRUE;
+            }
+            if (strcmp(osd_type, "touchpad") == 0) {
+                if (strcasestr(summary, "disabled") || strcasestr(summary, "off") ||
+                    strcasestr(body, "disabled") || strcasestr(body, "off")) {
+                    osd_val = 0;
+                } else if (strcasestr(summary, "enabled") || strcasestr(summary, "on") ||
+                           strcasestr(body, "enabled") || strcasestr(body, "on")) {
+                    if (osd_val <= 0) osd_val = 100;
+                }
             }
 
             show_osd(osd_type, osd_val, is_muted, summary);
@@ -3154,7 +3260,9 @@ int main(int argc, char *argv[]) {
             GVariantBuilder hints_builder;
             g_variant_builder_init(&hints_builder, G_VARIANT_TYPE("a{sv}"));
             g_variant_builder_add(&hints_builder, "{sv}", "value", g_variant_new_int32(val));
-            const char *stack_tag = (strcmp(type, "brightness") == 0) ? "cbright" : "cvolum";
+            const char *stack_tag = "cvolum";
+            if (strcmp(type, "brightness") == 0) stack_tag = "cbright";
+            else if (strcmp(type, "touchpad") == 0) stack_tag = "ctouch";
             g_variant_builder_add(&hints_builder, "{sv}", "x-dunst-stack-tag", g_variant_new_string(stack_tag));
 
             char cap_type[32];
@@ -3162,7 +3270,9 @@ int main(int argc, char *argv[]) {
             if (cap_type[0] >= 'a' && cap_type[0] <= 'z') cap_type[0] -= 32;
 
             char summary[64];
-            if (strcmp(extra, "muted") == 0) {
+            if (strcmp(type, "touchpad") == 0) {
+                snprintf(summary, sizeof(summary), "Touchpad: %s", (val > 0) ? "ON" : "OFF");
+            } else if (strcmp(extra, "muted") == 0) {
                 snprintf(summary, sizeof(summary), "%s: Muted", cap_type);
             } else {
                 snprintf(summary, sizeof(summary), "%s: %d%%", cap_type, val);

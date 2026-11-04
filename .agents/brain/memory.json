@@ -1,5 +1,5 @@
 {
-  "last_updated": 1730734700.0,
+  "last_updated": 1793808705.9158447,
   "recent_tasks": [
     {
       "timestamp": "2026-11-04 20:22:00",
@@ -15,10 +15,30 @@
       "timestamp": "2026-11-04 20:53:00",
       "project": "workspace",
       "summary": "Audited and indexed all 11 subproject contexts with auto-registration engine."
+    },
+    {
+      "timestamp": "2026-11-04 21:26:34",
+      "project": "sys-control",
+      "summary": "Updated ctl_touchpad to trigger sys-notif --osd touchpad 100/0"
+    },
+    {
+      "timestamp": "2026-11-04 21:28:52",
+      "project": "keyholder-hud",
+      "summary": "Repositioned HUD to bottom-center with 2s delay change timeout"
+    },
+    {
+      "timestamp": "2026-11-04 21:40:59",
+      "project": "sys-notif",
+      "summary": "Added 500 history limit, 5-card flood throttling, and Touchpad OSD pill"
+    },
+    {
+      "timestamp": "2026-11-04 21:41:45",
+      "project": "ani-cast",
+      "summary": "Defaulted to local MPV playback and optimized responsive scaling for 1366x768"
     }
   ],
   "known_quirks": {
-    "audio": "Dual internal stereo speakers on Toshiba Portégé R700; use 150% volume boost for sys-alarm.",
+    "audio": "Dual internal stereo speakers on Toshiba Port\u00e9g\u00e9 R700; use 150% volume boost for sys-alarm.",
     "testing": "Always use headless xvfb-run for GUI/X11 to avoid stealing window focus."
   }
 }

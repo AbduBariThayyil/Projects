@@ -240,7 +240,11 @@ static void update_hud_state(const char *mode, const char *title, const char *su
     }
 
     if (strcmp(current_mode, "stop") == 0) {
-        hide_timer_id = g_timeout_add(1200, hide_timer_cb, NULL);
+        hide_timer_id = g_timeout_add(800, hide_timer_cb, NULL);
+    } else if (strstr(current_title, "SPAMMING") || strstr(current_title, "HOLDING") || strcmp(current_mode, "hold") == 0) {
+        /* Stays visible continuously while active */
+    } else if (strstr(current_sub, "Delay:") || strstr(current_title, "KeyHolder [Spam]")) {
+        hide_timer_id = g_timeout_add(2000, hide_timer_cb, NULL);
     }
 }
 
@@ -317,8 +321,9 @@ static void init_window(void) {
     }
 
     int screen_w = DisplayWidth(dpy, screen);
-    int x = screen_w - HUD_WIDTH - 18;
-    int y = 50; /* Positioned directly under Polybar */
+    int screen_h = DisplayHeight(dpy, screen);
+    int x = (screen_w - HUD_WIDTH) / 2;
+    int y = screen_h - HUD_HEIGHT - 45;
 
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;

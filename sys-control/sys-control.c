@@ -215,10 +215,10 @@ static void ctl_touchpad(void) {
     exec_cmd_output("synclient -l 2>/dev/null | grep -i TouchpadOff | awk '{print $3}'", out, sizeof(out));
     if (strcmp(out, "1") == 0) {
         system("synclient TouchpadOff=0 2>/dev/null");
-        spawn_async("notify-send -a 'System' -i 'input-touchpad' 'Touchpad Enabled'");
+        spawn_async("sys-notif --osd touchpad 100 >/dev/null 2>&1");
     } else {
         system("synclient TouchpadOff=1 2>/dev/null");
-        spawn_async("notify-send -a 'System' -i 'touchpad-disabled' 'Touchpad Disabled'");
+        spawn_async("sys-notif --osd touchpad 0 >/dev/null 2>&1");
     }
 }
 
