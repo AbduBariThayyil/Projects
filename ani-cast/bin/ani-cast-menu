@@ -85,6 +85,10 @@ if [[ "$prompt" =~ ^Playing\ episode\ .* ]]; then
             printf "next\n"
             exit 0
         fi
+    else
+        # User closed player (via 'q', 'win + x', or window close) or stopped playback
+        printf "quit\n"
+        exit 0
     fi
 fi
 

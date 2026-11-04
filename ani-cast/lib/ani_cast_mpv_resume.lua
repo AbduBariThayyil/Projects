@@ -125,8 +125,18 @@ mp.register_event("file-loaded", function()
     check_season_finale_async(current_title)
 end)
 
--- Periodic timer (every 5 seconds) to save position
-mp.add_periodic_timer(5, function()
+-- Observe pause to instantly save progress when paused
+mp.observe_property("pause", "bool", function(_, paused)
+    if paused and last_pos > 0 and not has_finished then
+        local title = get_clean_title()
+        if not (last_dur > 0 and last_pos >= (last_dur - 25.0)) then
+            save_resume_state(title, last_pos, last_dur, false)
+        end
+    end
+end)
+
+-- Periodic timer (every 3 seconds) to save position
+mp.add_periodic_timer(3, function()
     local title = get_clean_title()
     if last_pos > 0 and not has_finished then
         -- Don't save unfinished if already in the outro/credits (< 25s remaining)

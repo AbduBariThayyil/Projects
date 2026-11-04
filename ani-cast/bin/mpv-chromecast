@@ -113,4 +113,7 @@ killall -q catt 2>/dev/null || true
 pkill -f hls_streamer.py 2>/dev/null || true
 sleep 0.3
 
-exec python3 /home/vibecoder/Videos/Anime/hls_streamer.py "$REF" "$VIDEO_URL" "$SUB_FILE" "$TITLE" "${ANI_CAST_START_TIME:-}"
+STREAMER_PY="/home/vibecoder/Projects/ani-cast/lib/hls_streamer.py"
+[ ! -f "$STREAMER_PY" ] && STREAMER_PY="/home/vibecoder/Videos/Anime/hls_streamer.py"
+
+exec python3 "$STREAMER_PY" "$REF" "$VIDEO_URL" "$SUB_FILE" "$TITLE" "${ANI_CAST_START_TIME:-}"
