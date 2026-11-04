@@ -490,7 +490,7 @@ int main(int argc, char **argv) {
     }
     /* Rofi Menus & OpenApps */
     else if (strcmp(arg, "--menu") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/OpenApps --menu");
+        spawn_async("/home/vibecoder/.local/bin/sys-launcher");
     } else if (strcmp(arg, "--RofiLauncher") == 0) {
         spawn_async("/home/vibecoder/.config/bspwm/bin/OpenApps --RofiLauncher");
     } else if (strcmp(arg, "--powermenu") == 0 || strcmp(arg, "powermenu") == 0) {
@@ -500,7 +500,7 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "--keybinds") == 0) {
         spawn_async("/home/vibecoder/.config/bspwm/bin/OpenApps --keybinds");
     } else if (strcmp(arg, "--apptoggle") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/OpenApps --apptoggle");
+        spawn_async("/home/vibecoder/.local/bin/sys-launcher --toggle");
     } else if (strcmp(arg, "--screenlocker") == 0 || strcmp(arg, "--lock") == 0 || strcmp(arg, "lock") == 0) {
         spawn_async("/home/vibecoder/.config/bspwm/bin/OpenApps --screenlocker");
     } else if (strcmp(arg, "--lock-rice") == 0) {

@@ -1,0 +1,857 @@
+/* =========================================================================
+ * sys-launcher: Blazing-Fast Native C/GTK3 Application Launcher & Toggler
+ * Unified dual-mode launcher replacing Rofi script sprawl with instant GIO
+ * indexing, Catppuccin Mocha/Dracula styling, and sub-millisecond execution.
+ * ========================================================================= */
+
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <unistd.h>
+#include <glib.h>
+#include <glib/gstdio.h>
+#include <gio/gio.h>
+#include <gio/gdesktopappinfo.h>
+#include <gtk/gtk.h>
+#include <gdk/gdk.h>
+
+#define VERSION "1.0.0"
+
+typedef struct {
+    char *id;            /* Desktop ID, e.g. "firefox.desktop" */
+    char *name;          /* Human readable name */
+    char *comment;       /* Comment / Description */
+    char *executable;    /* Exec binary / args */
+    char *lower_name;    /* Cached lowercase for instant searching */
+    char *lower_comment;
+    char *lower_exec;
+    char *lower_id;
+    GIcon *icon;
+    gboolean is_hidden;
+    GAppInfo *info;
+    GtkWidget *row_widget;
+    GtkWidget *badge_label;
+    GtkWidget *subtitle_label;
+} AppItem;
+
+typedef struct {
+    gboolean is_toggle_mode;
+    GtkWidget *window;
+    GtkWidget *entry;
+    GtkWidget *listbox;
+    GtkWidget *scrolled_window;
+    GtkWidget *footer_hint;
+    GPtrArray *apps;
+    char *current_query;
+} LauncherState;
+
+static LauncherState app_state = {0};
+
+/* -------------------------------------------------------------------------
+ * Forward Declarations
+ * ------------------------------------------------------------------------- */
+static void populate_apps(void);
+static void select_first_visible_row(GtkListBox *box);
+static void navigate_list(GtkListBox *box, int direction);
+static gboolean set_desktop_file_visibility(const char *desktop_id, gboolean hide);
+static void launch_app(AppItem *app);
+static void toggle_app(AppItem *app, GtkListBox *box);
+static void hide_app_from_launcher(AppItem *app, GtkListBox *box);
+
+/* -------------------------------------------------------------------------
+ * Fast Fuzzy & Contains Search Matching
+ * ------------------------------------------------------------------------- */
+static gboolean contains_token(const char *haystack, const char *token) {
+    if (!haystack || !token || !*token) return FALSE;
+    return (strstr(haystack, token) != NULL);
+}
+
+static gboolean fuzzy_match_token(const char *haystack, const char *token) {
+    if (!token || !*token) return TRUE;
+    if (!haystack || !*haystack) return FALSE;
+    while (*token && *haystack) {
+        if (g_ascii_tolower(*token) == g_ascii_tolower(*haystack)) {
+            token++;
+        }
+        haystack++;
+    }
+    return (*token == '\0');
+}
+
+static gboolean app_matches_query(AppItem *app, const char *query) {
+    if (!app_state.is_toggle_mode && app->is_hidden) {
+        return FALSE;
+    }
+    if (!query || !*query) {
+        return TRUE;
+    }
+
+    char **tokens = g_strsplit_set(query, " \t\r\n", -1);
+    gboolean all_matched = TRUE;
+    for (int i = 0; tokens[i]; i++) {
+        if (tokens[i][0] == '\0') continue;
+        char *tok = g_ascii_strdown(tokens[i], -1);
+        gboolean tok_match = FALSE;
+        if (contains_token(app->lower_name, tok) ||
+            contains_token(app->lower_comment, tok) ||
+            contains_token(app->lower_exec, tok) ||
+            contains_token(app->lower_id, tok) ||
+            fuzzy_match_token(app->lower_name, tok)) {
+            tok_match = TRUE;
+        }
+        g_free(tok);
+        if (!tok_match) {
+            all_matched = FALSE;
+            break;
+        }
+    }
+    g_strfreev(tokens);
+    return all_matched;
+}
+
+static gint compute_app_score(AppItem *app, const char *query) {
+    if (!query || !*query) return 0;
+    char *q = g_ascii_strdown(query, -1);
+    g_strstrip(q);
+    if (!*q) {
+        g_free(q);
+        return 0;
+    }
+
+    gint score = 0;
+    if (g_strcmp0(app->lower_name, q) == 0) {
+        score += 20000;
+    } else if (g_str_has_prefix(app->lower_name, q)) {
+        score += 10000;
+    } else if (strstr(app->lower_name, q)) {
+        score += 5000;
+    } else if (g_str_has_prefix(app->lower_id, q)) {
+        score += 3000;
+    } else if (strstr(app->lower_exec, q)) {
+        score += 2000;
+    } else if (strstr(app->lower_comment, q)) {
+        score += 1000;
+    } else if (fuzzy_match_token(app->lower_name, q)) {
+        score += 500;
+    }
+
+    g_free(q);
+    return score;
+}
+
+static gint sort_func(GtkListBoxRow *row1, GtkListBoxRow *row2, gpointer user_data) {
+    (void)user_data;
+    AppItem *a = g_object_get_data(G_OBJECT(row1), "app_item");
+    AppItem *b = g_object_get_data(G_OBJECT(row2), "app_item");
+    if (!a || !b) return 0;
+
+    if (app_state.current_query && *app_state.current_query) {
+        gint score_a = compute_app_score(a, app_state.current_query);
+        gint score_b = compute_app_score(b, app_state.current_query);
+        if (score_a != score_b) {
+            return score_b - score_a; /* Higher score first */
+        }
+    }
+
+    return g_utf8_collate(a->name ? a->name : a->id, b->name ? b->name : b->id);
+}
+
+static gboolean filter_func(GtkListBoxRow *row, gpointer user_data) {
+    (void)user_data;
+    AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
+    if (!app) return FALSE;
+    return app_matches_query(app, app_state.current_query);
+}
+
+/* -------------------------------------------------------------------------
+ * List Navigation & Selection
+ * ------------------------------------------------------------------------- */
+static void select_first_visible_row(GtkListBox *box) {
+    GList *children = gtk_container_get_children(GTK_CONTAINER(box));
+    for (GList *l = children; l != NULL; l = l->next) {
+        GtkWidget *row = GTK_WIDGET(l->data);
+        if (gtk_widget_get_child_visible(row)) {
+            gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(row));
+            if (app_state.scrolled_window) {
+                GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app_state.scrolled_window));
+                gtk_adjustment_set_value(vadj, 0.0);
+            }
+            break;
+        }
+    }
+    g_list_free(children);
+}
+
+static void navigate_list(GtkListBox *box, int direction) {
+    GList *children = gtk_container_get_children(GTK_CONTAINER(box));
+    if (!children) return;
+
+    GPtrArray *visible_rows = g_ptr_array_new();
+    GtkListBoxRow *cur_selected = gtk_list_box_get_selected_row(box);
+    gint cur_idx = -1;
+
+    for (GList *l = children; l != NULL; l = l->next) {
+        GtkWidget *row = GTK_WIDGET(l->data);
+        if (gtk_widget_get_child_visible(row)) {
+            if (row == GTK_WIDGET(cur_selected)) {
+                cur_idx = (gint)visible_rows->len;
+            }
+            g_ptr_array_add(visible_rows, row);
+        }
+    }
+
+    if (visible_rows->len > 0) {
+        gint target_idx;
+        if (cur_idx < 0) {
+            target_idx = (direction > 0) ? 0 : (gint)visible_rows->len - 1;
+        } else {
+            target_idx = cur_idx + direction;
+            if (target_idx < 0) target_idx = (gint)visible_rows->len - 1;
+            else if (target_idx >= (gint)visible_rows->len) target_idx = 0;
+        }
+
+        GtkWidget *target_row = GTK_WIDGET(g_ptr_array_index(visible_rows, target_idx));
+        gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(target_row));
+
+        if (app_state.scrolled_window) {
+            GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app_state.scrolled_window));
+            GtkAllocation alloc;
+            gtk_widget_get_allocation(target_row, &alloc);
+            gdouble cur_val = gtk_adjustment_get_value(vadj);
+            gdouble page_sz = gtk_adjustment_get_page_size(vadj);
+
+            if (alloc.y < cur_val) {
+                gtk_adjustment_set_value(vadj, alloc.y);
+            } else if (alloc.y + alloc.height > cur_val + page_sz) {
+                gtk_adjustment_set_value(vadj, alloc.y + alloc.height - page_sz);
+            }
+        }
+    }
+
+    g_ptr_array_free(visible_rows, TRUE);
+    g_list_free(children);
+}
+
+/* -------------------------------------------------------------------------
+ * Desktop File Management (Visibility Toggling)
+ * ------------------------------------------------------------------------- */
+static gboolean set_desktop_file_visibility(const char *desktop_id, gboolean hide) {
+    if (!desktop_id || !*desktop_id) return FALSE;
+
+    char *user_dir = g_build_filename(g_get_user_data_dir(), "applications", NULL);
+    g_mkdir_with_parents(user_dir, 0755);
+    char *user_file = g_build_filename(user_dir, desktop_id, NULL);
+    char *sys_file = g_build_filename("/usr/share/applications", desktop_id, NULL);
+
+    gboolean has_user = g_file_test(user_file, G_FILE_TEST_EXISTS);
+    gboolean has_sys = g_file_test(sys_file, G_FILE_TEST_EXISTS);
+
+    if (hide) {
+        GKeyFile *kf = g_key_file_new();
+        gboolean loaded = FALSE;
+        if (has_user) {
+            loaded = g_key_file_load_from_file(kf, user_file,
+                                                G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
+                                                NULL);
+        } else if (has_sys) {
+            loaded = g_key_file_load_from_file(kf, sys_file,
+                                                G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
+                                                NULL);
+        }
+
+        if (!loaded) {
+            g_key_file_set_string(kf, "Desktop Entry", "Type", "Application");
+            g_key_file_set_string(kf, "Desktop Entry", "Name", desktop_id);
+        }
+
+        g_key_file_set_boolean(kf, "Desktop Entry", "NoDisplay", TRUE);
+        g_key_file_save_to_file(kf, user_file, NULL);
+        g_key_file_free(kf);
+    } else {
+        /* Unhide / Show */
+        if (has_user) {
+            gboolean sys_nodisplay = FALSE;
+            if (has_sys) {
+                GKeyFile *skf = g_key_file_new();
+                if (g_key_file_load_from_file(skf, sys_file, G_KEY_FILE_NONE, NULL)) {
+                    sys_nodisplay = g_key_file_get_boolean(skf, "Desktop Entry", "NoDisplay", NULL);
+                }
+                g_key_file_free(skf);
+            }
+
+            if (has_sys && !sys_nodisplay) {
+                /* System default is visible. Check if user copy has no custom diffs */
+                gboolean only_nodisplay_diff = TRUE;
+                char *u_content = NULL, *s_content = NULL;
+                if (g_file_get_contents(user_file, &u_content, NULL, NULL) &&
+                    g_file_get_contents(sys_file, &s_content, NULL, NULL)) {
+                    char **u_lines = g_strsplit(u_content, "\n", -1);
+                    char **s_lines = g_strsplit(s_content, "\n", -1);
+                    GString *u_clean = g_string_new("");
+                    GString *s_clean = g_string_new("");
+
+                    for (int i = 0; u_lines[i]; i++) {
+                        char *t = g_strstrip(u_lines[i]);
+                        if (t[0] && !g_ascii_strncasecmp(t, "nodisplay=", 10)) continue;
+                        if (t[0]) g_string_append_printf(u_clean, "%s\n", t);
+                    }
+                    for (int i = 0; s_lines[i]; i++) {
+                        char *t = g_strstrip(s_lines[i]);
+                        if (t[0] && !g_ascii_strncasecmp(t, "nodisplay=", 10)) continue;
+                        if (t[0]) g_string_append_printf(s_clean, "%s\n", t);
+                    }
+
+                    if (g_strcmp0(u_clean->str, s_clean->str) != 0) {
+                        only_nodisplay_diff = FALSE;
+                    }
+
+                    g_string_free(u_clean, TRUE);
+                    g_string_free(s_clean, TRUE);
+                    g_strfreev(u_lines);
+                    g_strfreev(s_lines);
+                    g_free(u_content);
+                    g_free(s_content);
+                } else {
+                    only_nodisplay_diff = FALSE;
+                    g_free(u_content);
+                    g_free(s_content);
+                }
+
+                if (only_nodisplay_diff) {
+                    g_unlink(user_file);
+                } else {
+                    GKeyFile *kf = g_key_file_new();
+                    if (g_key_file_load_from_file(kf, user_file,
+                                                  G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
+                                                  NULL)) {
+                        g_key_file_set_boolean(kf, "Desktop Entry", "NoDisplay", FALSE);
+                        g_key_file_save_to_file(kf, user_file, NULL);
+                    }
+                    g_key_file_free(kf);
+                }
+            } else {
+                /* User file is standalone or sys file has NoDisplay=true */
+                GKeyFile *kf = g_key_file_new();
+                if (g_key_file_load_from_file(kf, user_file,
+                                              G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
+                                              NULL)) {
+                    g_key_file_set_boolean(kf, "Desktop Entry", "NoDisplay", FALSE);
+                    g_key_file_save_to_file(kf, user_file, NULL);
+                }
+                g_key_file_free(kf);
+            }
+        } else if (has_sys) {
+            /* Sys file has NoDisplay=true and user file doesn't exist yet */
+            GKeyFile *kf = g_key_file_new();
+            if (g_key_file_load_from_file(kf, sys_file,
+                                          G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
+                                          NULL)) {
+                g_key_file_set_boolean(kf, "Desktop Entry", "NoDisplay", FALSE);
+                g_key_file_save_to_file(kf, user_file, NULL);
+            }
+            g_key_file_free(kf);
+        }
+    }
+
+    g_free(user_dir);
+    g_free(user_file);
+    g_free(sys_file);
+    return TRUE;
+}
+
+/* -------------------------------------------------------------------------
+ * Application Launch & Action Callbacks
+ * ------------------------------------------------------------------------- */
+static void launch_app(AppItem *app) {
+    if (!app) return;
+    GError *err = NULL;
+    GdkDisplay *disp = gdk_display_get_default();
+    GdkAppLaunchContext *ctx = gdk_display_get_app_launch_context(disp);
+
+    if (app->info && !g_app_info_launch(app->info, NULL, G_APP_LAUNCH_CONTEXT(ctx), &err)) {
+        if (app->executable) {
+            char *cmd = g_strdup_printf("%s &", app->executable);
+            g_spawn_command_line_async(cmd, NULL);
+            g_free(cmd);
+        }
+        if (err) g_error_free(err);
+    }
+    if (ctx) g_object_unref(ctx);
+    gtk_main_quit();
+}
+
+static void toggle_app(AppItem *app, GtkListBox *box) {
+    (void)box;
+    if (!app) return;
+    app->is_hidden = !app->is_hidden;
+    set_desktop_file_visibility(app->id, app->is_hidden);
+
+    /* Asynchronously update desktop database */
+    g_spawn_command_line_async("update-desktop-database ~/.local/share/applications", NULL);
+
+    /* Update UI badge */
+    if (app->badge_label) {
+        gtk_label_set_text(GTK_LABEL(app->badge_label), app->is_hidden ? "󰈉 Hidden" : "󰈈 Visible");
+        GtkStyleContext *sc = gtk_widget_get_style_context(app->badge_label);
+        if (app->is_hidden) {
+            gtk_style_context_remove_class(sc, "badge-visible");
+            gtk_style_context_add_class(sc, "badge-hidden");
+        } else {
+            gtk_style_context_remove_class(sc, "badge-hidden");
+            gtk_style_context_add_class(sc, "badge-visible");
+        }
+    }
+}
+
+static void hide_app_from_launcher(AppItem *app, GtkListBox *box) {
+    if (!app) return;
+    app->is_hidden = TRUE;
+    set_desktop_file_visibility(app->id, TRUE);
+
+    /* Notification feedback */
+    char *cmd = g_strdup_printf("sys-notif 'Launcher' 'Hidden %s from launcher' 2>/dev/null || notify-send -a sys-launcher 'Launcher' 'Hidden %s from launcher' 2>/dev/null &",
+                                app->name ? app->name : app->id,
+                                app->name ? app->name : app->id);
+    g_spawn_command_line_async(cmd, NULL);
+    g_free(cmd);
+
+    g_spawn_command_line_async("update-desktop-database ~/.local/share/applications", NULL);
+
+    gtk_list_box_invalidate_filter(box);
+    select_first_visible_row(box);
+}
+
+static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
+    (void)user_data;
+    g_free(app_state.current_query);
+    app_state.current_query = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
+    gtk_list_box_invalidate_filter(GTK_LIST_BOX(app_state.listbox));
+    gtk_list_box_invalidate_sort(GTK_LIST_BOX(app_state.listbox));
+    select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
+}
+
+static void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
+    (void)user_data;
+    AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
+    if (!app) return;
+    if (app_state.is_toggle_mode) {
+        toggle_app(app, box);
+    } else {
+        launch_app(app);
+    }
+}
+
+static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpointer user_data) {
+    (void)widget;
+    (void)user_data;
+    guint keyval = event->keyval;
+    guint state = event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK);
+
+    if (keyval == GDK_KEY_Escape) {
+        gtk_main_quit();
+        return GDK_EVENT_STOP;
+    }
+
+    /* Down / Ctrl+N */
+    if (keyval == GDK_KEY_Down || (keyval == GDK_KEY_n && (state & GDK_CONTROL_MASK))) {
+        navigate_list(GTK_LIST_BOX(app_state.listbox), 1);
+        return GDK_EVENT_STOP;
+    }
+
+    /* Up / Ctrl+P */
+    if (keyval == GDK_KEY_Up || (keyval == GDK_KEY_p && (state & GDK_CONTROL_MASK))) {
+        navigate_list(GTK_LIST_BOX(app_state.listbox), -1);
+        return GDK_EVENT_STOP;
+    }
+
+    /* Enter / KP_Enter */
+    if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
+        GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+        if (!row) {
+            select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
+            row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+        }
+        if (row) {
+            AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
+            if (app) {
+                if (app_state.is_toggle_mode) {
+                    toggle_app(app, GTK_LIST_BOX(app_state.listbox));
+                } else {
+                    launch_app(app);
+                }
+            }
+        }
+        return GDK_EVENT_STOP;
+    }
+
+    /* Space in toggle mode */
+    if (app_state.is_toggle_mode && (keyval == GDK_KEY_space || keyval == GDK_KEY_KP_Space)) {
+        const char *text = gtk_entry_get_text(GTK_ENTRY(app_state.entry));
+        gboolean entry_focused = gtk_widget_has_focus(GTK_WIDGET(app_state.entry));
+        if (!entry_focused || !text || text[0] == '\0' || (state & GDK_CONTROL_MASK)) {
+            GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+            if (!row) {
+                select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
+                row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+            }
+            if (row) {
+                AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
+                if (app) {
+                    toggle_app(app, GTK_LIST_BOX(app_state.listbox));
+                }
+            }
+            return GDK_EVENT_STOP;
+        }
+    }
+
+    /* Tab in launcher mode */
+    if (!app_state.is_toggle_mode && keyval == GDK_KEY_Tab) {
+        GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+        if (!row) {
+            select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
+            row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+        }
+        if (row) {
+            AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
+            if (app) {
+                hide_app_from_launcher(app, GTK_LIST_BOX(app_state.listbox));
+            }
+        }
+        return GDK_EVENT_STOP;
+    }
+
+    return GDK_EVENT_PROPAGATE;
+}
+
+/* -------------------------------------------------------------------------
+ * Embedded CSS Styling (Catppuccin Mocha / Dracula Palette)
+ * ------------------------------------------------------------------------- */
+static void load_css(void) {
+    GtkCssProvider *provider = gtk_css_provider_new();
+    const char *css =
+        "window {\n"
+        "  background-color: #1e1e2e;\n"
+        "  border: 1.5px solid #bd93f9;\n"
+        "  border-radius: 12px;\n"
+        "}\n"
+        "#main-box {\n"
+        "  padding: 12px;\n"
+        "}\n"
+        "entry {\n"
+        "  background-color: #282a36;\n"
+        "  border: 1px solid #44475a;\n"
+        "  border-radius: 8px;\n"
+        "  color: #f8f8f2;\n"
+        "  font-family: 'JetBrainsMono Nerd Font', monospace;\n"
+        "  font-size: 12pt;\n"
+        "  padding: 8px 12px;\n"
+        "  margin-bottom: 8px;\n"
+        "}\n"
+        "entry:focus {\n"
+        "  border-color: #bd93f9;\n"
+        "}\n"
+        "scrolledwindow {\n"
+        "  background-color: transparent;\n"
+        "  border: none;\n"
+        "}\n"
+        "list {\n"
+        "  background-color: transparent;\n"
+        "}\n"
+        "row {\n"
+        "  border-radius: 6px;\n"
+        "  padding: 6px 10px;\n"
+        "  margin: 2px 0px;\n"
+        "  background-color: transparent;\n"
+        "  color: #f8f8f2;\n"
+        "}\n"
+        "row:hover {\n"
+        "  background-color: #282a36;\n"
+        "}\n"
+        "row:selected, row:selected:focus {\n"
+        "  background-color: #bd93f9;\n"
+        "  color: #1e1e2e;\n"
+        "}\n"
+        ".app-title {\n"
+        "  font-weight: bold;\n"
+        "  font-size: 11pt;\n"
+        "  color: #f8f8f2;\n"
+        "}\n"
+        "row:selected .app-title {\n"
+        "  color: #1e1e2e;\n"
+        "}\n"
+        ".app-subtitle {\n"
+        "  font-size: 9pt;\n"
+        "  color: #6272a4;\n"
+        "}\n"
+        "row:selected .app-subtitle {\n"
+        "  color: #44475a;\n"
+        "}\n"
+        ".badge-visible {\n"
+        "  font-size: 10pt;\n"
+        "  color: #50fa7b;\n"
+        "  font-weight: bold;\n"
+        "  padding: 2px 8px;\n"
+        "}\n"
+        "row:selected .badge-visible {\n"
+        "  color: #1e1e2e;\n"
+        "}\n"
+        ".badge-hidden {\n"
+        "  font-size: 10pt;\n"
+        "  color: #ff5555;\n"
+        "  font-weight: bold;\n"
+        "  padding: 2px 8px;\n"
+        "}\n"
+        "row:selected .badge-hidden {\n"
+        "  color: #44475a;\n"
+        "}\n"
+        ".footer-bar {\n"
+        "  border-top: 1px solid #282a36;\n"
+        "  padding-top: 6px;\n"
+        "  margin-top: 6px;\n"
+        "}\n"
+        ".footer-hint {\n"
+        "  font-size: 8.5pt;\n"
+        "  color: #6272a4;\n"
+        "  font-family: 'JetBrainsMono Nerd Font', monospace;\n"
+        "}\n"
+        "scrollbar slider {\n"
+        "  background-color: #44475a;\n"
+        "  border-radius: 4px;\n"
+        "  min-width: 5px;\n"
+        "  min-height: 5px;\n"
+        "}\n"
+        "scrollbar slider:hover {\n"
+        "  background-color: #bd93f9;\n"
+        "}\n"
+        "scrollbar trough {\n"
+        "  background-color: transparent;\n"
+        "}\n";
+
+    gtk_css_provider_load_from_data(provider, css, -1, NULL);
+    GdkScreen *screen = gdk_screen_get_default();
+    gtk_style_context_add_provider_for_screen(screen,
+                                              GTK_STYLE_PROVIDER(provider),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+}
+
+/* -------------------------------------------------------------------------
+ * Application Model Population
+ * ------------------------------------------------------------------------- */
+static void populate_apps(void) {
+    app_state.apps = g_ptr_array_new();
+    GList *all = g_app_info_get_all();
+
+    for (GList *l = all; l != NULL; l = l->next) {
+        GAppInfo *info = G_APP_INFO(l->data);
+        if (!info) continue;
+
+        const char *id = g_app_info_get_id(info);
+        if (!id || !*id) continue;
+
+        const char *name = g_app_info_get_name(info);
+        if (!name || !*name) name = id;
+
+        const char *desc = g_app_info_get_description(info);
+        const char *exec = g_app_info_get_executable(info);
+        GIcon *icon = g_app_info_get_icon(info);
+        gboolean should_show = g_app_info_should_show(info);
+        gboolean is_nodisplay = FALSE;
+        gboolean is_hidden_field = FALSE;
+
+        if (G_IS_DESKTOP_APP_INFO(info)) {
+            GDesktopAppInfo *dinfo = G_DESKTOP_APP_INFO(info);
+            is_nodisplay = g_desktop_app_info_get_nodisplay(dinfo);
+            is_hidden_field = g_desktop_app_info_get_is_hidden(dinfo);
+        }
+
+        gboolean is_hidden = (!should_show || is_nodisplay || is_hidden_field);
+
+        /* In launcher mode, omit hidden applications */
+        if (!app_state.is_toggle_mode && is_hidden) {
+            continue;
+        }
+
+        AppItem *app = g_new0(AppItem, 1);
+        app->id = g_strdup(id);
+        app->name = g_strdup(name);
+        app->comment = g_strdup(desc ? desc : "");
+        app->executable = g_strdup(exec ? exec : "");
+        app->lower_name = g_ascii_strdown(app->name, -1);
+        app->lower_comment = g_ascii_strdown(app->comment, -1);
+        app->lower_exec = g_ascii_strdown(app->executable, -1);
+        app->lower_id = g_ascii_strdown(app->id, -1);
+        app->is_hidden = is_hidden;
+        app->info = g_object_ref(info);
+        if (icon) app->icon = g_object_ref(icon);
+
+        /* Create UI Row */
+        GtkWidget *row = gtk_list_box_row_new();
+        GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+
+        /* Icon (32x32) */
+        GtkWidget *icon_img;
+        if (app->icon) {
+            icon_img = gtk_image_new_from_gicon(app->icon, GTK_ICON_SIZE_DND);
+        } else {
+            icon_img = gtk_image_new_from_icon_name("application-x-executable", GTK_ICON_SIZE_DND);
+        }
+        gtk_image_set_pixel_size(GTK_IMAGE(icon_img), 32);
+        gtk_box_pack_start(GTK_BOX(hbox), icon_img, FALSE, FALSE, 0);
+
+        /* Text Box */
+        GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+        GtkWidget *title_lbl = gtk_label_new(app->name);
+        gtk_label_set_xalign(GTK_LABEL(title_lbl), 0.0);
+        gtk_label_set_ellipsize(GTK_LABEL(title_lbl), PANGO_ELLIPSIZE_END);
+        gtk_style_context_add_class(gtk_widget_get_style_context(title_lbl), "app-title");
+        gtk_box_pack_start(GTK_BOX(vbox), title_lbl, FALSE, FALSE, 0);
+
+        const char *sub = (app->comment && *app->comment) ? app->comment :
+                          ((app->executable && *app->executable) ? app->executable : app->id);
+        GtkWidget *sub_lbl = gtk_label_new(sub);
+        gtk_label_set_xalign(GTK_LABEL(sub_lbl), 0.0);
+        gtk_label_set_ellipsize(GTK_LABEL(sub_lbl), PANGO_ELLIPSIZE_END);
+        gtk_style_context_add_class(gtk_widget_get_style_context(sub_lbl), "app-subtitle");
+        gtk_box_pack_start(GTK_BOX(vbox), sub_lbl, FALSE, FALSE, 0);
+        app->subtitle_label = sub_lbl;
+
+        gtk_box_pack_start(GTK_BOX(hbox), vbox, TRUE, TRUE, 0);
+
+        /* Badge for Toggle Mode */
+        if (app_state.is_toggle_mode) {
+            GtkWidget *badge = gtk_label_new(app->is_hidden ? "󰈉 Hidden" : "󰈈 Visible");
+            gtk_style_context_add_class(gtk_widget_get_style_context(badge),
+                                        app->is_hidden ? "badge-hidden" : "badge-visible");
+            gtk_box_pack_end(GTK_BOX(hbox), badge, FALSE, FALSE, 4);
+            app->badge_label = badge;
+        }
+
+        gtk_container_add(GTK_CONTAINER(row), hbox);
+        app->row_widget = row;
+        g_object_set_data(G_OBJECT(row), "app_item", app);
+
+        gtk_list_box_insert(GTK_LIST_BOX(app_state.listbox), row, -1);
+        g_ptr_array_add(app_state.apps, app);
+    }
+
+    g_list_free_full(all, g_object_unref);
+}
+
+/* -------------------------------------------------------------------------
+ * UI Initialization
+ * ------------------------------------------------------------------------- */
+static void build_ui(void) {
+    load_css();
+
+    app_state.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(app_state.window),
+                         app_state.is_toggle_mode ? "sys-launcher --toggle" : "sys-launcher");
+    gtk_window_set_decorated(GTK_WINDOW(app_state.window), FALSE);
+    gtk_window_set_position(GTK_WINDOW(app_state.window), GTK_WIN_POS_CENTER_ALWAYS);
+    gtk_window_set_default_size(GTK_WINDOW(app_state.window), 480, 420);
+    gtk_widget_set_size_request(app_state.window, 480, 420);
+    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(app_state.window), TRUE);
+    gtk_window_set_skip_pager_hint(GTK_WINDOW(app_state.window), TRUE);
+    gtk_window_set_type_hint(GTK_WINDOW(app_state.window), GDK_WINDOW_TYPE_HINT_DIALOG);
+
+    GdkScreen *screen = gtk_widget_get_screen(app_state.window);
+    GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
+    if (visual && gdk_screen_is_composited(screen)) {
+        gtk_widget_set_visual(app_state.window, visual);
+    }
+    gtk_widget_set_app_paintable(app_state.window, TRUE);
+
+    GtkWidget *main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_name(main_box, "main-box");
+    gtk_container_add(GTK_CONTAINER(app_state.window), main_box);
+
+    /* Search entry */
+    app_state.entry = gtk_search_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app_state.entry),
+        app_state.is_toggle_mode ? "Search apps to toggle (Enter/Space toggles)..." : "Search applications...");
+    gtk_box_pack_start(GTK_BOX(main_box), app_state.entry, FALSE, FALSE, 0);
+
+    /* Scrolled Window & ListBox */
+    app_state.scrolled_window = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(app_state.scrolled_window),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_vexpand(app_state.scrolled_window, TRUE);
+    gtk_box_pack_start(GTK_BOX(main_box), app_state.scrolled_window, TRUE, TRUE, 0);
+
+    app_state.listbox = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(app_state.listbox), GTK_SELECTION_BROWSE);
+    gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(app_state.listbox), FALSE);
+    gtk_container_add(GTK_CONTAINER(app_state.scrolled_window), app_state.listbox);
+
+    gtk_list_box_set_filter_func(GTK_LIST_BOX(app_state.listbox), filter_func, NULL, NULL);
+    gtk_list_box_set_sort_func(GTK_LIST_BOX(app_state.listbox), sort_func, NULL, NULL);
+
+    /* Footer hints */
+    GtkWidget *footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(footer), "footer-bar");
+    app_state.footer_hint = gtk_label_new(
+        app_state.is_toggle_mode ?
+        "↵ / Space Toggle Visibility   •   Esc Close" :
+        "↵ Launch   •   Tab Hide   •   Esc Close"
+    );
+    gtk_style_context_add_class(gtk_widget_get_style_context(app_state.footer_hint), "footer-hint");
+    gtk_box_pack_start(GTK_BOX(footer), app_state.footer_hint, TRUE, TRUE, 0);
+    gtk_box_pack_end(GTK_BOX(main_box), footer, FALSE, FALSE, 0);
+
+    /* Populate list */
+    populate_apps();
+
+    /* Signal handlers */
+    g_signal_connect(app_state.entry, "search-changed", G_CALLBACK(on_search_changed), NULL);
+    g_signal_connect(app_state.window, "key-press-event", G_CALLBACK(on_window_key_press), NULL);
+    g_signal_connect(app_state.listbox, "row-activated", G_CALLBACK(on_row_activated), NULL);
+    g_signal_connect(app_state.window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+
+    gtk_widget_show_all(app_state.window);
+    gtk_widget_grab_focus(app_state.entry);
+    select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
+}
+
+/* -------------------------------------------------------------------------
+ * Usage and Entry Point
+ * ------------------------------------------------------------------------- */
+static void print_usage(void) {
+    printf("sys-launcher %s - High-Performance Native C/GTK3 Application Launcher\n\n", VERSION);
+    printf("Usage:\n");
+    printf("  sys-launcher [OPTIONS]\n\n");
+    printf("Options:\n");
+    printf("  -t, --toggle    Launch in App Toggle Manager mode (list all apps & toggle NoDisplay)\n");
+    printf("  -h, --help      Display this help message and exit\n");
+    printf("  -v, --version   Display version information and exit\n\n");
+    printf("Keybindings:\n");
+    printf("  <Up> / <Down>   Navigate results (also <Ctrl+P> / <Ctrl+N>)\n");
+    printf("  <Enter>         Launch selected app (or toggle visibility in --toggle mode)\n");
+    printf("  <Space>         Toggle visibility in --toggle mode\n");
+    printf("  <Tab>           Hide application from launcher (in default launcher mode)\n");
+    printf("  <Escape>        Close launcher immediately\n");
+}
+
+int main(int argc, char **argv) {
+    if (argc >= 2) {
+        if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+            print_usage();
+            return 0;
+        }
+        if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0) {
+            printf("sys-launcher %s\n", VERSION);
+            return 0;
+        }
+        if (strcmp(argv[1], "--toggle") == 0 || strcmp(argv[1], "-t") == 0) {
+            app_state.is_toggle_mode = TRUE;
+        }
+    }
+
+    gtk_init(&argc, &argv);
+    build_ui();
+    gtk_main();
+
+    return 0;
+}

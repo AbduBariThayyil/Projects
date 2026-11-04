@@ -51,6 +51,13 @@
       "stack": ["C", "Xlib", "BSPWM"],
       "description": "Sub-2ms hotkey, brightness, screenshot, and window management daemon replacing shell scripts."
     },
+    "sys-launcher": {
+      "path": "sys-launcher",
+      "context": "sys-launcher/context.md",
+      "type": "desktop-launcher",
+      "stack": ["C", "GTK3", "GIO", "Catppuccin"],
+      "description": "Ultra-fast dual-mode native application launcher and desktop visibility manager."
+    },
     "sys-notif": {
       "path": "sys-notif",
       "context": "sys-notif/context.md",
