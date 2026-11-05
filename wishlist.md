@@ -20,12 +20,12 @@ All upgraded components follow the **`sys-`** naming convention (e.g. `sys-notif
   * Polybar is running the active `32-Bit` Marisol rice styling, TokyoNight/Dracula palette, glyph icons, and dynamic `PolybarMusic` center widget.
   * `sys-bar` remains fully compiled, verified, and available as an ultra-minimalist alternative whenever needed.
 
-### 3. 📁 Lightweight File Manager (Purging GVFS / `gvfsd` Background Daemons)
-* **Current:** Thunar pulls in `gvfsd`, `gvfsd-fuse`, `gvfs-udisks2-volume-monitor`, and GNOME trash background services running constantly.
-* **Goal:** Eliminate GVFS background daemons entirely.
-* **Candidates:**
-  * **Yazi / lf:** Fast terminal file managers in Rust/Go with sixel/kitty image previews, custom hotkeys, and zero background services.
-  * **PCManFM (standalone):** Lightweight GTK file manager compiled without GVFS dependency (~8 MB RAM).
+### 3. 📁 Lightweight File Manager (Purging GVFS / `gvfsd` Background Daemons) — ✅ COMPLETED
+* **Status:** **Active & Configured** (`/usr/bin/pcmanfm`).
+* **Implementation:**
+  * **Zero-Daemon Architecture:** Completely masked runaway background GVFS units (`gvfs-daemon.service`, `gvfs-metadata.service`, `gvfs-mtp-volume-monitor.service`, `gvfs-udisks2-volume-monitor.service`), eliminating constant GNOME/XFCE volume polling and background memory leaks.
+  * **PCManFM Integration:** Standardized default GUI file manager to `pcmanfm` across XDG MIME handlers (`pcmanfm.desktop`), `sys-control --filemanager`, and `OpenApps --filemanager`.
+  * **Memory Footprint:** Operates on-demand using only ~8 MB RAM with zero resident background services.
 
 ### 4. 💻 Ultra-Light Minimalist Terminal — 🔒 KEPT AS-IS
 * **Status:** User prefers **Alacritty** (Retained).

@@ -621,7 +621,7 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "--editor") == 0) {
         spawn_async("${EDITOR:-geany} &");
     } else if (strcmp(arg, "--filemanager") == 0) {
-        spawn_async("${FILEMANAGER:-thunar} &");
+        spawn_async("${FILEMANAGER:-pcmanfm} &");
     } else if (strcmp(arg, "--soundcontrol") == 0) {
         spawn_async("pavucontrol");
     } else if (strcmp(arg, "--riceeditor") == 0) {
