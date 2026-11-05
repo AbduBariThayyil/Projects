@@ -695,11 +695,13 @@ class LocalPlayerController:
         self.name = "This Device (Local Screen / MPV)"
         self.is_local = True
         self.cast_info = type("CastInfo", (), {"host": "127.0.0.1"})()
-        self.ipc_sock = f"/tmp/ani_cast_mpv_sock_{os.getpid()}"
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+        self.ipc_sock = os.path.join(runtime_dir, f"ani_cast_mpv_sock_{os.getpid()}")
         self.media_controller = LocalMediaController(self.ipc_sock)
         self.mpv_proc = None
         self.status = type("CastStatus", (), {"volume_level": 0.8, "volume_muted": False})()
         self.is_connected = True
+        atexit.register(self.disconnect)
 
     def start_playback(self, video_url, sub_url, title, current_time=0.0):
         if os.path.exists(self.ipc_sock):
@@ -1074,7 +1076,9 @@ def main():
     # Check if this episode is the final episode of its season
     is_season_finale = False
     try:
-        sys.path.insert(0, "/home/vibecoder/Projects/ani-cast/lib")
+        lib_dir = os.path.dirname(os.path.abspath(__file__))
+        if lib_dir not in sys.path:
+            sys.path.insert(0, lib_dir)
         from anicast_engine import parse_anime_title, get_episodes, search_anime
         anime_base, s_num, ep_num = parse_anime_title(TITLE)
         s_q = f"{anime_base} Season {s_num}" if s_num > 1 else anime_base
@@ -1164,6 +1168,7 @@ def main():
         try:
             segment_buffer.stop()
             httpd.shutdown()
+            httpd.server_close()
         except Exception:
             pass
 

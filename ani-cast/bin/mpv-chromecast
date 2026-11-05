@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BASE_DIR="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
+
 REF=""
 TITLE="Anime Episode"
 VIDEO_URL=""
@@ -65,9 +73,10 @@ fi
 
 # Check for Local Mode (-l or ANI_CAST_LOCAL=1 or target device is local)
 if [ "$ANI_CAST_LOCAL" = "1" ] || [ "${ANI_CAST_DEVICE,,}" = "local" ] || [ "$ANI_CAST_DEVICE" = "0" ] || [ "${ANI_CAST_DEVICE,,}" = "this" ]; then
+    pkill -f hls_streamer.py 2>/dev/null || true
     MPV_ARGS=(
         "--force-media-title=$TITLE"
-        "--script=/home/vibecoder/Projects/ani-cast/lib/ani_cast_mpv_resume.lua"
+        "--script=$BASE_DIR/lib/ani_cast_mpv_resume.lua"
     )
     [ -n "$REF" ] && MPV_ARGS+=("--referrer=$REF")
     if [ "$ANI_CAST_NO_SUB" = "1" ]; then
@@ -113,7 +122,7 @@ killall -q catt 2>/dev/null || true
 pkill -f hls_streamer.py 2>/dev/null || true
 sleep 0.3
 
-STREAMER_PY="/home/vibecoder/Projects/ani-cast/lib/hls_streamer.py"
-[ ! -f "$STREAMER_PY" ] && STREAMER_PY="/home/vibecoder/Videos/Anime/hls_streamer.py"
+STREAMER_PY="$BASE_DIR/lib/hls_streamer.py"
+[ ! -f "$STREAMER_PY" ] && STREAMER_PY="$HOME/Videos/Anime/hls_streamer.py"
 
 exec python3 "$STREAMER_PY" "$REF" "$VIDEO_URL" "$SUB_FILE" "$TITLE" "${ANI_CAST_START_TIME:-}"

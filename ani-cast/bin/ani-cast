@@ -1,15 +1,37 @@
 #!/usr/bin/env bash
 # ani-cast: Search & cast anime to TV or local device with resume, season auto-advance & downloads
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BASE_DIR="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
+
+export PATH="$BASE_DIR/bin:$PATH"
 export ANI_CLI_PLAYER="mpv-chromecast"
 export ANI_CLI_MENU="ani-cast-menu"
 
-ENGINE_PY="/home/vibecoder/Projects/ani-cast/lib/anicast_engine.py"
+ENGINE_PY="$BASE_DIR/lib/anicast_engine.py"
 
 unset ANI_CAST_START_TIME
 unset ANI_CAST_NO_SUB
 unset ANI_CAST_DEVICE
 unset ANI_CAST_LOCAL
 unset ANI_CAST_DOWNLOAD
+
+cleanup_session() {
+    trap - EXIT INT TERM
+    pkill -f hls_streamer.py 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_session_device" 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_first_ep_done" 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_action" 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_next_season_pending" 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_current_session.json" 2>/dev/null || true
+}
+trap cleanup_session EXIT
+trap 'cleanup_session; exit 130' INT
+trap 'cleanup_session; exit 143' TERM
 
 # Reset session state files on every new command launch so initial device prompt always appears
 rm -f "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_session_device" 2>/dev/null || true
@@ -64,10 +86,10 @@ EOF
         -g|--gui)
             if [ -x ~/.local/bin/ani-cast-gui ]; then
                 exec ~/.local/bin/ani-cast-gui
-            elif [ -x /home/vibecoder/Projects/ani-cast/gui/ani-cast-gui ]; then
-                exec /home/vibecoder/Projects/ani-cast/gui/ani-cast-gui
-            elif [ -x /home/vibecoder/Projects/ani-cast-gui/ani-cast-gui ]; then
-                exec /home/vibecoder/Projects/ani-cast-gui/ani-cast-gui
+            elif [ -x "$BASE_DIR/gui/ani-cast-gui" ]; then
+                exec "$BASE_DIR/gui/ani-cast-gui"
+            elif [ -x "$HOME/Projects/ani-cast-gui/ani-cast-gui" ]; then
+                exec "$HOME/Projects/ani-cast-gui/ani-cast-gui"
             else
                 echo "AniCast GUI is currently rebuilding. Launching CLI mode..."
             fi

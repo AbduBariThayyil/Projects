@@ -25,7 +25,7 @@ import anicast_engine
 
 RESUME_FILE = os.path.expanduser("~/.local/state/ani-cast/resume_state.json")
 LOCAL_HLS = os.path.abspath(os.path.join(LIB_DIR, "hls_streamer.py"))
-HLS_STREAMER_PY = LOCAL_HLS if os.path.exists(LOCAL_HLS) else "/home/vibecoder/Videos/Anime/hls_streamer.py"
+HLS_STREAMER_PY = LOCAL_HLS if os.path.exists(LOCAL_HLS) else os.path.expanduser("~/Videos/Anime/hls_streamer.py")
 
 
 def save_resume_state(title: str, position: float, duration: float = 0.0, finished: bool = False):
@@ -191,7 +191,8 @@ class PlaybackManager:
         thread.start()
 
     def _play_local_mpv(self, video_url, referer, sub_url, title, start_time):
-        sock_path = f"/tmp/anicast_mpv_{os.getpid()}_{int(time.time())}.sock"
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+        sock_path = os.path.join(runtime_dir, f"anicast_mpv_{os.getpid()}_{int(time.time())}.sock")
         if os.path.exists(sock_path):
             try:
                 os.remove(sock_path)

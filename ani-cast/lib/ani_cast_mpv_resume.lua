@@ -53,11 +53,13 @@ end
 
 local function check_season_finale_async(title)
     if not title or title == "" then return end
+    local script_dir = mp.get_script_directory() or (home .. "/Projects/ani-cast/lib")
+    local engine_py = script_dir .. "/anicast_engine.py"
     mp.command_native_async({
         name = "subprocess",
         playback_only = false,
         capture_stdout = true,
-        args = {"python3", "/home/vibecoder/Projects/ani-cast/lib/anicast_engine.py", "check-last-ep", title}
+        args = {"python3", engine_py, "check-last-ep", title}
     }, function(success, res, err)
         if success and res and res.stdout then
             local parsed = utils.parse_json(res.stdout)
