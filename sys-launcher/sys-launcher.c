@@ -17,7 +17,7 @@
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 
-#define VERSION "1.1.0"
+#define VERSION "1.2.0"
 
 typedef struct {
     char *id;            /* Desktop ID, e.g. "firefox.desktop" */
@@ -32,6 +32,7 @@ typedef struct {
     char *norm_id;
     char *norm_exec;
     GIcon *icon;
+    guint launch_count;  /* Frecency launch count */
     gboolean is_hidden;
     gboolean is_terminal;
     GAppInfo *info;
@@ -47,17 +48,28 @@ typedef struct {
     GtkWidget *listbox;
     GtkWidget *scrolled_window;
     GtkWidget *footer_hint;
+    GtkWidget *cmd_row;
+    GtkWidget *cmd_title_label;
+    GtkWidget *cmd_subtitle_label;
     GPtrArray *apps;
     char *current_query;
 } LauncherState;
 
 static LauncherState app_state = {0};
 static gboolean is_quitting = FALSE;
+static GHashTable *frecency_map = NULL;
+static char *frecency_file_path = NULL;
 
 /* -------------------------------------------------------------------------
  * Forward Declarations
  * ------------------------------------------------------------------------- */
 static void safe_quit(void);
+static void init_frecency(void);
+static void save_frecency(void);
+static void record_app_launch(const char *desktop_id);
+static void free_frecency(void);
+static void position_window_on_active_monitor(GtkWindow *window, int width, int height);
+static void execute_shell_command(void);
 static void populate_apps(void);
 static void free_apps(void);
 static gint compute_app_score(AppItem *app, const char *query);
@@ -77,7 +89,151 @@ static void hide_app_from_launcher(AppItem *app, GtkListBox *box);
 static void safe_quit(void) {
     if (is_quitting) return;
     is_quitting = TRUE;
-    gtk_main_quit();
+    if (gtk_main_level() > 0) {
+        gtk_main_quit();
+    }
+}
+
+/* -------------------------------------------------------------------------
+ * Frecency & Usage Tracking (~/.cache/sys-launcher/frecency.txt)
+ * ------------------------------------------------------------------------- */
+static void init_frecency(void) {
+    char *cache_dir = g_build_filename(g_get_user_cache_dir(), "sys-launcher", NULL);
+    g_mkdir_with_parents(cache_dir, 0755);
+    frecency_file_path = g_build_filename(cache_dir, "frecency.txt", NULL);
+    g_free(cache_dir);
+
+    frecency_map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+    char *contents = NULL;
+    gsize length = 0;
+    if (g_file_get_contents(frecency_file_path, &contents, &length, NULL)) {
+        char **lines = g_strsplit(contents, "\n", -1);
+        for (int i = 0; lines[i]; i++) {
+            char *line = g_strstrip(lines[i]);
+            if (!*line || line[0] == '#') continue;
+            char *space = strchr(line, ' ');
+            if (space) {
+                *space = '\0';
+                char *id = g_strstrip(line);
+                char *cnt_str = g_strstrip(space + 1);
+                if (*id && *cnt_str) {
+                    guint count = (guint)g_ascii_strtoull(cnt_str, NULL, 10);
+                    g_hash_table_insert(frecency_map, g_strdup(id), GUINT_TO_POINTER(count));
+                }
+            }
+        }
+        g_strfreev(lines);
+        g_free(contents);
+    }
+}
+
+static void save_frecency(void) {
+    if (!frecency_map || !frecency_file_path) return;
+
+    GString *out = g_string_new("");
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, frecency_map);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        const char *id = (const char *)key;
+        guint count = GPOINTER_TO_UINT(value);
+        if (count > 0) {
+            g_string_append_printf(out, "%s %u\n", id, count);
+        }
+    }
+
+    g_file_set_contents(frecency_file_path, out->str, (gssize)out->len, NULL);
+    g_string_free(out, TRUE);
+}
+
+static void record_app_launch(const char *desktop_id) {
+    if (!desktop_id || !*desktop_id) return;
+    if (!frecency_map) {
+        init_frecency();
+    }
+
+    gpointer val = g_hash_table_lookup(frecency_map, desktop_id);
+    guint count = val ? GPOINTER_TO_UINT(val) + 1 : 1;
+    g_hash_table_insert(frecency_map, g_strdup(desktop_id), GUINT_TO_POINTER(count));
+
+    save_frecency();
+}
+
+static void free_frecency(void) {
+    if (frecency_map) {
+        g_hash_table_destroy(frecency_map);
+        frecency_map = NULL;
+    }
+    g_free(frecency_file_path);
+    frecency_file_path = NULL;
+}
+
+/* -------------------------------------------------------------------------
+ * Active Monitor Centering
+ * ------------------------------------------------------------------------- */
+static void position_window_on_active_monitor(GtkWindow *window, int width, int height) {
+    GdkDisplay *display = gdk_display_get_default();
+    if (!display) return;
+
+    gint px = 0, py = 0;
+    GdkSeat *seat = gdk_display_get_default_seat(display);
+    if (seat) {
+        GdkDevice *pointer = gdk_seat_get_pointer(seat);
+        if (pointer) {
+            gdk_device_get_position(pointer, NULL, &px, &py);
+        }
+    }
+
+    GdkMonitor *mon = gdk_display_get_monitor_at_point(display, px, py);
+    if (!mon) {
+        mon = gdk_display_get_primary_monitor(display);
+    }
+    if (!mon && gdk_display_get_n_monitors(display) > 0) {
+        mon = gdk_display_get_monitor(display, 0);
+    }
+
+    GdkRectangle geo = {0, 0, 1920, 1080};
+    if (mon) {
+        gdk_monitor_get_geometry(mon, &geo);
+    }
+
+    gint win_x = geo.x + (geo.width - width) / 2;
+    gint win_y = geo.y + (geo.height - height) / 2;
+
+    gtk_window_move(window, win_x, win_y);
+}
+
+/* -------------------------------------------------------------------------
+ * Dedicated Shell Command Execution (! or > Prefix)
+ * ------------------------------------------------------------------------- */
+static void execute_shell_command(void) {
+    const char *q = app_state.current_query;
+    if (!q || (*q != '!' && *q != '>')) return;
+
+    const char *cmd = q + 1;
+    while (*cmd == ' ' || *cmd == '\t') cmd++;
+
+    if (*cmd == '\0') {
+        return;
+    }
+
+    char *argv[] = {
+        (char *)"/bin/sh",
+        (char *)"-c",
+        (char *)cmd,
+        NULL
+    };
+
+    GError *err = NULL;
+    if (!g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &err)) {
+        if (err) {
+            g_warning("Failed to execute shell command '%s': %s", cmd, err->message);
+            g_error_free(err);
+        }
+    }
+
+    safe_quit();
 }
 
 /* -------------------------------------------------------------------------
@@ -135,6 +291,9 @@ static gboolean fuzzy_match_token(const char *haystack, const char *token) {
 }
 
 static gboolean app_matches_query(AppItem *app, const char *query) {
+    if (query && (*query == '!' || *query == '>')) {
+        return FALSE;
+    }
     if (!app_state.is_toggle_mode && app->is_hidden) {
         return FALSE;
     }
@@ -273,6 +432,13 @@ static gint compute_app_score(AppItem *app, const char *query) {
         }
     }
 
+    /* 3. Frecency bonus (+ count * 150, capped at 6000) */
+    if (score > 0 && app->launch_count > 0) {
+        gint bonus = (gint)app->launch_count * 150;
+        if (bonus > 6000) bonus = 6000;
+        score += bonus;
+    }
+
     g_strfreev(tokens);
     g_free(norm_q);
     g_free(q);
@@ -289,6 +455,16 @@ static gint compare_app_items(gconstpointer a, gconstpointer b) {
         if (score_a != score_b) {
             return score_b - score_a; /* Higher score first */
         }
+        if (app_a->launch_count != app_b->launch_count) {
+            return (gint)app_b->launch_count - (gint)app_a->launch_count;
+        }
+    } else {
+        /* Empty query: sort by frecency (most used applications first), with alphabetical tie-breaking! */
+        if (!app_state.is_toggle_mode) {
+            if (app_a->launch_count != app_b->launch_count) {
+                return (gint)app_b->launch_count - (gint)app_a->launch_count;
+            }
+        }
     }
     return g_utf8_collate(app_a->name ? app_a->name : app_a->id,
                           app_b->name ? app_b->name : app_b->id);
@@ -297,6 +473,11 @@ static gint compare_app_items(gconstpointer a, gconstpointer b) {
 static GPtrArray *get_sorted_visible_apps(void) {
     GPtrArray *arr = g_ptr_array_new();
     if (!app_state.apps) return arr;
+
+    const char *q = app_state.current_query;
+    if (q && (*q == '!' || *q == '>')) {
+        return arr;
+    }
 
     for (guint i = 0; i < app_state.apps->len; i++) {
         AppItem *app = g_ptr_array_index(app_state.apps, i);
@@ -310,15 +491,32 @@ static GPtrArray *get_sorted_visible_apps(void) {
 
 static gint sort_func(GtkListBoxRow *row1, GtkListBoxRow *row2, gpointer user_data) {
     (void)user_data;
+    if (app_state.cmd_row) {
+        if (row1 == GTK_LIST_BOX_ROW(app_state.cmd_row)) return -1;
+        if (row2 == GTK_LIST_BOX_ROW(app_state.cmd_row)) return 1;
+    }
+
     AppItem *a = g_object_get_data(G_OBJECT(row1), "app_item");
     AppItem *b = g_object_get_data(G_OBJECT(row2), "app_item");
-    if (!a || !b) return 0;
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
 
     if (app_state.current_query && *app_state.current_query) {
         gint score_a = compute_app_score(a, app_state.current_query);
         gint score_b = compute_app_score(b, app_state.current_query);
         if (score_a != score_b) {
             return score_b - score_a; /* Higher score first */
+        }
+        if (a->launch_count != b->launch_count) {
+            return (gint)b->launch_count - (gint)a->launch_count;
+        }
+    } else {
+        /* Empty query: sort by frecency (most used applications first), with alphabetical tie-breaking! */
+        if (!app_state.is_toggle_mode) {
+            if (a->launch_count != b->launch_count) {
+                return (gint)b->launch_count - (gint)a->launch_count;
+            }
         }
     }
 
@@ -327,15 +525,38 @@ static gint sort_func(GtkListBoxRow *row1, GtkListBoxRow *row2, gpointer user_da
 
 static gboolean filter_func(GtkListBoxRow *row, gpointer user_data) {
     (void)user_data;
+    const char *q = app_state.current_query;
+    gboolean is_cmd = (q && (*q == '!' || *q == '>'));
+
+    if (app_state.cmd_row && row == GTK_LIST_BOX_ROW(app_state.cmd_row)) {
+        return is_cmd;
+    }
+
+    if (is_cmd) {
+        return FALSE;
+    }
+
     AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
     if (!app) return FALSE;
-    return app_matches_query(app, app_state.current_query);
+    return app_matches_query(app, q);
 }
 
 /* -------------------------------------------------------------------------
  * List Navigation & Selection
  * ------------------------------------------------------------------------- */
 static void select_first_visible_row(GtkListBox *box) {
+    const char *q = app_state.current_query;
+    if (q && (*q == '!' || *q == '>')) {
+        if (app_state.cmd_row) {
+            gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(app_state.cmd_row));
+            if (app_state.scrolled_window) {
+                GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app_state.scrolled_window));
+                gtk_adjustment_set_value(vadj, 0.0);
+            }
+        }
+        return;
+    }
+
     GPtrArray *vis = get_sorted_visible_apps();
     if (vis->len > 0) {
         AppItem *first = g_ptr_array_index(vis, 0);
@@ -351,6 +572,14 @@ static void select_first_visible_row(GtkListBox *box) {
 }
 
 static void navigate_list(GtkListBox *box, int direction) {
+    const char *q = app_state.current_query;
+    if (q && (*q == '!' || *q == '>')) {
+        if (app_state.cmd_row) {
+            gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(app_state.cmd_row));
+        }
+        return;
+    }
+
     GPtrArray *vis = get_sorted_visible_apps();
     if (vis->len == 0) {
         g_ptr_array_free(vis, TRUE);
@@ -587,6 +816,9 @@ static void launch_terminal_app(const char *cmdline, const char *fallback_exec) 
 static void launch_app(AppItem *app) {
     if (!app) return;
 
+    app->launch_count++;
+    record_app_launch(app->id);
+
     if (app->is_terminal) {
         const char *cmdline = app->info ? g_app_info_get_commandline(app->info) : NULL;
         launch_terminal_app(cmdline, app->executable);
@@ -654,6 +886,26 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
     (void)user_data;
     g_free(app_state.current_query);
     app_state.current_query = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
+
+    const char *q = app_state.current_query;
+    if (q && (*q == '!' || *q == '>')) {
+        const char *cmd = q + 1;
+        while (*cmd == ' ' || *cmd == '\t') cmd++;
+        char *title = g_strdup_printf("Execute: %s", cmd);
+        gtk_label_set_text(GTK_LABEL(app_state.cmd_title_label), title);
+        g_free(title);
+        if (app_state.footer_hint) {
+            gtk_label_set_text(GTK_LABEL(app_state.footer_hint), "↵ Execute in shell   •   Esc Close");
+        }
+    } else {
+        if (app_state.footer_hint) {
+            gtk_label_set_text(GTK_LABEL(app_state.footer_hint),
+                app_state.is_toggle_mode ?
+                "↵ / Space Toggle Visibility   •   Esc Close" :
+                "↵ Launch   •   Tab Hide   •   Esc Close");
+        }
+    }
+
     gtk_list_box_invalidate_filter(GTK_LIST_BOX(app_state.listbox));
     gtk_list_box_invalidate_sort(GTK_LIST_BOX(app_state.listbox));
     select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
@@ -661,12 +913,40 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
 
 static void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
     (void)user_data;
+    if (app_state.cmd_row && row == GTK_LIST_BOX_ROW(app_state.cmd_row)) {
+        execute_shell_command();
+        return;
+    }
     AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
     if (!app) return;
     if (app_state.is_toggle_mode) {
         toggle_app(app, box);
     } else {
         launch_app(app);
+    }
+}
+
+static void on_entry_activate(GtkEntry *entry, gpointer user_data) {
+    (void)entry;
+    (void)user_data;
+    const char *q = app_state.current_query;
+    if (q && (*q == '!' || *q == '>')) {
+        execute_shell_command();
+        return;
+    }
+    GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+    AppItem *app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
+    if (!app || !app_matches_query(app, app_state.current_query)) {
+        select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
+        row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+        app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
+    }
+    if (app) {
+        if (app_state.is_toggle_mode) {
+            toggle_app(app, GTK_LIST_BOX(app_state.listbox));
+        } else {
+            launch_app(app);
+        }
     }
 }
 
@@ -710,6 +990,11 @@ static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpoin
 
     /* Enter / KP_Enter */
     if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
+        const char *q = app_state.current_query;
+        if (q && (*q == '!' || *q == '>')) {
+            execute_shell_command();
+            return GDK_EVENT_STOP;
+        }
         GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
         AppItem *app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
         if (!app || !app_matches_query(app, app_state.current_query)) {
@@ -729,6 +1014,10 @@ static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpoin
 
     /* Space in toggle mode */
     if (app_state.is_toggle_mode && (keyval == GDK_KEY_space || keyval == GDK_KEY_KP_Space)) {
+        const char *q = app_state.current_query;
+        if (q && (*q == '!' || *q == '>')) {
+            return GDK_EVENT_PROPAGATE;
+        }
         const char *text = gtk_entry_get_text(GTK_ENTRY(app_state.entry));
         gboolean entry_focused = gtk_widget_has_focus(GTK_WIDGET(app_state.entry));
         if (!entry_focused || !text || text[0] == '\0' || (state & GDK_CONTROL_MASK)) {
@@ -748,6 +1037,10 @@ static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpoin
 
     /* Tab in launcher mode */
     if (!app_state.is_toggle_mode && keyval == GDK_KEY_Tab) {
+        const char *q = app_state.current_query;
+        if (q && (*q == '!' || *q == '>')) {
+            return GDK_EVENT_STOP;
+        }
         GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
         AppItem *app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
         if (!app || !app_matches_query(app, app_state.current_query)) {
@@ -966,6 +1259,8 @@ static void populate_apps(void) {
 
         AppItem *app = g_new0(AppItem, 1);
         app->id = g_strdup(id);
+        gpointer f_val = frecency_map ? g_hash_table_lookup(frecency_map, id) : NULL;
+        app->launch_count = f_val ? GPOINTER_TO_UINT(f_val) : 0;
         app->name = g_strdup(name);
         app->comment = g_strdup(desc ? desc : "");
         app->executable = g_strdup(exec ? exec : "");
@@ -1038,6 +1333,13 @@ static void populate_apps(void) {
     g_list_free_full(all, g_object_unref);
 }
 
+static gboolean on_window_map(GtkWidget *widget, GdkEvent *event, gpointer user_data) {
+    (void)event;
+    (void)user_data;
+    position_window_on_active_monitor(GTK_WINDOW(widget), 480, 420);
+    return GDK_EVENT_PROPAGATE;
+}
+
 /* -------------------------------------------------------------------------
  * UI Initialization
  * ------------------------------------------------------------------------- */
@@ -1048,7 +1350,7 @@ static void build_ui(void) {
     gtk_window_set_title(GTK_WINDOW(app_state.window),
                          app_state.is_toggle_mode ? "sys-launcher --toggle" : "sys-launcher");
     gtk_window_set_decorated(GTK_WINDOW(app_state.window), FALSE);
-    gtk_window_set_position(GTK_WINDOW(app_state.window), GTK_WIN_POS_CENTER_ALWAYS);
+    gtk_window_set_position(GTK_WINDOW(app_state.window), GTK_WIN_POS_NONE);
     gtk_window_set_default_size(GTK_WINDOW(app_state.window), 480, 420);
     gtk_widget_set_size_request(app_state.window, 480, 420);
     gtk_window_set_skip_taskbar_hint(GTK_WINDOW(app_state.window), TRUE);
@@ -1069,7 +1371,7 @@ static void build_ui(void) {
     /* Search entry */
     app_state.entry = gtk_search_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(app_state.entry),
-        app_state.is_toggle_mode ? "Search apps to toggle (Enter/Space toggles)..." : "Search applications...");
+        app_state.is_toggle_mode ? "Search apps to toggle (Enter/Space toggles)..." : "Search applications or !/> for shell...");
     gtk_box_pack_start(GTK_BOX(main_box), app_state.entry, FALSE, FALSE, 0);
 
     /* Scrolled Window & ListBox */
@@ -1086,6 +1388,39 @@ static void build_ui(void) {
 
     gtk_list_box_set_filter_func(GTK_LIST_BOX(app_state.listbox), filter_func, NULL, NULL);
     gtk_list_box_set_sort_func(GTK_LIST_BOX(app_state.listbox), sort_func, NULL, NULL);
+
+    /* Dedicated dynamic custom row for shell commands (! or >) */
+    GtkWidget *cmd_row = gtk_list_box_row_new();
+    GtkWidget *cmd_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+
+    GtkIconTheme *theme = gtk_icon_theme_get_default();
+    const char *icon_name = (theme && gtk_icon_theme_has_icon(theme, "utilities-terminal")) ?
+                            "utilities-terminal" : "terminal";
+    GtkWidget *cmd_icon_img = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_DND);
+    gtk_image_set_pixel_size(GTK_IMAGE(cmd_icon_img), 32);
+    gtk_box_pack_start(GTK_BOX(cmd_hbox), cmd_icon_img, FALSE, FALSE, 0);
+
+    GtkWidget *cmd_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    app_state.cmd_title_label = gtk_label_new("Execute: ");
+    gtk_label_set_xalign(GTK_LABEL(app_state.cmd_title_label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(app_state.cmd_title_label), PANGO_ELLIPSIZE_END);
+    gtk_style_context_add_class(gtk_widget_get_style_context(app_state.cmd_title_label), "app-title");
+    gtk_box_pack_start(GTK_BOX(cmd_vbox), app_state.cmd_title_label, FALSE, FALSE, 0);
+
+    app_state.cmd_subtitle_label = gtk_label_new("Run in system shell");
+    gtk_label_set_xalign(GTK_LABEL(app_state.cmd_subtitle_label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(app_state.cmd_subtitle_label), PANGO_ELLIPSIZE_END);
+    gtk_style_context_add_class(gtk_widget_get_style_context(app_state.cmd_subtitle_label), "app-subtitle");
+    gtk_box_pack_start(GTK_BOX(cmd_vbox), app_state.cmd_subtitle_label, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(cmd_hbox), cmd_vbox, TRUE, TRUE, 0);
+    gtk_container_add(GTK_CONTAINER(cmd_row), cmd_hbox);
+
+    app_state.cmd_row = cmd_row;
+    gtk_widget_add_events(cmd_row, GDK_ENTER_NOTIFY_MASK);
+    g_signal_connect(cmd_row, "enter-notify-event", G_CALLBACK(on_row_enter_notify), app_state.listbox);
+
+    gtk_list_box_insert(GTK_LIST_BOX(app_state.listbox), cmd_row, -1);
 
     /* Footer hints */
     GtkWidget *footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -1104,15 +1439,20 @@ static void build_ui(void) {
 
     /* Signal handlers */
     g_signal_connect(app_state.entry, "search-changed", G_CALLBACK(on_search_changed), NULL);
+    g_signal_connect(app_state.entry, "activate", G_CALLBACK(on_entry_activate), NULL);
     g_signal_connect(app_state.window, "key-press-event", G_CALLBACK(on_window_key_press), NULL);
     g_signal_connect(app_state.listbox, "row-activated", G_CALLBACK(on_row_activated), NULL);
+    g_signal_connect(app_state.window, "map-event", G_CALLBACK(on_window_map), NULL);
     g_signal_connect(app_state.window, "destroy", G_CALLBACK(safe_quit), NULL);
 
     /* Focus-Out Auto-Dismiss */
     gtk_widget_add_events(app_state.window, GDK_FOCUS_CHANGE_MASK);
     g_signal_connect(app_state.window, "focus-out-event", G_CALLBACK(on_window_focus_out), NULL);
 
+    position_window_on_active_monitor(GTK_WINDOW(app_state.window), 480, 420);
     gtk_widget_show_all(app_state.window);
+    position_window_on_active_monitor(GTK_WINDOW(app_state.window), 480, 420);
+
     gtk_widget_grab_focus(app_state.entry);
     select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
 }
@@ -1130,12 +1470,16 @@ static void print_usage(void) {
     printf("  -v, --version   Display version information and exit\n\n");
     printf("Keybindings:\n");
     printf("  <Up> / <Down>   Navigate results (also <Ctrl+P> / <Ctrl+N>)\n");
-    printf("  <Enter>         Launch selected app (or toggle visibility in --toggle mode)\n");
+    printf("  <Enter>         Launch selected app (or execute shell command with ! or >)\n");
     printf("  <Space>         Toggle visibility in --toggle mode\n");
     printf("  <Tab>           Hide application from launcher (in default launcher mode)\n");
-    printf("  <Escape>        Close launcher immediately\n");
+    printf("  <Escape>        Close launcher immediately\n\n");
+    printf("Shell Command Execution:\n");
+    printf("  !<command>      Execute shell command (e.g. !reboot, !alacritty)\n");
+    printf("  ><command>      Execute shell command (e.g. >pkill firefox)\n");
 }
 
+#ifndef SYS_LAUNCHER_TEST
 int main(int argc, char **argv) {
     if (argc >= 2) {
         if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
@@ -1152,9 +1496,12 @@ int main(int argc, char **argv) {
     }
 
     gtk_init(&argc, &argv);
+    init_frecency();
     build_ui();
     gtk_main();
     free_apps();
+    free_frecency();
 
     return 0;
 }
+#endif

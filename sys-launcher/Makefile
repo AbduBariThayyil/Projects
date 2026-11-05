@@ -9,11 +9,15 @@ all: $(TARGET)
 $(TARGET): sys-launcher.c
 	$(CC) $(CFLAGS) -o $(TARGET) sys-launcher.c $(LDFLAGS)
 
+test: $(TARGET)
+	$(CC) $(CFLAGS) -o test_suite test_suite.c $(LDFLAGS)
+	xvfb-run -a -s "-screen 0 1920x1080x24" ./test_suite
+
 install: $(TARGET)
 	install -d $(PREFIX)/bin
 	install -m 755 $(TARGET) $(PREFIX)/bin/$(TARGET)
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) test_suite
 
-.PHONY: all install clean
+.PHONY: all install clean test

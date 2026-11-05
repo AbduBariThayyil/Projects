@@ -8,10 +8,17 @@
 - **Instant Application Indexing**: Directly leverages `g_app_info_get_all()` from GIO (zero Python startup latency, cached lowercase lookup for instantaneous multi-token fuzzy and substring filtering).
 - **Window Geometry & Behavior**:
   - Frameless (`gtk_window_set_decorated(..., FALSE)`).
-  - Centered on screen (`GTK_WIN_POS_CENTER_ALWAYS`).
+  - Centered on active monitor under pointer (`gdk_seat_get_pointer` + `gdk_display_get_monitor_at_point`).
   - Dimensions: 480px width × 420px height.
   - Skips taskbars and pagers (`gtk_window_set_skip_taskbar_hint(..., TRUE)`, `gtk_window_set_skip_pager_hint(..., TRUE)`).
   - RGBA visual support for rounded corners with compositor transparency (`picom`).
+- **Frecency / Launch Count Ranking**:
+  - Usage tracked in `~/.cache/sys-launcher/frecency.txt` (`<desktop_id> <count>\n`).
+  - Empty queries rank by most frequently used applications first, with alphabetical tie-breaking.
+  - Active search queries add a frecency bonus (`+ count * 150`, capped at 6000) into relevance scoring.
+- **Dedicated Shell Command Execution (`!` or `>` prefix)**:
+  - Entering `!<cmd>` or `><cmd>` displays a custom execution row ("Execute: <command>", "Run in system shell").
+  - Activating launches asynchronously via `/bin/sh -c '<command>'` and terminates launcher cleanly.
 - **Styling**:
   - Embedded CSS provider adhering to Catppuccin Mocha & Dracula palette.
   - JetBrainsMono Nerd Font typography.
