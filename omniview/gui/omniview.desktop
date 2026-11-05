@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=OmniView
+GenericName=Universal Media Streaming & Chromecast
+Comment=Stream Anime, Movies, and TV Shows directly to your TV or local monitor
+Exec=/home/vibecoder/.local/bin/omniview-gui %U
+Icon=omniview
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Player;
+StartupNotify=true
+StartupWMClass=omniview
+Keywords=anime;movies;shows;series;chromecast;cast;stream;mpv;omniview;

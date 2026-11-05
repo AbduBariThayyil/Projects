@@ -111,6 +111,22 @@ class OmniViewWindow(Adw.ApplicationWindow):
         self.back_btn.connect("clicked", self._on_back_clicked)
         self.header.pack_start(self.back_btn)
 
+        # OmniView HeaderBar Brand Title Widget (Left side next to Back button)
+        self.brand_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.brand_box.add_css_class("omniview-brand")
+        self.brand_box.set_valign(Gtk.Align.CENTER)
+
+        self.brand_icon = Gtk.Image.new_from_icon_name("video-display-symbolic")
+        self.brand_icon.add_css_class("omniview-brand-icon")
+
+        self.brand_label = Gtk.Label(label="OmniView")
+        self.brand_label.add_css_class("heading")
+        self.brand_label.add_css_class("omniview-brand-label")
+
+        self.brand_box.append(self.brand_icon)
+        self.brand_box.append(self.brand_label)
+        self.header.pack_start(self.brand_box)
+
         # Centered Multi-Tab ViewSwitcher
         self.view_switcher = Adw.ViewSwitcher()
         self.view_switcher.set_stack(self.main_view_stack)

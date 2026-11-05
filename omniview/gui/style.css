@@ -217,3 +217,31 @@ preferencesgroup list > row {
     padding-top: 4px;
     padding-bottom: 4px;
 }
+
+/* OmniView HeaderBar Branding */
+.omniview-brand {
+    margin-left: 6px;
+    margin-right: 6px;
+    padding: 3px 10px;
+    border-radius: 8px;
+    background-color: alpha(@surface0, 0.50);
+    border: 1px solid alpha(@mauve, 0.30);
+    transition: all 180ms ease;
+}
+
+.omniview-brand:hover {
+    background-color: alpha(@surface1, 0.70);
+    border-color: alpha(@mauve, 0.60);
+}
+
+.omniview-brand-icon {
+    color: @mauve;
+    font-size: 1.05rem;
+}
+
+.omniview-brand-label {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: @mocha_text;
+    letter-spacing: 0.4px;
+}
