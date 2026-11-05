@@ -22,8 +22,12 @@
 
 ## Build & Run
 ```bash
-# Launch application
+# Launch application via portable launcher
 ant-gm320
 # Or directly from source:
 python3 -m ant_gm320.main
+
+# Inspect or install udev rules for non-root hardware access
+ant-gm320 --udev
+ant-gm320 --install-udev
 ```

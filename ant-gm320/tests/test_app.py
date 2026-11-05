@@ -21,6 +21,9 @@ from ant_gm320.core.protocol import (
 )
 from ant_gm320.core.config import ConfigManager, get_default_profiles
 from ant_gm320.core.macro_engine import Macro, MacroEvent
+from ant_gm320.main import UDEV_RULE, main
+import subprocess
+import shutil
 
 
 def test_protocol_packets():
@@ -107,9 +110,69 @@ def test_hardware_driver():
     print("✓ Hardware driver detection passed successfully!")
 
 
+def test_udev_rule_and_cli(capsys):
+    expected_rule = 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="30fa", MODE="0666", TAG+="uaccess"'
+    assert UDEV_RULE == expected_rule, f"Expected {expected_rule}, got {UDEV_RULE}"
+
+    ret = main(["--udev"])
+    assert ret == 0
+    captured = capsys.readouterr()
+    assert expected_rule in captured.out
+    print("✓ Udev rule and CLI flag tests passed successfully!")
+
+
+def test_dynamic_launcher_script():
+    proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    launcher_path = os.path.join(proj_root, "ant-gm320")
+    local_bin_path = os.path.expanduser("~/.local/bin/ant-gm320")
+
+    assert os.path.isfile(launcher_path), f"Launcher missing: {launcher_path}"
+    assert os.access(launcher_path, os.X_OK), f"Launcher not executable: {launcher_path}"
+
+    res = subprocess.run([launcher_path, "--udev"], capture_output=True, text=True)
+    assert res.returncode == 0
+    assert 'SUBSYSTEM=="hidraw"' in res.stdout
+
+    assert os.path.exists(local_bin_path), f"~/.local/bin/ant-gm320 missing: {local_bin_path}"
+    assert os.access(local_bin_path, os.X_OK), f"~/.local/bin/ant-gm320 not executable: {local_bin_path}"
+
+    res_local = subprocess.run([local_bin_path, "--udev"], capture_output=True, text=True)
+    assert res_local.returncode == 0
+    assert 'SUBSYSTEM=="hidraw"' in res_local.stdout
+    print("✓ Dynamic launcher script tests passed successfully!")
+
+
+def test_desktop_entry_validation():
+    proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    desktop_repo = os.path.join(proj_root, "ant-gm320.desktop")
+    desktop_installed = os.path.expanduser("~/.local/share/applications/ant-gm320.desktop")
+
+    assert os.path.isfile(desktop_repo), f"Desktop file missing in repo: {desktop_repo}"
+    assert os.path.isfile(desktop_installed), f"Desktop file missing in apps: {desktop_installed}"
+
+    with open(desktop_repo, "r") as f:
+        content = f.read()
+    assert "Name=Ant Esports GM320" in content
+    assert "Exec=ant-gm320" in content
+    assert "StartupWMClass=ant_gm320" in content
+
+    validator = shutil.which("desktop-file-validate")
+    if validator:
+        res = subprocess.run([validator, desktop_repo], capture_output=True, text=True)
+        assert res.returncode == 0, f"desktop-file-validate failed on repo file: {res.stderr}"
+
+        res_inst = subprocess.run([validator, desktop_installed], capture_output=True, text=True)
+        assert res_inst.returncode == 0, f"desktop-file-validate failed on installed file: {res_inst.stderr}"
+
+    print("✓ Desktop entry validation tests passed successfully!")
+
+
 if __name__ == "__main__":
     test_protocol_packets()
     test_macro_compilation()
     test_config_manager()
     test_hardware_driver()
+    test_dynamic_launcher_script()
+    test_desktop_entry_validation()
     print("\nALL SYSTEM TESTS PASSED SUCCESSFULLY!")
+

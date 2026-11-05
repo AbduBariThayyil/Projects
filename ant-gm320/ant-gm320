@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Ant Esports GM320 Portable Dynamic Launcher
+set -e
+
+# Dynamically resolve symlinks to find the real script directory
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+
+# Resolve package root directory
+if [ -d "$SCRIPT_DIR/ant_gm320" ]; then
+    PROJECT_DIR="$SCRIPT_DIR"
+elif [ -d "$SCRIPT_DIR/../ant_gm320" ]; then
+    PROJECT_DIR="$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+elif [ -d "$HOME/Projects/ant-gm320/ant_gm320" ]; then
+    PROJECT_DIR="$HOME/Projects/ant-gm320"
+else
+    echo "Error: Unable to locate ant_gm320 package." >&2
+    exit 1
+fi
+
+export PYTHONPATH="${PROJECT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m ant_gm320.main "$@"

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Ant Esports GM320
+GenericName=Gaming Mouse Controller
+Comment=Configure DPI, RGB Lighting, and Button Macros for Ant Esports GM320
+Exec=ant-gm320
+Icon=/home/vibecoder/Projects/ant-gm320/ant_gm320/assets/mouse_transparent.png
+Terminal=false
+Categories=Settings;HardwareSettings;Game;
+StartupNotify=true
+StartupWMClass=ant_gm320
