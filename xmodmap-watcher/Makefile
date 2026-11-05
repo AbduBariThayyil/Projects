@@ -2,13 +2,19 @@ CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra
 LIBS = -lX11
 
+PREFIX ?= $(HOME)
+BINDIR ?= $(PREFIX)/.config/bspwm/bin
+LOCALBIN ?= $(PREFIX)/.local/bin
+
 all: xmodmap-watcher
 
 xmodmap-watcher: xmodmap-watcher.c
 	$(CC) $(CFLAGS) xmodmap-watcher.c -o xmodmap-watcher $(LIBS)
 
 install: xmodmap-watcher
-	install -m 755 xmodmap-watcher /home/vibecoder/.config/bspwm/bin/XmodmapWatcher
+	mkdir -p $(BINDIR) $(LOCALBIN)
+	install -m 755 xmodmap-watcher $(BINDIR)/XmodmapWatcher
+	install -m 755 xmodmap-watcher $(LOCALBIN)/xmodmap-watcher
 
 clean:
 	rm -f xmodmap-watcher

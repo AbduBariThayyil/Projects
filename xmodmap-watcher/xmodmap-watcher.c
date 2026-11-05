@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,42 +7,78 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <fcntl.h>
 #include <time.h>
+#include <pwd.h>
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
 #include <X11/keysym.h>
 
-#define PID_FILE "/tmp/.xmodmap_watcher.pid"
+static int lock_fd = -1;
 
-static int is_already_running(void) {
-    FILE *f = fopen(PID_FILE, "r");
-    if (f) {
-        pid_t pid = 0;
-        if (fscanf(f, "%d", &pid) == 1 && pid > 0) {
-            if (kill(pid, 0) == 0 && pid != getpid()) {
-                fclose(f);
-                return 1;
-            }
-        }
-        fclose(f);
+static void release_lock(void) {
+    if (lock_fd >= 0) {
+        flock(lock_fd, LOCK_UN);
+        close(lock_fd);
+        lock_fd = -1;
     }
-    f = fopen(PID_FILE, "w");
-    if (f) {
-        fprintf(f, "%d\n", getpid());
-        fclose(f);
-    }
-    return 0;
 }
 
-static void cleanup_pid(void) {
-    unlink(PID_FILE);
+static int acquire_lock(void) {
+    char lock_path[512];
+    const char *xdg = getenv("XDG_RUNTIME_DIR");
+    if (xdg && xdg[0] != '\0') {
+        snprintf(lock_path, sizeof(lock_path), "%s/xmodmap_watcher.lock", xdg);
+    } else {
+        snprintf(lock_path, sizeof(lock_path), "/tmp/xmodmap_watcher-%u.lock", (unsigned)getuid());
+    }
+
+    lock_fd = open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (lock_fd < 0) {
+        return -1;
+    }
+
+    if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+        close(lock_fd);
+        lock_fd = -1;
+        return 1; /* Locked by another running instance */
+    }
+
+    if (ftruncate(lock_fd, 0) == 0) {
+        char buf[32];
+        int len = snprintf(buf, sizeof(buf), "%d\n", (int)getpid());
+        if (len > 0) {
+            ssize_t ret = write(lock_fd, buf, (size_t)len);
+            (void)ret;
+        }
+    }
+
+    return 0;
 }
 
 static void on_signal(int sig) {
     (void)sig;
-    cleanup_pid();
+    release_lock();
     _exit(0);
+}
+
+static int on_io_error(Display *dpy) {
+    (void)dpy;
+    release_lock();
+    _exit(0);
+}
+
+static const char *get_user_home(void) {
+    const char *home = getenv("HOME");
+    if (home && home[0] != '\0') {
+        return home;
+    }
+    struct passwd *pw = getpwuid(getuid());
+    if (pw && pw->pw_dir && pw->pw_dir[0] != '\0') {
+        return pw->pw_dir;
+    }
+    return NULL;
 }
 
 static int needs_remap(Display *dpy) {
@@ -65,13 +102,14 @@ static int needs_remap(Display *dpy) {
 
 static void apply_xmodmap(void) {
     char path[512];
-    const char *home = getenv("HOME");
+    const char *home = get_user_home();
     if (!home) return;
-    snprintf(path, sizeof(path), "%s/.Xmodmap", home);
+    if (snprintf(path, sizeof(path), "%s/.Xmodmap", home) >= (int)sizeof(path)) return;
     if (access(path, R_OK) != 0) return;
 
     pid_t pid = fork();
     if (pid == 0) {
+        if (lock_fd >= 0) close(lock_fd);
         close(STDIN_FILENO);
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
@@ -89,9 +127,13 @@ static double get_time_sec(void) {
 int main(void) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
+    signal(SIGHUP, on_signal);
     signal(SIGCHLD, SIG_IGN);
 
-    if (is_already_running()) {
+    XSetIOErrorHandler(on_io_error);
+
+    if (acquire_lock() != 0) {
+        /* Another instance is running, exit cleanly with 0 */
         return 0;
     }
 
@@ -99,6 +141,13 @@ int main(void) {
     while (!dpy) {
         dpy = XOpenDisplay(NULL);
         if (!dpy) sleep(1);
+    }
+
+    int xkb_opcode = 0, xkb_event = 0, xkb_error = 0;
+    int xkb_major = XkbMajorVersion, xkb_minor = XkbMinorVersion;
+    int has_xkb = XkbQueryExtension(dpy, &xkb_opcode, &xkb_event, &xkb_error, &xkb_major, &xkb_minor);
+    if (has_xkb) {
+        XkbSelectEvents(dpy, XkbUseCoreKbd, XkbAllEventsMask, XkbAllEventsMask);
     }
 
     /* Initial check on launch */
@@ -111,8 +160,23 @@ int main(void) {
 
     while (1) {
         XNextEvent(dpy, &ev);
+        int trigger = 0;
+
         if (ev.type == MappingNotify) {
             XRefreshKeyboardMapping(&ev.xmapping);
+            trigger = 1;
+        } else if (has_xkb && ev.type == xkb_event) {
+            XkbEvent *xkb_ev = (XkbEvent *)&ev;
+            if (xkb_ev->any.xkb_type == XkbNewKeyboardNotify ||
+                xkb_ev->any.xkb_type == XkbMapNotify) {
+                if (xkb_ev->any.xkb_type == XkbMapNotify) {
+                    XkbRefreshKeyboardMapping(&xkb_ev->map);
+                }
+                trigger = 1;
+            }
+        }
+
+        if (trigger) {
             double now = get_time_sec();
             /* Debounce 200ms */
             if (now - last_check > 0.2) {
@@ -125,6 +189,6 @@ int main(void) {
     }
 
     XCloseDisplay(dpy);
-    cleanup_pid();
+    release_lock();
     return 0;
 }
