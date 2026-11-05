@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Qt Music
+GenericName=Music Player & Synced Lyrics
+Comment=Music playback and synced lyrics
+Exec=QtMusicLauncher
+Icon=multimedia-audio-player
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;
+Keywords=lyrics;lyric;music;player;word;rain;qt-music;
+StartupNotify=true
+StartupWMClass=qt-music
