@@ -9,8 +9,11 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
+#include <dirent.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <limits.h>
 
 #define LAUNCH_CMD   "QtMusicLauncher"
@@ -115,10 +118,29 @@ static void notify_polybar(const char *action) {
                   NULL, NULL, NULL, NULL);
 }
 
+/* Non-blocking atomic write to stdout (FIFO or pipe).
+ * Discards frame on EAGAIN/EWOULDBLOCK to keep event loop 100% non-blocking. */
+static void safe_write_output(const char *data) {
+    if (!data) return;
+    size_t len = strlen(data);
+    if (len == 0) return;
+
+    ssize_t written = write(STDOUT_FILENO, data, len);
+    if (written < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            /* FIFO or pipe buffer is full; drop frame non-blockingly without stalling the event loop */
+            return;
+        }
+        if (errno == EPIPE) {
+            /* Reader closed */
+            return;
+        }
+    }
+}
+
 /* Clear the Polybar music output */
 static void render_clear(void) {
-    printf("\n");
-    fflush(stdout);
+    safe_write_output("\n");
 }
 
 /* Output the padded 'No Music' view */
@@ -128,8 +150,9 @@ static void render_no_music(void) {
     int pad = TOTAL_WIDTH - txt_len;
     if (pad < 0) pad = 0;
 
-    printf("%%{O45}%%{A1:%s:}%%{F#4c566a}%s%%{F-}%%{A}%*s\n", LAUNCH_CMD, txt, pad, "");
-    fflush(stdout);
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%%{O45}%%{A1:%s:}%%{F#4c566a}%s%%{F-}%%{A}%*s\n", LAUNCH_CMD, txt, pad, "");
+    safe_write_output(buf);
 }
 
 /* Render active playback view with progress bar and animations */
@@ -224,7 +247,9 @@ static void render_active_music(void) {
     }
 
     /* Print fully formatted Polybar interactive line */
-    printf("%%{O45}"
+    char buf[2048];
+    snprintf(buf, sizeof(buf),
+           "%%{O45}"
            "%%{A4:playerctl -p %s position 5+:}"
            "%%{A5:playerctl -p %s position 5-:}"
            "%%{A3:%s:}"
@@ -244,7 +269,7 @@ static void render_active_music(void) {
            LAUNCH_CMD, time_str, bar_str,
            PLAYER_PARAM,
            CLOSE_CMD);
-    fflush(stdout);
+    safe_write_output(buf);
 }
 
 /* 1-second tick when playing */
@@ -534,6 +559,136 @@ static void on_player_vanished(GDBusConnection *conn,
     }
 }
 
+static pid_t read_pid_from_lockfile(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    pid_t pid = 0;
+    if (fscanf(f, "%d", &pid) != 1) {
+        pid = 0;
+    }
+    fclose(f);
+    return pid;
+}
+
+static pid_t find_other_polybar_music_pid(void) {
+    DIR *d = opendir("/proc");
+    if (!d) return 0;
+    struct dirent *de;
+    pid_t my_pid = getpid();
+    pid_t found_pid = 0;
+
+    while ((de = readdir(d)) != NULL) {
+        if (de->d_name[0] < '0' || de->d_name[0] > '9') continue;
+        char *endptr;
+        long p = strtol(de->d_name, &endptr, 10);
+        if (*endptr != '\0' || p <= 0 || (pid_t)p == my_pid) continue;
+
+        char comm_path[64];
+        snprintf(comm_path, sizeof(comm_path), "/proc/%ld/comm", p);
+        FILE *cf = fopen(comm_path, "r");
+        if (!cf) continue;
+        char comm[64] = {0};
+        if (fgets(comm, sizeof(comm), cf)) {
+            g_strstrip(comm);
+            if (strcmp(comm, "PolybarMusic") == 0) {
+                found_pid = (pid_t)p;
+                fclose(cf);
+                break;
+            }
+        }
+        fclose(cf);
+    }
+    closedir(d);
+    return found_pid;
+}
+
+static gboolean is_process_hung(pid_t pid) {
+    if (pid <= 0) return FALSE;
+    if (kill(pid, 0) != 0) {
+        return TRUE; /* Process does not exist or dead */
+    }
+    char wchan_path[64];
+    snprintf(wchan_path, sizeof(wchan_path), "/proc/%d/wchan", pid);
+    FILE *wf = fopen(wchan_path, "r");
+    if (wf) {
+        char wchan[64] = {0};
+        if (fgets(wchan, sizeof(wchan), wf)) {
+            g_strstrip(wchan);
+            if (strstr(wchan, "pipe_write") || strstr(wchan, "anon_pipe") || strstr(wchan, "fifo")) {
+                fclose(wf);
+                return TRUE;
+            }
+        }
+        fclose(wf);
+    }
+    return FALSE;
+}
+
+static int acquire_singleton_lock(void) {
+    int fd = open(lock_path, O_CREAT | O_RDWR, 0600);
+    if (fd < 0) {
+        return -1;
+    }
+
+    if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
+        /* Lock acquired immediately */
+        if (ftruncate(fd, 0) == 0) {
+            lseek(fd, 0, SEEK_SET);
+            char pid_str[32];
+            int len = snprintf(pid_str, sizeof(pid_str), "%d\n", getpid());
+            if (len > 0) {
+                ssize_t w = write(fd, pid_str, len);
+                (void)w;
+            }
+            fsync(fd);
+        }
+        return fd;
+    }
+
+    /* Lock failed; check who holds it */
+    pid_t holder_pid = read_pid_from_lockfile(lock_path);
+    if (holder_pid <= 0 || holder_pid == getpid()) {
+        holder_pid = find_other_polybar_music_pid();
+    }
+
+    gboolean hung = FALSE;
+    if (holder_pid <= 0) {
+        hung = TRUE;
+    } else if (is_process_hung(holder_pid)) {
+        hung = TRUE;
+    }
+
+    if (hung) {
+        if (holder_pid > 0 && holder_pid != getpid()) {
+            kill(holder_pid, SIGKILL);
+        }
+        usleep(20000); /* 20ms */
+        close(fd);
+        unlink(lock_path);
+
+        fd = open(lock_path, O_CREAT | O_RDWR, 0600);
+        if (fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0) {
+            if (ftruncate(fd, 0) == 0) {
+                lseek(fd, 0, SEEK_SET);
+                char pid_str[32];
+                int len = snprintf(pid_str, sizeof(pid_str), "%d\n", getpid());
+                if (len > 0) {
+                    ssize_t w = write(fd, pid_str, len);
+                    (void)w;
+                }
+                fsync(fd);
+            }
+            return fd;
+        }
+    }
+
+    /* Another instance is healthy and running; close and return -1 */
+    if (fd >= 0) {
+        close(fd);
+    }
+    return -1;
+}
+
 int main(int argc, char **argv) {
     gboolean use_fifo = FALSE;
     for (int i = 1; i < argc; i++) {
@@ -542,16 +697,16 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Ignore SIGPIPE so broken FIFO/pipe readers do not crash the daemon */
+    signal(SIGPIPE, SIG_IGN);
+
     init_runtime_paths();
 
-    /* Singleton lock check: ensure only one PolybarMusic process runs */
-    lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
-    if (lock_fd >= 0) {
-        if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
-            /* Another instance is already actively streaming; exit cleanly */
-            close(lock_fd);
-            return 0;
-        }
+    /* Singleton lock check with stale/hung process recovery */
+    lock_fd = acquire_singleton_lock();
+    if (lock_fd < 0) {
+        /* Another instance is already actively streaming; exit cleanly */
+        return 0;
     }
 
     /* Handle FIFO streaming if requested */
@@ -559,23 +714,31 @@ int main(int argc, char **argv) {
         ensure_fifo_and_symlink();
         int fifo_fd = open(fifo_path, O_RDWR | O_NONBLOCK);
         if (fifo_fd >= 0) {
-            int flags = fcntl(fifo_fd, F_GETFL);
+            int flags = fcntl(fifo_fd, F_GETFL, 0);
             if (flags != -1) {
-                fcntl(fifo_fd, F_SETFL, flags & ~O_NONBLOCK);
+                fcntl(fifo_fd, F_SETFL, flags | O_NONBLOCK);
             }
             dup2(fifo_fd, STDOUT_FILENO);
             close(fifo_fd);
         }
     }
 
-    /* Set line buffering on stdout for streaming */
-    setvbuf(stdout, NULL, _IOLBF, 0);
+    /* Ensure stdout descriptor is non-blocking so write() never blocks in anon_pipe_write */
+    int sflags = fcntl(STDOUT_FILENO, F_GETFL, 0);
+    if (sflags != -1) {
+        fcntl(STDOUT_FILENO, F_SETFL, sflags | O_NONBLOCK);
+    }
 
     GError *err = NULL;
     dbus_conn = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
     if (!dbus_conn) {
         if (err) g_error_free(err);
-        if (lock_fd >= 0) { flock(lock_fd, LOCK_UN); close(lock_fd); }
+        if (lock_fd >= 0) {
+            flock(lock_fd, LOCK_UN);
+            close(lock_fd);
+            unlink(lock_path);
+            lock_fd = -1;
+        }
         return 1;
     }
 
@@ -661,6 +824,7 @@ int main(int argc, char **argv) {
     if (lock_fd >= 0) {
         flock(lock_fd, LOCK_UN);
         close(lock_fd);
+        unlink(lock_path);
         lock_fd = -1;
     }
 
