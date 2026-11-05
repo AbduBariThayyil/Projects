@@ -64,7 +64,7 @@ static gboolean on_auth_timeout(gpointer user_data) {
 
 static void on_dialog_submit(const gchar *password, gpointer user_data) {
     AuthRequest *req = (AuthRequest *)user_data;
-    if (req->completed) return;
+    if (req->completed || req->in_progress) return;
 
     sys_polkit_dialog_set_sensitive(req->dialog, FALSE);
     req->in_progress = TRUE;
@@ -78,6 +78,15 @@ static void on_dialog_submit(const gchar *password, gpointer user_data) {
 
     if (req->session != NULL) {
         polkit_agent_session_response(req->session, password);
+    } else {
+        g_warning("sys-polkit: Submit attempted but session is NULL.");
+        sys_polkit_dialog_set_error(req->dialog, "Authentication session not available.");
+        sys_polkit_dialog_set_sensitive(req->dialog, TRUE);
+        req->in_progress = FALSE;
+        if (req->timeout_id != 0) {
+            g_source_remove(req->timeout_id);
+            req->timeout_id = 0;
+        }
     }
 }
 
@@ -237,10 +246,12 @@ static void start_session(AuthRequest *req) {
     disconnect_session(req);
 
     if (req->selected_identity == NULL) {
-        if (req->identities != NULL) {
+        if (req->identities != NULL && req->identities->data != NULL) {
             req->selected_identity = POLKIT_IDENTITY(req->identities->data);
         } else {
-            return;
+            PolkitIdentity *current_user = polkit_unix_user_new(getuid());
+            req->identities = g_list_append(NULL, current_user);
+            req->selected_identity = current_user;
         }
     }
 
@@ -334,6 +345,10 @@ static void sys_polkit_listener_initiate_authentication(PolkitAgentListener  *li
     if (identities != NULL) {
         req->identities = g_list_copy_deep(identities, copy_gobject, NULL);
         req->selected_identity = POLKIT_IDENTITY(req->identities->data);
+    } else {
+        PolkitIdentity *current_user = polkit_unix_user_new(getuid());
+        req->identities = g_list_append(NULL, current_user);
+        req->selected_identity = current_user;
     }
 
     if (cancellable != NULL) {

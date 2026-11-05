@@ -434,6 +434,7 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
     GtkStyleContext *aut_ctx = gtk_widget_get_style_context(dlg->btn_auth);
     gtk_style_context_add_class(aut_ctx, "btn-auth");
     g_signal_connect(dlg->btn_auth, "clicked", G_CALLBACK(on_btn_auth_clicked), dlg);
+    g_signal_connect(dlg->btn_auth, "key-press-event", G_CALLBACK(on_window_key_press), dlg);
     gtk_box_pack_start(GTK_BOX(btn_box), dlg->btn_auth, FALSE, FALSE, 0);
 
     gtk_widget_show_all(main_box);

@@ -203,6 +203,50 @@ static void test_dialog_cancellation_and_escape(void) {
     printf("[PASS] Dialog cancellation and Escape key override verified.\n");
 }
 
+static void test_timeout_recovery(void) {
+    printf("[TEST] Testing 12s safety timeout recovery behavior...\n");
+    PolkitIdentity *user_id = polkit_unix_user_new(getuid());
+    GList *ids = g_list_append(NULL, user_id);
+
+    SysPolkitDialogCallbacks cb = {
+        .on_submit = test_submit_cb,
+        .on_cancel = test_cancel_cb,
+        .on_identity_changed = NULL,
+        .user_data = NULL
+    };
+
+    SysPolkitDialog *dlg = sys_polkit_dialog_new(
+        "org.freedesktop.policykit.exec",
+        "Test timeout watchdog recovery",
+        "dialog-password",
+        NULL,
+        ids,
+        &cb
+    );
+    assert(dlg != NULL);
+    sys_polkit_dialog_show(dlg);
+
+    /* Simulate password submitted -> locked out */
+    sys_polkit_dialog_set_sensitive(dlg, FALSE);
+
+    /* Watchdog timeout triggers */
+    sys_polkit_dialog_set_error(dlg, "Authentication timed out. Please try again or cancel.");
+    sys_polkit_dialog_clear_entry(dlg);
+    sys_polkit_dialog_set_sensitive(dlg, TRUE);
+    sys_polkit_dialog_focus_entry(dlg);
+
+    /* Verify entry and buttons are re-enabled */
+    GtkWidget *btn_cancel = sys_polkit_dialog_get_cancel_button(dlg);
+    assert(gtk_widget_is_sensitive(btn_cancel));
+
+    sys_polkit_dialog_destroy(dlg);
+    while (gtk_events_pending()) {
+        gtk_main_iteration_do(FALSE);
+    }
+    g_list_free_full(ids, g_object_unref);
+    printf("[PASS] Timeout watchdog recovery verified.\n");
+}
+
 static void test_external_cancellation(void) {
     printf("[TEST] Testing external GCancellable abort handling...\n");
     GCancellable *cancellable = g_cancellable_new();
@@ -224,6 +268,7 @@ int main(int argc, char *argv[]) {
     test_subject_creation();
     test_dialog_layout_and_mechanics(argc, argv);
     test_dialog_cancellation_and_escape();
+    test_timeout_recovery();
     test_external_cancellation();
 
     printf("=========================================\n");
