@@ -7,12 +7,12 @@ All upgraded components follow the **`sys-`** naming convention (e.g. `sys-notif
 
 ## 🎯 Candidate Projects
 
-### 1. 🪟 Login Screen & Display Manager Upgrade (LightDM $\rightarrow$ Modern Dual-Auth)
-* **Goal:** Replace LightDM/Slick-Greeter with a modern greeter supporting **true simultaneous fingerprint + password authentication** (no waiting, no serial blocking).
-* **Candidates:**
-  * **SDDM (Simple Desktop Display Manager):** Supports modern Qt6/QML themes (Catppuccin), instant loading, and smooth multi-worker authentication.
-  * **Ly (TUI Display Manager):** Extremely lightweight C-based terminal greeter (~1 MB RAM).
-  * **Custom Greeter / GDM Stack:** Native concurrent biometric + password listener.
+### 1. 🪟 Login Screen & Display Manager Upgrade (LightDM $\rightarrow$ Modern Dual-Auth) — ✅ COMPLETED
+* **Status:** **Active & Configured** (`sddm` with `catppuccin-mocha-mauve` theme and simultaneous dual-auth).
+* **Implementation:**
+  * **Catppuccin Mocha Theme:** Installed and configured in `/etc/sddm.conf.d/theme.conf` pointing to `/usr/share/sddm/themes/catppuccin-mocha-mauve/` with fluid animations and responsive layout matching the desktop palette.
+  * **Simultaneous Biometric + Password PAM:** `/etc/pam.d/sddm` configured with `auth sufficient pam_fprintd.so` and `auth include system-login`, allowing true non-blocking simultaneous fingerprint swipe or password unlock.
+  * **1-Click DM Switchers:** Created `/home/vibecoder/.local/bin/enable-sddm` and `/home/vibecoder/.local/bin/enable-lightdm` helper scripts utilizing `sys-polkit` for clean display manager toggling.
 
 ### 2. 📊 Custom Ultra-Light Status Bar (`sys-bar` / Polybar)
 * **Status:** **Polybar Restored (Active)**; `sys-bar` retained in `/home/vibecoder/Projects/sys-bar`.
