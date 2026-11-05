@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <gio/gio.h>
 #include <glib.h>
+#include <glib-unix.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,13 +11,14 @@
 #include <errno.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 #define LAUNCH_CMD   "QtMusicLauncher"
+#define TOGGLE_CMD   "qt-music --toggle 2>/dev/null || lyricview --toggle 2>/dev/null"
 #define CLOSE_CMD    "qt-music --quit 2>/dev/null || lyricview --quit 2>/dev/null || playerctl -p qt-music,lyricview,lollypop quit 2>/dev/null"
 #define PLAYER_PARAM "qt-music,lyricview,lollypop"
 
-#define FIFO_PATH    "/tmp/polybar_music.fifo"
-#define LOCK_PATH    "/tmp/polybar_music.lock"
+#define LEGACY_FIFO_PATH "/tmp/polybar_music.fifo"
 
 #define TITLE_MAX_CHARS  16
 #define BAR_CHARS        8
@@ -41,7 +43,12 @@ static guint prop_sub_id = 0;
 static guint seeked_sub_id = 0;
 static guint tick_timer_id = 0;
 static guint startup_timer_id = 0;
+static guint sigint_source = 0;
+static guint sigterm_source = 0;
 static int lock_fd = -1;
+
+static char fifo_path[PATH_MAX] = {0};
+static char lock_path[PATH_MAX] = {0};
 
 static char active_bus_name[128] = {0};
 static gboolean is_player_active = FALSE;
@@ -52,12 +59,60 @@ static gint64 current_pos_us = 0;
 static gint64 current_len_us = 0;
 static time_t last_sync_time = 0;
 static int face_idx = 0;
+static guint scroll_offset = 0;
+
+static void init_runtime_paths(void) {
+    const char *xdg = getenv("XDG_RUNTIME_DIR");
+    if (xdg && *xdg && access(xdg, W_OK | X_OK) == 0) {
+        snprintf(fifo_path, sizeof(fifo_path), "%s/polybar_music.fifo", xdg);
+        snprintf(lock_path, sizeof(lock_path), "%s/polybar_music.lock", xdg);
+    } else {
+        uid_t uid = getuid();
+        snprintf(fifo_path, sizeof(fifo_path), "/tmp/polybar_music-%u.fifo", (unsigned int)uid);
+        snprintf(lock_path, sizeof(lock_path), "/tmp/polybar_music-%u.lock", (unsigned int)uid);
+    }
+}
+
+static void ensure_fifo_and_symlink(void) {
+    /* Ensure the target FIFO exists */
+    struct stat st;
+    if (lstat(fifo_path, &st) != 0 || !S_ISFIFO(st.st_mode)) {
+        unlink(fifo_path);
+        if (mkfifo(fifo_path, 0600) != 0 && errno != EEXIST) {
+            /* mkfifo failed, keep going */
+        }
+    }
+
+    /* Maintain backward-compatible symlink at /tmp/polybar_music.fifo */
+    if (strcmp(fifo_path, LEGACY_FIFO_PATH) != 0) {
+        gboolean need_symlink = TRUE;
+        if (lstat(LEGACY_FIFO_PATH, &st) == 0) {
+            if (S_ISLNK(st.st_mode)) {
+                char target[PATH_MAX] = {0};
+                ssize_t len = readlink(LEGACY_FIFO_PATH, target, sizeof(target) - 1);
+                if (len > 0) {
+                    target[len] = '\0';
+                    if (strcmp(target, fifo_path) == 0) {
+                        need_symlink = FALSE;
+                    }
+                }
+            }
+            if (need_symlink) {
+                unlink(LEGACY_FIFO_PATH);
+            }
+        }
+        if (need_symlink) {
+            symlink(fifo_path, LEGACY_FIFO_PATH);
+        }
+    }
+}
 
 static void notify_polybar(const char *action) {
     if (!action || !*action) return;
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "polybar-msg action \"%s\" >/dev/null 2>&1", action);
-    g_spawn_command_line_async(cmd, NULL);
+    char *argv[] = { "polybar-msg", "action", (char *)action, NULL };
+    g_spawn_async(NULL, argv, NULL,
+                  G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
+                  NULL, NULL, NULL, NULL);
 }
 
 /* Clear the Polybar music output */
@@ -117,7 +172,7 @@ static void render_active_music(void) {
         strcat(bar_str, (i < filled) ? "━" : "─");
     }
 
-    /* Clean and truncate title in UTF-8 */
+    /* Clean and validate title in UTF-8 */
     char clean_title[256];
     g_strlcpy(clean_title, current_title, sizeof(clean_title));
     char *p = clean_title;
@@ -125,16 +180,43 @@ static void render_active_music(void) {
         *p = ' ';
     }
     g_strstrip(clean_title);
+    if (!g_utf8_validate(clean_title, -1, NULL)) {
+        char *v = g_utf8_make_valid(clean_title, -1);
+        g_strlcpy(clean_title, v, sizeof(clean_title));
+        g_free(v);
+    }
+    if (clean_title[0] == '\0') {
+        g_strlcpy(clean_title, "Unknown", sizeof(clean_title));
+    }
 
-    int title_chars = g_utf8_strlen(clean_title, -1);
+    /* Dynamic UTF-8 Marquee Scrolling */
+    glong title_chars = g_utf8_strlen(clean_title, -1);
     char title_fixed[512] = {0};
+
     if (title_chars > TITLE_MAX_CHARS) {
-        /* Truncate and add ellipsis */
-        gchar *trunc = g_utf8_substring(clean_title, 0, TITLE_MAX_CHARS - 1);
-        snprintf(title_fixed, sizeof(title_fixed), "%s…", trunc);
-        g_free(trunc);
+        if (!is_playing) {
+            scroll_offset = 0;
+        }
+        gchar *unit = g_strdup_printf("%s   •   ", clean_title);
+        glong unit_len = g_utf8_strlen(unit, -1);
+        gchar *repeated = g_strdup_printf("%s%s", unit, unit);
+
+        if (unit_len > 0) {
+            glong offset = scroll_offset % unit_len;
+            const gchar *p_start = g_utf8_offset_to_pointer(repeated, offset);
+            const gchar *p_end = g_utf8_offset_to_pointer(p_start, TITLE_MAX_CHARS);
+            if (p_start && p_end && p_end >= p_start) {
+                gchar *slice = g_strndup(p_start, p_end - p_start);
+                g_strlcpy(title_fixed, slice, sizeof(title_fixed));
+                g_free(slice);
+            } else {
+                g_strlcpy(title_fixed, clean_title, sizeof(title_fixed));
+            }
+        }
+        g_free(repeated);
+        g_free(unit);
     } else {
-        snprintf(title_fixed, sizeof(title_fixed), "%s", clean_title);
+        g_strlcpy(title_fixed, clean_title, sizeof(title_fixed));
         int pad = TITLE_MAX_CHARS - title_chars;
         while (pad-- > 0 && strlen(title_fixed) < sizeof(title_fixed) - 2) {
             strcat(title_fixed, " ");
@@ -145,7 +227,7 @@ static void render_active_music(void) {
     printf("%%{O45}"
            "%%{A4:playerctl -p %s position 5+:}"
            "%%{A5:playerctl -p %s position 5-:}"
-           "%%{A3:qt-music --toggle:}"
+           "%%{A3:%s:}"
            "%%{A1:%s:}%%{F#bd93f9}%s%%{F-}  %%{F#f8f8f2}%s%%{F-}%%{A}  "
            "%%{F#50fa7b}%%{A1:playerctl -p %s play-pause:}%s%%{A}%%{F-} "
            "%%{F#8be9fd}%%{A1:playerctl -p %s previous:}󰒮%%{A}%%{F-} "
@@ -155,6 +237,7 @@ static void render_active_music(void) {
            "%%{A}%%{A}%%{A}\n",
            PLAYER_PARAM,
            PLAYER_PARAM,
+           TOGGLE_CMD,
            LAUNCH_CMD, face, title_fixed,
            PLAYER_PARAM, play_icon,
            PLAYER_PARAM,
@@ -169,6 +252,7 @@ static gboolean on_play_tick(gpointer user_data) {
     (void)user_data;
     if (is_player_active && strcmp(current_status, "Playing") == 0) {
         face_idx++;
+        scroll_offset++;
         render_active_music();
         return G_SOURCE_CONTINUE;
     }
@@ -202,7 +286,10 @@ static void parse_metadata(GVariant *dict) {
         if (strcmp(key, "xesam:title") == 0) {
             const char *t = g_variant_get_string(val, NULL);
             if (t && *t) {
-                g_strlcpy(current_title, t, sizeof(current_title));
+                if (strcmp(current_title, t) != 0) {
+                    g_strlcpy(current_title, t, sizeof(current_title));
+                    scroll_offset = 0;
+                }
             }
         } else if (strcmp(key, "xesam:artist") == 0) {
             if (g_variant_is_of_type(val, G_VARIANT_TYPE("as"))) {
@@ -256,7 +343,13 @@ static void fetch_player_state(void) {
 
     while (g_variant_iter_next(&iter, "{&sv}", &prop_name, &prop_val)) {
         if (strcmp(prop_name, "PlaybackStatus") == 0) {
-            g_strlcpy(current_status, g_variant_get_string(prop_val, NULL), sizeof(current_status));
+            const char *st = g_variant_get_string(prop_val, NULL);
+            if (strcmp(current_status, st) != 0) {
+                g_strlcpy(current_status, st, sizeof(current_status));
+                if (strcmp(current_status, "Playing") != 0) {
+                    scroll_offset = 0;
+                }
+            }
         } else if (strcmp(prop_name, "Position") == 0) {
             current_pos_us = g_variant_get_int64(prop_val);
             last_sync_time = time(NULL);
@@ -300,7 +393,13 @@ static void on_properties_changed(GDBusConnection *connection,
 
     while (g_variant_iter_next(&iter, "{&sv}", &key, &val)) {
         if (strcmp(key, "PlaybackStatus") == 0) {
-            g_strlcpy(current_status, g_variant_get_string(val, NULL), sizeof(current_status));
+            const char *st = g_variant_get_string(val, NULL);
+            if (strcmp(current_status, st) != 0) {
+                g_strlcpy(current_status, st, sizeof(current_status));
+                if (strcmp(current_status, "Playing") != 0) {
+                    scroll_offset = 0;
+                }
+            }
         } else if (strcmp(key, "Metadata") == 0) {
             parse_metadata(val);
         } else if (strcmp(key, "Position") == 0) {
@@ -332,6 +431,15 @@ static void on_seeked_signal(GDBusConnection *connection,
     last_sync_time = time(NULL);
 
     render_active_music();
+}
+
+/* Graceful termination signal handler */
+static gboolean on_signal_quit(gpointer user_data) {
+    (void)user_data;
+    if (main_loop && g_main_loop_is_running(main_loop)) {
+        g_main_loop_quit(main_loop);
+    }
+    return G_SOURCE_CONTINUE;
 }
 
 /* Startup grace period timeout: if no player appeared, exit cleanly */
@@ -404,6 +512,7 @@ static void on_player_vanished(GDBusConnection *conn,
         is_player_active = FALSE;
         active_bus_name[0] = '\0';
         g_strlcpy(current_status, "Stopped", sizeof(current_status));
+        scroll_offset = 0;
         sync_tick_timer();
 
         if (prop_sub_id > 0) {
@@ -433,8 +542,10 @@ int main(int argc, char **argv) {
         }
     }
 
+    init_runtime_paths();
+
     /* Singleton lock check: ensure only one PolybarMusic process runs */
-    lock_fd = open(LOCK_PATH, O_CREAT | O_RDWR, 0600);
+    lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
     if (lock_fd >= 0) {
         if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
             /* Another instance is already actively streaming; exit cleanly */
@@ -443,14 +554,10 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Handle FIFO streaming if requested or when FIFO exists */
+    /* Handle FIFO streaming if requested */
     if (use_fifo) {
-        struct stat st;
-        if (stat(FIFO_PATH, &st) != 0 || !S_ISFIFO(st.st_mode)) {
-            unlink(FIFO_PATH);
-            mkfifo(FIFO_PATH, 0666);
-        }
-        int fifo_fd = open(FIFO_PATH, O_WRONLY | O_NONBLOCK);
+        ensure_fifo_and_symlink();
+        int fifo_fd = open(fifo_path, O_RDWR | O_NONBLOCK);
         if (fifo_fd >= 0) {
             int flags = fcntl(fifo_fd, F_GETFL);
             if (flags != -1) {
@@ -471,6 +578,10 @@ int main(int argc, char **argv) {
         if (lock_fd >= 0) { flock(lock_fd, LOCK_UN); close(lock_fd); }
         return 1;
     }
+
+    /* Register graceful termination signal handlers */
+    sigint_source = g_unix_signal_add(SIGINT, on_signal_quit, NULL);
+    sigterm_source = g_unix_signal_add(SIGTERM, on_signal_quit, NULL);
 
     /* Set 1.5s startup timeout: if player is not currently running, exit */
     startup_timer_id = g_timeout_add(1500, on_startup_timeout, NULL);
@@ -510,6 +621,14 @@ int main(int argc, char **argv) {
     g_main_loop_run(main_loop);
 
     /* Cleanup */
+    if (sigint_source > 0) {
+        g_source_remove(sigint_source);
+        sigint_source = 0;
+    }
+    if (sigterm_source > 0) {
+        g_source_remove(sigterm_source);
+        sigterm_source = 0;
+    }
     if (startup_timer_id > 0) {
         g_source_remove(startup_timer_id);
         startup_timer_id = 0;
@@ -536,6 +655,8 @@ int main(int argc, char **argv) {
         g_main_loop_unref(main_loop);
         main_loop = NULL;
     }
+
+    render_clear();
 
     if (lock_fd >= 0) {
         flock(lock_fd, LOCK_UN);
