@@ -17,7 +17,7 @@
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 
-#define VERSION "1.0.0"
+#define VERSION "1.1.0"
 
 typedef struct {
     char *id;            /* Desktop ID, e.g. "firefox.desktop" */
@@ -28,8 +28,12 @@ typedef struct {
     char *lower_comment;
     char *lower_exec;
     char *lower_id;
+    char *norm_name;     /* Cached alphanumeric lowercase for multi-token fuzzy search */
+    char *norm_id;
+    char *norm_exec;
     GIcon *icon;
     gboolean is_hidden;
+    gboolean is_terminal;
     GAppInfo *info;
     GtkWidget *row_widget;
     GtkWidget *badge_label;
@@ -48,24 +52,74 @@ typedef struct {
 } LauncherState;
 
 static LauncherState app_state = {0};
+static gboolean is_quitting = FALSE;
 
 /* -------------------------------------------------------------------------
  * Forward Declarations
  * ------------------------------------------------------------------------- */
+static void safe_quit(void);
 static void populate_apps(void);
+static void free_apps(void);
+static gint compute_app_score(AppItem *app, const char *query);
+static gboolean app_matches_query(AppItem *app, const char *query);
+static GPtrArray *get_sorted_visible_apps(void);
 static void select_first_visible_row(GtkListBox *box);
 static void navigate_list(GtkListBox *box, int direction);
 static gboolean set_desktop_file_visibility(const char *desktop_id, gboolean hide);
 static void launch_app(AppItem *app);
+static void launch_terminal_app(const char *cmdline, const char *fallback_exec);
 static void toggle_app(AppItem *app, GtkListBox *box);
 static void hide_app_from_launcher(AppItem *app, GtkListBox *box);
 
 /* -------------------------------------------------------------------------
- * Fast Fuzzy & Contains Search Matching
+ * Clean Lifecycle & Quitting Helper
  * ------------------------------------------------------------------------- */
+static void safe_quit(void) {
+    if (is_quitting) return;
+    is_quitting = TRUE;
+    gtk_main_quit();
+}
+
+/* -------------------------------------------------------------------------
+ * String Normalization & Fast Fuzzy / Word Matching
+ * ------------------------------------------------------------------------- */
+static char *normalize_str(const char *str) {
+    if (!str) return NULL;
+    GString *res = g_string_new("");
+    for (const char *p = str; *p; p++) {
+        if (g_ascii_isalnum(*p)) {
+            g_string_append_c(res, g_ascii_tolower(*p));
+        }
+    }
+    return g_string_free(res, FALSE);
+}
+
 static gboolean contains_token(const char *haystack, const char *token) {
     if (!haystack || !token || !*token) return FALSE;
     return (strstr(haystack, token) != NULL);
+}
+
+static gboolean word_has_prefix(const char *haystack, const char *prefix) {
+    if (!haystack || !prefix || !*prefix) return FALSE;
+    const char *p = haystack;
+    gsize plen = strlen(prefix);
+    gboolean at_word_start = TRUE;
+
+    while (*p) {
+        if (!g_ascii_isalnum(*p)) {
+            at_word_start = TRUE;
+            p++;
+            continue;
+        }
+        if (at_word_start) {
+            if (g_ascii_strncasecmp(p, prefix, plen) == 0) {
+                return TRUE;
+            }
+            at_word_start = FALSE;
+        }
+        p++;
+    }
+    return FALSE;
 }
 
 static gboolean fuzzy_match_token(const char *haystack, const char *token) {
@@ -88,6 +142,19 @@ static gboolean app_matches_query(AppItem *app, const char *query) {
         return TRUE;
     }
 
+    /* Fast path: normalized query substring match across name, exec, or id */
+    char *norm_q = normalize_str(query);
+    if (norm_q && *norm_q) {
+        if ((app->norm_name && strstr(app->norm_name, norm_q)) ||
+            (app->norm_exec && strstr(app->norm_exec, norm_q)) ||
+            (app->norm_id && strstr(app->norm_id, norm_q)) ||
+            (app->norm_name && fuzzy_match_token(app->norm_name, norm_q))) {
+            g_free(norm_q);
+            return TRUE;
+        }
+    }
+    g_free(norm_q);
+
     char **tokens = g_strsplit_set(query, " \t\r\n", -1);
     gboolean all_matched = TRUE;
     for (int i = 0; tokens[i]; i++) {
@@ -98,6 +165,7 @@ static gboolean app_matches_query(AppItem *app, const char *query) {
             contains_token(app->lower_comment, tok) ||
             contains_token(app->lower_exec, tok) ||
             contains_token(app->lower_id, tok) ||
+            word_has_prefix(app->lower_name, tok) ||
             fuzzy_match_token(app->lower_name, tok)) {
             tok_match = TRUE;
         }
@@ -121,24 +189,123 @@ static gint compute_app_score(AppItem *app, const char *query) {
     }
 
     gint score = 0;
+    char *norm_q = normalize_str(q);
+
+    /* 1. Whole query exact / prefix / substring matches */
     if (g_strcmp0(app->lower_name, q) == 0) {
-        score += 20000;
+        score += 30000;
+    } else if (app->norm_name && norm_q && *norm_q && g_strcmp0(app->norm_name, norm_q) == 0) {
+        /* Normalized exact match across word boundaries (e.g. "fire fox" -> "firefox", "code oss" -> "Code - OSS") */
+        score += 25000;
     } else if (g_str_has_prefix(app->lower_name, q)) {
-        score += 10000;
+        score += 20000;
+    } else if (app->norm_name && norm_q && *norm_q && g_str_has_prefix(app->norm_name, norm_q)) {
+        score += 18000;
     } else if (strstr(app->lower_name, q)) {
+        score += 15000;
+    } else if (app->norm_name && norm_q && *norm_q && strstr(app->norm_name, norm_q)) {
+        score += 12000;
+    } else if (app->norm_exec && norm_q && *norm_q && g_strcmp0(app->norm_exec, norm_q) == 0) {
+        score += 11000;
+    } else if (app->norm_id && norm_q && *norm_q && strstr(app->norm_id, norm_q)) {
+        score += 10000;
+    } else if (app->norm_name && norm_q && *norm_q && fuzzy_match_token(app->norm_name, norm_q)) {
         score += 5000;
-    } else if (g_str_has_prefix(app->lower_id, q)) {
-        score += 3000;
-    } else if (strstr(app->lower_exec, q)) {
-        score += 2000;
-    } else if (strstr(app->lower_comment, q)) {
-        score += 1000;
-    } else if (fuzzy_match_token(app->lower_name, q)) {
-        score += 500;
     }
 
+    /* 2. Multi-token decomposition scoring */
+    char **tokens = g_strsplit_set(q, " \t\r\n", -1);
+    int token_count = 0;
+    int tokens_in_name = 0;
+    int tokens_matched = 0;
+
+    for (int i = 0; tokens[i]; i++) {
+        if (tokens[i][0] == '\0') continue;
+        token_count++;
+        const char *tok = tokens[i];
+
+        if (g_strcmp0(app->lower_name, tok) == 0) {
+            score += 6000;
+            tokens_in_name++;
+            tokens_matched++;
+        } else if (word_has_prefix(app->lower_name, tok)) {
+            score += 4500;
+            tokens_in_name++;
+            tokens_matched++;
+        } else if (g_str_has_prefix(app->lower_name, tok)) {
+            score += 3500;
+            tokens_in_name++;
+            tokens_matched++;
+        } else if (strstr(app->lower_name, tok)) {
+            score += 2500;
+            tokens_in_name++;
+            tokens_matched++;
+        } else if (fuzzy_match_token(app->lower_name, tok)) {
+            score += 1500;
+            tokens_in_name++;
+            tokens_matched++;
+        } else if (word_has_prefix(app->lower_id, tok) || g_str_has_prefix(app->lower_id, tok)) {
+            score += 1500;
+            tokens_matched++;
+        } else if (strstr(app->lower_id, tok)) {
+            score += 1000;
+            tokens_matched++;
+        } else if (word_has_prefix(app->lower_exec, tok) || g_str_has_prefix(app->lower_exec, tok)) {
+            score += 1200;
+            tokens_matched++;
+        } else if (strstr(app->lower_exec, tok)) {
+            score += 800;
+            tokens_matched++;
+        } else if (strstr(app->lower_comment, tok)) {
+            score += 600;
+            tokens_matched++;
+        } else if (fuzzy_match_token(app->lower_comment, tok)) {
+            score += 300;
+            tokens_matched++;
+        }
+    }
+
+    if (token_count > 1) {
+        if (tokens_in_name == token_count) {
+            score += 12000; /* All tokens matched in app name! */
+        } else if (tokens_matched == token_count) {
+            score += 6000;  /* All tokens matched across fields! */
+        }
+    }
+
+    g_strfreev(tokens);
+    g_free(norm_q);
     g_free(q);
+
     return score;
+}
+
+static gint compare_app_items(gconstpointer a, gconstpointer b) {
+    AppItem *app_a = *(AppItem **)a;
+    AppItem *app_b = *(AppItem **)b;
+    if (app_state.current_query && *app_state.current_query) {
+        gint score_a = compute_app_score(app_a, app_state.current_query);
+        gint score_b = compute_app_score(app_b, app_state.current_query);
+        if (score_a != score_b) {
+            return score_b - score_a; /* Higher score first */
+        }
+    }
+    return g_utf8_collate(app_a->name ? app_a->name : app_a->id,
+                          app_b->name ? app_b->name : app_b->id);
+}
+
+static GPtrArray *get_sorted_visible_apps(void) {
+    GPtrArray *arr = g_ptr_array_new();
+    if (!app_state.apps) return arr;
+
+    for (guint i = 0; i < app_state.apps->len; i++) {
+        AppItem *app = g_ptr_array_index(app_state.apps, i);
+        if (app_matches_query(app, app_state.current_query)) {
+            g_ptr_array_add(arr, app);
+        }
+    }
+    g_ptr_array_sort(arr, compare_app_items);
+    return arr;
 }
 
 static gint sort_func(GtkListBoxRow *row1, GtkListBoxRow *row2, gpointer user_data) {
@@ -169,69 +336,67 @@ static gboolean filter_func(GtkListBoxRow *row, gpointer user_data) {
  * List Navigation & Selection
  * ------------------------------------------------------------------------- */
 static void select_first_visible_row(GtkListBox *box) {
-    GList *children = gtk_container_get_children(GTK_CONTAINER(box));
-    for (GList *l = children; l != NULL; l = l->next) {
-        GtkWidget *row = GTK_WIDGET(l->data);
-        if (gtk_widget_get_child_visible(row)) {
-            gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(row));
-            if (app_state.scrolled_window) {
-                GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app_state.scrolled_window));
-                gtk_adjustment_set_value(vadj, 0.0);
-            }
-            break;
+    GPtrArray *vis = get_sorted_visible_apps();
+    if (vis->len > 0) {
+        AppItem *first = g_ptr_array_index(vis, 0);
+        gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(first->row_widget));
+        if (app_state.scrolled_window) {
+            GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app_state.scrolled_window));
+            gtk_adjustment_set_value(vadj, 0.0);
         }
+    } else {
+        gtk_list_box_unselect_all(box);
     }
-    g_list_free(children);
+    g_ptr_array_free(vis, TRUE);
 }
 
 static void navigate_list(GtkListBox *box, int direction) {
-    GList *children = gtk_container_get_children(GTK_CONTAINER(box));
-    if (!children) return;
+    GPtrArray *vis = get_sorted_visible_apps();
+    if (vis->len == 0) {
+        g_ptr_array_free(vis, TRUE);
+        return;
+    }
 
-    GPtrArray *visible_rows = g_ptr_array_new();
     GtkListBoxRow *cur_selected = gtk_list_box_get_selected_row(box);
+    AppItem *cur_app = cur_selected ? g_object_get_data(G_OBJECT(cur_selected), "app_item") : NULL;
     gint cur_idx = -1;
 
-    for (GList *l = children; l != NULL; l = l->next) {
-        GtkWidget *row = GTK_WIDGET(l->data);
-        if (gtk_widget_get_child_visible(row)) {
-            if (row == GTK_WIDGET(cur_selected)) {
-                cur_idx = (gint)visible_rows->len;
-            }
-            g_ptr_array_add(visible_rows, row);
-        }
-    }
-
-    if (visible_rows->len > 0) {
-        gint target_idx;
-        if (cur_idx < 0) {
-            target_idx = (direction > 0) ? 0 : (gint)visible_rows->len - 1;
-        } else {
-            target_idx = cur_idx + direction;
-            if (target_idx < 0) target_idx = (gint)visible_rows->len - 1;
-            else if (target_idx >= (gint)visible_rows->len) target_idx = 0;
-        }
-
-        GtkWidget *target_row = GTK_WIDGET(g_ptr_array_index(visible_rows, target_idx));
-        gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(target_row));
-
-        if (app_state.scrolled_window) {
-            GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app_state.scrolled_window));
-            GtkAllocation alloc;
-            gtk_widget_get_allocation(target_row, &alloc);
-            gdouble cur_val = gtk_adjustment_get_value(vadj);
-            gdouble page_sz = gtk_adjustment_get_page_size(vadj);
-
-            if (alloc.y < cur_val) {
-                gtk_adjustment_set_value(vadj, alloc.y);
-            } else if (alloc.y + alloc.height > cur_val + page_sz) {
-                gtk_adjustment_set_value(vadj, alloc.y + alloc.height - page_sz);
+    if (cur_app) {
+        for (guint i = 0; i < vis->len; i++) {
+            if (g_ptr_array_index(vis, i) == cur_app) {
+                cur_idx = (gint)i;
+                break;
             }
         }
     }
 
-    g_ptr_array_free(visible_rows, TRUE);
-    g_list_free(children);
+    gint target_idx;
+    if (cur_idx < 0) {
+        target_idx = (direction > 0) ? 0 : (gint)vis->len - 1;
+    } else {
+        target_idx = cur_idx + direction;
+        if (target_idx < 0) target_idx = (gint)vis->len - 1;
+        else if (target_idx >= (gint)vis->len) target_idx = 0;
+    }
+
+    AppItem *target_app = g_ptr_array_index(vis, target_idx);
+    gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(target_app->row_widget));
+
+    if (app_state.scrolled_window) {
+        GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app_state.scrolled_window));
+        GtkAllocation alloc;
+        gtk_widget_get_allocation(target_app->row_widget, &alloc);
+        gdouble cur_val = gtk_adjustment_get_value(vadj);
+        gdouble page_sz = gtk_adjustment_get_page_size(vadj);
+
+        if (alloc.y < cur_val) {
+            gtk_adjustment_set_value(vadj, alloc.y);
+        } else if (alloc.y + alloc.height > cur_val + page_sz) {
+            gtk_adjustment_set_value(vadj, alloc.y + alloc.height - page_sz);
+        }
+    }
+
+    g_ptr_array_free(vis, TRUE);
 }
 
 /* -------------------------------------------------------------------------
@@ -364,22 +529,84 @@ static gboolean set_desktop_file_visibility(const char *desktop_id, gboolean hid
 /* -------------------------------------------------------------------------
  * Application Launch & Action Callbacks
  * ------------------------------------------------------------------------- */
+static void launch_terminal_app(const char *cmdline, const char *fallback_exec) {
+    gint argc = 0;
+    gchar **argv = NULL;
+    const char *src = (cmdline && *cmdline) ? cmdline : fallback_exec;
+    if (!src || !*src) return;
+
+    if (!g_shell_parse_argv(src, &argc, &argv, NULL)) {
+        char *cmd = g_strdup_printf("alacritty -e %s &", src);
+        g_spawn_command_line_async(cmd, NULL);
+        g_free(cmd);
+        return;
+    }
+
+    GPtrArray *clean_args = g_ptr_array_new();
+    for (int i = 0; i < argc; i++) {
+        if (argv[i][0] == '%' && strlen(argv[i]) <= 2) continue;
+        g_ptr_array_add(clean_args, argv[i]);
+    }
+    if (clean_args->len > 0 && strcmp((char *)g_ptr_array_index(clean_args, clean_args->len - 1), "--") == 0) {
+        g_ptr_array_remove_index(clean_args, clean_args->len - 1);
+    }
+
+    if (clean_args->len == 0) {
+        if (fallback_exec && *fallback_exec) {
+            g_ptr_array_add(clean_args, (gpointer)fallback_exec);
+        } else {
+            g_ptr_array_free(clean_args, TRUE);
+            g_strfreev(argv);
+            return;
+        }
+    }
+
+    const char *first = (const char *)g_ptr_array_index(clean_args, 0);
+    gboolean already_terminal = (strstr(first, "alacritty") != NULL ||
+                                 strstr(first, "kitty") != NULL ||
+                                 strstr(first, "xterm") != NULL);
+
+    GPtrArray *final_argv = g_ptr_array_new();
+    if (!already_terminal) {
+        g_ptr_array_add(final_argv, (gpointer)"alacritty");
+        g_ptr_array_add(final_argv, (gpointer)"-e");
+    }
+    for (guint i = 0; i < clean_args->len; i++) {
+        g_ptr_array_add(final_argv, g_ptr_array_index(clean_args, i));
+    }
+    g_ptr_array_add(final_argv, NULL);
+
+    g_spawn_async(NULL, (gchar **)final_argv->pdata, NULL,
+                  G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
+
+    g_ptr_array_free(final_argv, TRUE);
+    g_ptr_array_free(clean_args, TRUE);
+    g_strfreev(argv);
+}
+
 static void launch_app(AppItem *app) {
     if (!app) return;
+
+    if (app->is_terminal) {
+        const char *cmdline = app->info ? g_app_info_get_commandline(app->info) : NULL;
+        launch_terminal_app(cmdline, app->executable);
+        safe_quit();
+        return;
+    }
+
     GError *err = NULL;
     GdkDisplay *disp = gdk_display_get_default();
     GdkAppLaunchContext *ctx = gdk_display_get_app_launch_context(disp);
 
     if (app->info && !g_app_info_launch(app->info, NULL, G_APP_LAUNCH_CONTEXT(ctx), &err)) {
         if (app->executable) {
-            char *cmd = g_strdup_printf("%s &", app->executable);
-            g_spawn_command_line_async(cmd, NULL);
-            g_free(cmd);
+            const char *cmdline = g_app_info_get_commandline(app->info);
+            launch_terminal_app(cmdline, app->executable);
         }
         if (err) g_error_free(err);
     }
     if (ctx) g_object_unref(ctx);
-    gtk_main_quit();
+    safe_quit();
 }
 
 static void toggle_app(AppItem *app, GtkListBox *box) {
@@ -443,6 +670,21 @@ static void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_
     }
 }
 
+static gboolean on_row_enter_notify(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data) {
+    (void)event;
+    GtkListBox *box = GTK_LIST_BOX(user_data);
+    gtk_list_box_select_row(box, GTK_LIST_BOX_ROW(widget));
+    return GDK_EVENT_PROPAGATE;
+}
+
+static gboolean on_window_focus_out(GtkWidget *widget, GdkEventFocus *event, gpointer user_data) {
+    (void)widget;
+    (void)event;
+    (void)user_data;
+    safe_quit();
+    return GDK_EVENT_STOP;
+}
+
 static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpointer user_data) {
     (void)widget;
     (void)user_data;
@@ -450,7 +692,7 @@ static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpoin
     guint state = event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK);
 
     if (keyval == GDK_KEY_Escape) {
-        gtk_main_quit();
+        safe_quit();
         return GDK_EVENT_STOP;
     }
 
@@ -469,18 +711,17 @@ static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpoin
     /* Enter / KP_Enter */
     if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
         GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
-        if (!row) {
+        AppItem *app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
+        if (!app || !app_matches_query(app, app_state.current_query)) {
             select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
             row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+            app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
         }
-        if (row) {
-            AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
-            if (app) {
-                if (app_state.is_toggle_mode) {
-                    toggle_app(app, GTK_LIST_BOX(app_state.listbox));
-                } else {
-                    launch_app(app);
-                }
+        if (app) {
+            if (app_state.is_toggle_mode) {
+                toggle_app(app, GTK_LIST_BOX(app_state.listbox));
+            } else {
+                launch_app(app);
             }
         }
         return GDK_EVENT_STOP;
@@ -492,15 +733,14 @@ static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpoin
         gboolean entry_focused = gtk_widget_has_focus(GTK_WIDGET(app_state.entry));
         if (!entry_focused || !text || text[0] == '\0' || (state & GDK_CONTROL_MASK)) {
             GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
-            if (!row) {
+            AppItem *app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
+            if (!app || !app_matches_query(app, app_state.current_query)) {
                 select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
                 row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+                app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
             }
-            if (row) {
-                AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
-                if (app) {
-                    toggle_app(app, GTK_LIST_BOX(app_state.listbox));
-                }
+            if (app) {
+                toggle_app(app, GTK_LIST_BOX(app_state.listbox));
             }
             return GDK_EVENT_STOP;
         }
@@ -509,15 +749,14 @@ static gboolean on_window_key_press(GtkWidget *widget, GdkEventKey *event, gpoin
     /* Tab in launcher mode */
     if (!app_state.is_toggle_mode && keyval == GDK_KEY_Tab) {
         GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
-        if (!row) {
+        AppItem *app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
+        if (!app || !app_matches_query(app, app_state.current_query)) {
             select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
             row = gtk_list_box_get_selected_row(GTK_LIST_BOX(app_state.listbox));
+            app = row ? g_object_get_data(G_OBJECT(row), "app_item") : NULL;
         }
-        if (row) {
-            AppItem *app = g_object_get_data(G_OBJECT(row), "app_item");
-            if (app) {
-                hide_app_from_launcher(app, GTK_LIST_BOX(app_state.listbox));
-            }
+        if (app) {
+            hide_app_from_launcher(app, GTK_LIST_BOX(app_state.listbox));
         }
         return GDK_EVENT_STOP;
     }
@@ -638,6 +877,46 @@ static void load_css(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * Memory Cleanup
+ * ------------------------------------------------------------------------- */
+static void free_app_item(AppItem *app) {
+    if (!app) return;
+    g_free(app->id);
+    g_free(app->name);
+    g_free(app->comment);
+    g_free(app->executable);
+    g_free(app->lower_name);
+    g_free(app->lower_comment);
+    g_free(app->lower_exec);
+    g_free(app->lower_id);
+    g_free(app->norm_name);
+    g_free(app->norm_id);
+    g_free(app->norm_exec);
+    if (app->icon) {
+        g_object_unref(app->icon);
+        app->icon = NULL;
+    }
+    if (app->info) {
+        g_object_unref(app->info);
+        app->info = NULL;
+    }
+    g_free(app);
+}
+
+static void free_apps(void) {
+    if (app_state.apps) {
+        for (guint i = 0; i < app_state.apps->len; i++) {
+            AppItem *app = g_ptr_array_index(app_state.apps, i);
+            free_app_item(app);
+        }
+        g_ptr_array_free(app_state.apps, TRUE);
+        app_state.apps = NULL;
+    }
+    g_free(app_state.current_query);
+    app_state.current_query = NULL;
+}
+
+/* -------------------------------------------------------------------------
  * Application Model Population
  * ------------------------------------------------------------------------- */
 static void populate_apps(void) {
@@ -660,11 +939,22 @@ static void populate_apps(void) {
         gboolean should_show = g_app_info_should_show(info);
         gboolean is_nodisplay = FALSE;
         gboolean is_hidden_field = FALSE;
+        gboolean is_terminal = FALSE;
 
         if (G_IS_DESKTOP_APP_INFO(info)) {
             GDesktopAppInfo *dinfo = G_DESKTOP_APP_INFO(info);
             is_nodisplay = g_desktop_app_info_get_nodisplay(dinfo);
             is_hidden_field = g_desktop_app_info_get_is_hidden(dinfo);
+            is_terminal = g_desktop_app_info_get_boolean(dinfo, "Terminal");
+            if (!is_terminal) {
+                char *term_val = g_desktop_app_info_get_string(dinfo, "Terminal");
+                if (term_val) {
+                    if (g_ascii_strcasecmp(term_val, "true") == 0 || g_ascii_strcasecmp(term_val, "1") == 0) {
+                        is_terminal = TRUE;
+                    }
+                    g_free(term_val);
+                }
+            }
         }
 
         gboolean is_hidden = (!should_show || is_nodisplay || is_hidden_field);
@@ -683,7 +973,11 @@ static void populate_apps(void) {
         app->lower_comment = g_ascii_strdown(app->comment, -1);
         app->lower_exec = g_ascii_strdown(app->executable, -1);
         app->lower_id = g_ascii_strdown(app->id, -1);
+        app->norm_name = normalize_str(app->lower_name);
+        app->norm_exec = normalize_str(app->lower_exec);
+        app->norm_id = normalize_str(app->lower_id);
         app->is_hidden = is_hidden;
+        app->is_terminal = is_terminal;
         app->info = g_object_ref(info);
         if (icon) app->icon = g_object_ref(icon);
 
@@ -732,6 +1026,10 @@ static void populate_apps(void) {
         gtk_container_add(GTK_CONTAINER(row), hbox);
         app->row_widget = row;
         g_object_set_data(G_OBJECT(row), "app_item", app);
+
+        /* Hover selection */
+        gtk_widget_add_events(row, GDK_ENTER_NOTIFY_MASK);
+        g_signal_connect(row, "enter-notify-event", G_CALLBACK(on_row_enter_notify), app_state.listbox);
 
         gtk_list_box_insert(GTK_LIST_BOX(app_state.listbox), row, -1);
         g_ptr_array_add(app_state.apps, app);
@@ -783,7 +1081,7 @@ static void build_ui(void) {
 
     app_state.listbox = gtk_list_box_new();
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(app_state.listbox), GTK_SELECTION_BROWSE);
-    gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(app_state.listbox), FALSE);
+    gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(app_state.listbox), TRUE);
     gtk_container_add(GTK_CONTAINER(app_state.scrolled_window), app_state.listbox);
 
     gtk_list_box_set_filter_func(GTK_LIST_BOX(app_state.listbox), filter_func, NULL, NULL);
@@ -808,7 +1106,11 @@ static void build_ui(void) {
     g_signal_connect(app_state.entry, "search-changed", G_CALLBACK(on_search_changed), NULL);
     g_signal_connect(app_state.window, "key-press-event", G_CALLBACK(on_window_key_press), NULL);
     g_signal_connect(app_state.listbox, "row-activated", G_CALLBACK(on_row_activated), NULL);
-    g_signal_connect(app_state.window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    g_signal_connect(app_state.window, "destroy", G_CALLBACK(safe_quit), NULL);
+
+    /* Focus-Out Auto-Dismiss */
+    gtk_widget_add_events(app_state.window, GDK_FOCUS_CHANGE_MASK);
+    g_signal_connect(app_state.window, "focus-out-event", G_CALLBACK(on_window_focus_out), NULL);
 
     gtk_widget_show_all(app_state.window);
     gtk_widget_grab_focus(app_state.entry);
@@ -852,6 +1154,7 @@ int main(int argc, char **argv) {
     gtk_init(&argc, &argv);
     build_ui();
     gtk_main();
+    free_apps();
 
     return 0;
 }
