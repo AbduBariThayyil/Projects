@@ -35,10 +35,47 @@ static int exec_cmd_output(const char *cmd, char *out, size_t out_sz) {
 
 /* Spawn a detached background process cleanly */
 static void spawn_async(const char *cmd) {
-    if (fork() == 0) {
+    if (!cmd || !*cmd) return;
+
+    /* Check for shell metacharacters: |, &, ;, >, <, $, ` */
+    int has_meta = (strpbrk(cmd, "|&;><$`") != NULL);
+    gchar **argv = NULL;
+    gint argc = 0;
+
+    if (!has_meta) {
+        if (!g_shell_parse_argv(cmd, &argc, &argv, NULL) || !argv || !argv[0]) {
+            if (argv) {
+                g_strfreev(argv);
+                argv = NULL;
+            }
+            has_meta = 1;
+        }
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
         setsid();
-        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
-        _exit(0);
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > 2) close(devnull);
+        }
+
+        if (!has_meta && argv) {
+            execvp(argv[0], argv);
+            /* Fallback to shell if execvp fails */
+            execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+            _exit(127);
+        } else {
+            execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+            _exit(127);
+        }
+    }
+
+    if (argv) {
+        g_strfreev(argv);
     }
 }
 
@@ -48,9 +85,9 @@ static void spawn_async(const char *cmd) {
 static void trigger_vol_osd(int vol, int muted) {
     char cmd[128];
     if (muted) {
-        snprintf(cmd, sizeof(cmd), "sys-notif --osd volume 0 muted >/dev/null 2>&1");
+        snprintf(cmd, sizeof(cmd), "sys-notif --osd volume 0 muted");
     } else {
-        snprintf(cmd, sizeof(cmd), "sys-notif --osd volume %d >/dev/null 2>&1", vol);
+        snprintf(cmd, sizeof(cmd), "sys-notif --osd volume %d", vol);
     }
     spawn_async(cmd);
 }
@@ -62,19 +99,19 @@ static void ctl_volume(const char *action, const char *step_str) {
     char cmd[256];
     char out[64] = {0};
 
-    if (strcmp(action, "inc") == 0 || strcmp(action, "--vol-inc") == 0 || strcmp(action, "vol-inc") == 0) {
+    if (strcmp(action, "inc") == 0 || strcmp(action, "--vol-inc") == 0 || strcmp(action, "vol-inc") == 0 || strcmp(action, "up") == 0) {
         snprintf(cmd, sizeof(cmd), "pamixer --allow-boost --set-limit 150 -u -i %d --get-volume 2>/dev/null", step);
         exec_cmd_output(cmd, out, sizeof(out));
         int v = atoi(out);
         trigger_vol_osd(v, 0);
     }
-    else if (strcmp(action, "dec") == 0 || strcmp(action, "--vol-dec") == 0 || strcmp(action, "vol-dec") == 0) {
+    else if (strcmp(action, "dec") == 0 || strcmp(action, "--vol-dec") == 0 || strcmp(action, "vol-dec") == 0 || strcmp(action, "down") == 0) {
         snprintf(cmd, sizeof(cmd), "pamixer --allow-boost --set-limit 150 -u -d %d --get-volume 2>/dev/null", step);
         exec_cmd_output(cmd, out, sizeof(out));
         int v = atoi(out);
         trigger_vol_osd(v, 0);
     }
-    else if (strcmp(action, "toggle") == 0 || strcmp(action, "--vol-toggle") == 0 || strcmp(action, "vol-toggle") == 0 || strcmp(action, "mute") == 0) {
+    else if (strcmp(action, "toggle") == 0 || strcmp(action, "--vol-toggle") == 0 || strcmp(action, "vol-toggle") == 0 || strcmp(action, "mute") == 0 || strcmp(action, "mute-toggle") == 0) {
         exec_cmd_output("pamixer -t --get-volume-human 2>/dev/null", out, sizeof(out));
         if (strstr(out, "muted") != NULL) {
             trigger_vol_osd(0, 1);
@@ -94,18 +131,18 @@ static void ctl_volume(const char *action, const char *step_str) {
 }
 
 static void ctl_media(const char *action) {
-    if (strcmp(action, "previous") == 0 || strcmp(action, "--previous") == 0) {
-        spawn_async("playerctl previous 2>/dev/null");
+    if (strcmp(action, "previous") == 0 || strcmp(action, "--previous") == 0 || strcmp(action, "prev") == 0) {
+        spawn_async("playerctl previous");
     } else if (strcmp(action, "next") == 0 || strcmp(action, "--next") == 0) {
-        spawn_async("playerctl next 2>/dev/null");
-    } else if (strcmp(action, "toggle") == 0 || strcmp(action, "--toggle") == 0) {
-        spawn_async("playerctl play-pause 2>/dev/null");
+        spawn_async("playerctl next");
+    } else if (strcmp(action, "toggle") == 0 || strcmp(action, "--toggle") == 0 || strcmp(action, "play-pause") == 0) {
+        spawn_async("playerctl play-pause");
     } else if (strcmp(action, "play") == 0 || strcmp(action, "--play") == 0) {
-        spawn_async("playerctl play 2>/dev/null");
+        spawn_async("playerctl play");
     } else if (strcmp(action, "pause") == 0 || strcmp(action, "--pause") == 0) {
-        spawn_async("playerctl pause 2>/dev/null");
+        spawn_async("playerctl pause");
     } else if (strcmp(action, "stop") == 0 || strcmp(action, "--stop") == 0) {
-        spawn_async("playerctl stop 2>/dev/null");
+        spawn_async("playerctl stop");
     } else if (strcmp(action, "status") == 0 || strcmp(action, "--status") == 0) {
         char out[64] = {0};
         exec_cmd_output("playerctl status 2>/dev/null", out, sizeof(out));
@@ -124,42 +161,74 @@ static void ctl_media(const char *action) {
 /* -------------------------------------------------------------
  * 2. Backlight Control (Direct sysfs with brightnessctl fallback)
  * ------------------------------------------------------------- */
-static int get_sysfs_brightness_pct(void) {
+static int get_backlight_dir(char *buf, size_t sz) {
+    if (!buf || sz == 0) return -1;
+    buf[0] = '\0';
     DIR *d = opendir("/sys/class/backlight");
     if (!d) return -1;
     struct dirent *de;
-    char bl_dir[512] = "";
     while ((de = readdir(d))) {
         if (de->d_name[0] != '.') {
-            snprintf(bl_dir, sizeof(bl_dir), "/sys/class/backlight/%s", de->d_name);
+            snprintf(buf, sz, "/sys/class/backlight/%s", de->d_name);
             break;
         }
     }
     closedir(d);
-    if (bl_dir[0] == '\0') return -1;
+    return (buf[0] != '\0') ? 0 : -1;
+}
+
+static int get_sysfs_brightness_raw(int *cur_val, int *max_val, char *bri_path, size_t bri_sz) {
+    char bl_dir[512];
+    if (get_backlight_dir(bl_dir, sizeof(bl_dir)) != 0) return -1;
 
     char cur_path[600], max_path[600];
     snprintf(cur_path, sizeof(cur_path), "%s/actual_brightness", bl_dir);
     snprintf(max_path, sizeof(max_path), "%s/max_brightness", bl_dir);
+    if (bri_path && bri_sz > 0) {
+        snprintf(bri_path, bri_sz, "%s/brightness", bl_dir);
+    }
 
+    int max = 0;
+    FILE *f = fopen(max_path, "r");
+    if (f) {
+        if (fscanf(f, "%d", &max) != 1) max = 0;
+        fclose(f);
+    }
+    if (max <= 0) return -1;
+
+    int cur = -1;
+    f = fopen(cur_path, "r");
+    if (f) {
+        if (fscanf(f, "%d", &cur) != 1) cur = -1;
+        fclose(f);
+    }
+    /* If actual_brightness was 0 or unreadable, check brightness file */
+    if (cur <= 0) {
+        char bri_p[600];
+        snprintf(bri_p, sizeof(bri_p), "%s/brightness", bl_dir);
+        f = fopen(bri_p, "r");
+        if (f) {
+            if (fscanf(f, "%d", &cur) != 1) cur = -1;
+            fclose(f);
+        }
+    }
+    if (cur < 0) cur = 0;
+
+    if (cur_val) *cur_val = cur;
+    if (max_val) *max_val = max;
+    return 0;
+}
+
+static int get_sysfs_brightness_pct(void) {
     int cur = 0, max = 1;
-    FILE *f = fopen(cur_path, "r");
-    if (f) {
-        if (fscanf(f, "%d", &cur) != 1) cur = 0;
-        fclose(f);
-    }
-    f = fopen(max_path, "r");
-    if (f) {
-        if (fscanf(f, "%d", &max) != 1) max = 1;
-        fclose(f);
-    }
-    if (max <= 0) max = 1;
-    return (int)(((double)cur / (double)max) * 100.0);
+    if (get_sysfs_brightness_raw(&cur, &max, NULL, 0) != 0) return -1;
+    if (max <= 0) return 0;
+    return (int)(((double)cur / (double)max) * 100.0 + 0.5);
 }
 
 static void trigger_bri_osd(int pct) {
     char cmd[128];
-    snprintf(cmd, sizeof(cmd), "sys-notif --osd brightness %d >/dev/null 2>&1", pct);
+    snprintf(cmd, sizeof(cmd), "sys-notif --osd brightness %d", pct);
     spawn_async(cmd);
 }
 
@@ -167,22 +236,57 @@ static void ctl_brightness(const char *action, const char *step_str) {
     int step = step_str ? atoi(step_str) : 5;
     if (step <= 0) step = 5;
 
-    char cmd[256];
-    if (strcmp(action, "up") == 0 || strcmp(action, "--bri-up") == 0 || strcmp(action, "bri-up") == 0 || strcmp(action, "--bri-inc") == 0) {
-        snprintf(cmd, sizeof(cmd), "brightnessctl set +%d%% >/dev/null 2>&1", step);
-        system(cmd);
+    int is_up = (strcmp(action, "up") == 0 || strcmp(action, "--bri-up") == 0 ||
+                 strcmp(action, "bri-up") == 0 || strcmp(action, "--bri-inc") == 0 ||
+                 strcmp(action, "brightness-up") == 0);
+    int is_down = (strcmp(action, "down") == 0 || strcmp(action, "--bri-down") == 0 ||
+                   strcmp(action, "bri-down") == 0 || strcmp(action, "--bri-dec") == 0 ||
+                   strcmp(action, "brightness-down") == 0);
+    int is_get = (strcmp(action, "get") == 0 || strcmp(action, "--get-bri") == 0 ||
+                  strcmp(action, "--bri-get") == 0 || strcmp(action, "get-bri") == 0);
+
+    if (is_get) {
         int pct = get_sysfs_brightness_pct();
-        trigger_bri_osd(pct);
+        printf("%d%%\n", pct >= 0 ? pct : 0);
+        return;
     }
-    else if (strcmp(action, "down") == 0 || strcmp(action, "--bri-down") == 0 || strcmp(action, "bri-down") == 0 || strcmp(action, "--bri-dec") == 0) {
-        snprintf(cmd, sizeof(cmd), "brightnessctl set %d%%- >/dev/null 2>&1", step);
-        system(cmd);
-        int pct = get_sysfs_brightness_pct();
-        trigger_bri_osd(pct);
-    }
-    else if (strcmp(action, "get") == 0 || strcmp(action, "--get-bri") == 0 || strcmp(action, "--bri-get") == 0) {
-        int pct = get_sysfs_brightness_pct();
-        printf("%d%%\n", pct);
+
+    if (is_up || is_down) {
+        int cur = 0, max = 0;
+        char bri_path[600] = {0};
+        int direct_written = 0;
+
+        if (get_sysfs_brightness_raw(&cur, &max, bri_path, sizeof(bri_path)) == 0 && max > 0) {
+            int delta = (step * max + 50) / 100;
+            if (delta < 1) delta = 1;
+            int new_val = is_up ? (cur + delta) : (cur - delta);
+            if (new_val < 1) new_val = 1;
+            if (new_val > max) new_val = max;
+
+            int fd = open(bri_path, O_WRONLY);
+            if (fd >= 0) {
+                char val_str[32];
+                int len = snprintf(val_str, sizeof(val_str), "%d\n", new_val);
+                if (write(fd, val_str, len) == len) {
+                    direct_written = 1;
+                    int pct = (int)(((double)new_val / (double)max) * 100.0 + 0.5);
+                    trigger_bri_osd(pct);
+                }
+                close(fd);
+            }
+        }
+
+        if (!direct_written) {
+            char cmd[128];
+            if (is_up) {
+                snprintf(cmd, sizeof(cmd), "brightnessctl set +%d%% >/dev/null 2>&1", step);
+            } else {
+                snprintf(cmd, sizeof(cmd), "brightnessctl set %d%%- >/dev/null 2>&1", step);
+            }
+            system(cmd);
+            int pct = get_sysfs_brightness_pct();
+            trigger_bri_osd(pct);
+        }
     }
 }
 
@@ -208,22 +312,40 @@ static void ctl_scratchpad(int argc, char **argv) {
 }
 
 /* -------------------------------------------------------------
- * 5. Touchpad Toggle
+ * 5. Touchpad Toggle (Pure C status parser)
  * ------------------------------------------------------------- */
 static void ctl_touchpad(void) {
-    char out[64] = {0};
-    exec_cmd_output("synclient -l 2>/dev/null | grep -i TouchpadOff | awk '{print $3}'", out, sizeof(out));
-    if (strcmp(out, "1") == 0) {
+    int is_off = 0;
+    FILE *f = popen("synclient -l 2>/dev/null", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            char *p = strcasestr(line, "TouchpadOff");
+            if (p) {
+                p += strlen("TouchpadOff");
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p == '=') p++;
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p == '1' || *p == '2') {
+                    is_off = 1;
+                }
+                break;
+            }
+        }
+        pclose(f);
+    }
+
+    if (is_off) {
         system("synclient TouchpadOff=0 2>/dev/null");
-        spawn_async("sys-notif --osd touchpad 100 >/dev/null 2>&1");
+        spawn_async("sys-notif --osd touchpad 100");
     } else {
         system("synclient TouchpadOff=1 2>/dev/null");
-        spawn_async("sys-notif --osd touchpad 0 >/dev/null 2>&1");
+        spawn_async("sys-notif --osd touchpad 0");
     }
 }
 
 /* -------------------------------------------------------------
- * 6. Screenshot Utility
+ * 6. Screenshot Utility (Guarded against cancellation)
  * ------------------------------------------------------------- */
 static void ctl_screenshot(int full) {
     char home_dir[512];
@@ -244,8 +366,8 @@ static void ctl_screenshot(int full) {
         cmd = g_strdup_printf("maim -u '%s' && notify-send -a 'Screenshot' -i '%s' 'Full Screenshot Saved' '%s'",
                               fullpath, fullpath, fullpath);
     } else {
-        cmd = g_strdup_printf("maim -s -u | tee '%s' | xclip -selection clipboard -t image/png && notify-send -a 'Screenshot' -i '%s' 'Screenshot Captured' '%s'",
-                              fullpath, fullpath, fullpath);
+        cmd = g_strdup_printf("if maim -s -u '%s'; then xclip -selection clipboard -t image/png -i '%s' && notify-send -a 'Screenshot' -i '%s' 'Screenshot Captured' '%s'; else rm -f '%s'; fi",
+                              fullpath, fullpath, fullpath, fullpath, fullpath);
     }
     if (cmd) {
         spawn_async(cmd);
@@ -333,31 +455,31 @@ static void ctl_activate(const char *target_app, const char *target_sum) {
 
     if (strstr(lower, "instagram")) {
         if (!focus_window_by_pattern("Instagram") && !focus_window_by_pattern("firefox")) {
-            spawn_async("firefox 'https://www.instagram.com/direct/inbox/' &");
+            spawn_async("firefox 'https://www.instagram.com/direct/inbox/'");
         }
     } else if (strstr(lower, "whatsapp")) {
         if (!focus_window_by_pattern("WhatsApp") && !focus_window_by_pattern("firefox")) {
-            spawn_async("firefox 'https://web.whatsapp.com/' &");
+            spawn_async("firefox 'https://web.whatsapp.com/'");
         }
     } else if (strstr(lower, "discord") || strstr(lower, "vesktop")) {
         if (!focus_window_by_pattern("discord") && !focus_window_by_pattern("vesktop")) {
-            spawn_async("discord &");
+            spawn_async("discord");
         }
     } else if (strstr(lower, "telegram")) {
         if (!focus_window_by_pattern("telegram")) {
-            spawn_async("telegram-desktop &");
+            spawn_async("telegram-desktop");
         }
     } else if (strstr(lower, "spotify")) {
         if (!focus_window_by_pattern("spotify")) {
-            spawn_async("spotify &");
+            spawn_async("spotify");
         }
     } else if (strstr(lower, "youtube")) {
         if (!focus_window_by_pattern("youtube") && !focus_window_by_pattern("firefox")) {
-            spawn_async("firefox 'https://www.youtube.com/' &");
+            spawn_async("firefox 'https://www.youtube.com/'");
         }
     } else if (strstr(lower, "terminal") || strstr(lower, "alacritty") || strstr(lower, "kitty")) {
         if (!focus_window_by_pattern("Alacritty") && !focus_window_by_pattern("kitty")) {
-            spawn_async("/home/vibecoder/.config/bspwm/bin/Term --terminal &");
+            spawn_async("/home/vibecoder/.config/bspwm/bin/Term --terminal");
         }
     } else {
         if (!focus_window_by_pattern(target_app)) {
@@ -383,19 +505,27 @@ int main(int argc, char **argv) {
         ctl_volume("inc", argc >= 3 ? argv[2] : NULL);
     } else if (strcmp(arg, "--vol-dec") == 0 || strcmp(arg, "vol-dec") == 0 || strcmp(arg, "volume-down") == 0) {
         ctl_volume("dec", argc >= 3 ? argv[2] : NULL);
-    } else if (strcmp(arg, "--vol-toggle") == 0 || strcmp(arg, "vol-toggle") == 0 || strcmp(arg, "volume-mute") == 0) {
+    } else if (strcmp(arg, "--vol-toggle") == 0 || strcmp(arg, "vol-toggle") == 0 || strcmp(arg, "volume-mute") == 0 || strcmp(arg, "volume-mute-toggle") == 0) {
         ctl_volume("toggle", NULL);
     } else if (strcmp(arg, "--get-vol") == 0 || strcmp(arg, "get-vol") == 0 || strcmp(arg, "--vol-get") == 0) {
         ctl_volume("get", NULL);
     } else if (strcmp(arg, "--vol-status") == 0) {
         ctl_volume("status", NULL);
+    } else if (strcmp(arg, "volume") == 0 || strcmp(arg, "--volume") == 0) {
+        const char *subaction = argc >= 3 ? argv[2] : "status";
+        const char *step_val = argc >= 4 ? argv[3] : NULL;
+        if (strcmp(subaction, "up") == 0) ctl_volume("inc", step_val);
+        else if (strcmp(subaction, "down") == 0) ctl_volume("dec", step_val);
+        else if (strcmp(subaction, "mute-toggle") == 0 || strcmp(subaction, "mute") == 0 || strcmp(subaction, "toggle") == 0) ctl_volume("toggle", NULL);
+        else if (strcmp(subaction, "get") == 0) ctl_volume("get", NULL);
+        else ctl_volume("status", NULL);
     }
     /* Media */
     else if (strcmp(arg, "--toggle") == 0 || strcmp(arg, "toggle") == 0) {
         ctl_media("toggle");
     } else if (strcmp(arg, "--next") == 0 || strcmp(arg, "next") == 0) {
         ctl_media("next");
-    } else if (strcmp(arg, "--previous") == 0 || strcmp(arg, "previous") == 0) {
+    } else if (strcmp(arg, "--previous") == 0 || strcmp(arg, "previous") == 0 || strcmp(arg, "prev") == 0) {
         ctl_media("previous");
     } else if (strcmp(arg, "--play") == 0 || strcmp(arg, "play") == 0) {
         ctl_media("play");
@@ -409,6 +539,9 @@ int main(int argc, char **argv) {
         ctl_media("title");
     } else if (strcmp(arg, "--artist") == 0) {
         ctl_media("artist");
+    } else if (strcmp(arg, "media") == 0 || strcmp(arg, "--media") == 0) {
+        const char *subaction = argc >= 3 ? argv[2] : "toggle";
+        ctl_media(subaction);
     }
     /* Brightness */
     else if (strcmp(arg, "--bri-up") == 0 || strcmp(arg, "bri-up") == 0 || strcmp(arg, "brightness-up") == 0 || strcmp(arg, "--bri-inc") == 0) {
@@ -417,6 +550,10 @@ int main(int argc, char **argv) {
         ctl_brightness("down", argc >= 3 ? argv[2] : NULL);
     } else if (strcmp(arg, "--get-bri") == 0 || strcmp(arg, "get-bri") == 0 || strcmp(arg, "--bri-get") == 0) {
         ctl_brightness("get", NULL);
+    } else if (strcmp(arg, "brightness") == 0 || strcmp(arg, "--brightness") == 0) {
+        const char *subaction = argc >= 3 ? argv[2] : "get";
+        const char *step_val = argc >= 4 ? argv[3] : NULL;
+        ctl_brightness(subaction, step_val);
     }
     /* Hider */
     else if (strcmp(arg, "--hider-bar") == 0 || strcmp(arg, "bar") == 0 || strcmp(arg, "--bar") == 0 || strcmp(arg, "--bar-toggle") == 0) {
@@ -436,16 +573,20 @@ int main(int argc, char **argv) {
     else if (strcmp(arg, "--scratchpad") == 0 || strcmp(arg, "scratchpad") == 0) {
         ctl_scratchpad(argc, argv);
     } else if (strcmp(arg, "--scratch") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/Bspwm-ScratchPad &");
+        spawn_async("/home/vibecoder/.config/bspwm/bin/Bspwm-ScratchPad");
     } else if (strcmp(arg, "--bluetooth") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/Scratchpad center blueman-manager &");
+        spawn_async("/home/vibecoder/.config/bspwm/bin/Scratchpad center blueman-manager");
     }
     /* Touchpad & Screenshots */
-    else if (strcmp(arg, "--touchpad") == 0) {
+    else if (strcmp(arg, "--touchpad") == 0 || strcmp(arg, "touchpad") == 0) {
         ctl_touchpad();
-    } else if (strcmp(arg, "--screenshot") == 0) {
-        ctl_screenshot(0);
-    } else if (strcmp(arg, "--screenshots") == 0) {
+    } else if (strcmp(arg, "--screenshot") == 0 || strcmp(arg, "screenshot") == 0) {
+        if (argc >= 3 && (strcmp(argv[2], "full") == 0 || strcmp(argv[2], "--full") == 0)) {
+            ctl_screenshot(1);
+        } else {
+            ctl_screenshot(0);
+        }
+    } else if (strcmp(arg, "--screenshots") == 0 || strcmp(arg, "screenshots") == 0) {
         ctl_screenshot(1);
     }
     /* Clipboard */
@@ -462,13 +603,13 @@ int main(int argc, char **argv) {
     }
     /* Terminal Apps */
     else if (strcmp(arg, "--terminal") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/Term --terminal &");
+        spawn_async("/home/vibecoder/.config/bspwm/bin/Term --terminal");
     } else if (strcmp(arg, "--floating") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/Term --floating &");
+        spawn_async("/home/vibecoder/.config/bspwm/bin/Term --floating");
     } else if (strcmp(arg, "--nvim") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/Term --nvim &");
+        spawn_async("/home/vibecoder/.config/bspwm/bin/Term --nvim");
     } else if (strcmp(arg, "--yazi") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/Term --yazi &");
+        spawn_async("/home/vibecoder/.config/bspwm/bin/Term --yazi");
     }
     /* Standard Apps */
     else if (strcmp(arg, "--browser") == 0) {
@@ -478,15 +619,15 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "--filemanager") == 0) {
         spawn_async("${FILEMANAGER:-thunar} &");
     } else if (strcmp(arg, "--soundcontrol") == 0) {
-        spawn_async("pavucontrol &");
+        spawn_async("pavucontrol");
     } else if (strcmp(arg, "--riceeditor") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/RiceEditor &");
+        spawn_async("/home/vibecoder/.config/bspwm/bin/RiceEditor");
     } else if (strcmp(arg, "--whats") == 0) {
-        spawn_async("firefox -new-tab 'https://web.whatsapp.com/' &");
+        spawn_async("firefox -new-tab 'https://web.whatsapp.com/'");
     } else if (strcmp(arg, "--pass") == 0) {
-        spawn_async("RofiPass &");
+        spawn_async("RofiPass");
     } else if (strcmp(arg, "--netmanager") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/NetManagerDM &");
+        spawn_async("/home/vibecoder/.config/bspwm/bin/NetManagerDM");
     }
     /* Rofi Menus & OpenApps */
     else if (strcmp(arg, "--menu") == 0) {
