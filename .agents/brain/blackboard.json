@@ -1,12 +1,5 @@
 {
-  "active_agents": {
-    "subagent-systemd": {
-      "role": "systemd and gamemode engineer",
-      "project": "sys-control",
-      "registered_at": 1793808563.8693619,
-      "status": "active"
-    }
-  },
+  "active_agents": {},
   "file_locks": {},
   "session_tasks": []
 }

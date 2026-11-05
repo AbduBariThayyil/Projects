@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# OmniView: Universal Media Streaming & Casting Suite (Anime, Movies, TV Shows)
+set -eo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BASE_DIR="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
+
+export PATH="$BASE_DIR/bin:$PATH"
+export OMNIVIEW_MENU="omniview-menu"
+export ANI_CLI_MENU="omniview-menu"
+
+RUNNER_PY="$BASE_DIR/lib/cli_runner.py"
+
+cleanup_session() {
+    trap - EXIT INT TERM
+    pkill -f hls_streamer.py 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/omniview_session_device" 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/omniview_first_ep_done" 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/omniview_action" 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/omniview_next_season_pending" 2>/dev/null || true
+    rm -f "${XDG_RUNTIME_DIR:-/tmp}/omniview_current_session.json" 2>/dev/null || true
+}
+trap cleanup_session EXIT
+trap 'cleanup_session; exit 130' INT
+trap 'cleanup_session; exit 143' TERM
+
+CONTINUE_MODE=0
+CONTINUE_QUERY=""
+TARGET_MODE="local"
+DEVICE_NAME="This Device"
+FORCE_TYPE=""
+QUALITY="1080p"
+SEASON=""
+EPISODE=""
+MODE="sub"
+POSITIONAL_ARGS=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            cat << 'EOF'
+──────────────────────────────────────────────────────────────────────────
+  OmniView  •  Universal Media Streaming & Cast Engine
+──────────────────────────────────────────────────────────────────────────
+
+Usage:
+  omniview [options] [query]
+  omniview --movie [title]
+  omniview --show [title]
+  omniview --continue [query]
+  omniview --local [query]
+  omniview --gui
+
+Options:
+  -c, --continue [query]    Resume last watched media right where you left off
+  -l, --local               Play locally on computer screen via MPV (default)
+  -t, --device <name|ip>    Cast to TV or target device (e.g. -t "Living Room TV")
+  -m, --movie [title]       Search and stream mainstream movies directly
+  --show, --tv [title]      Search and stream TV series directly
+  -a, --anime [title]       Search and stream anime directly
+  -s, --season <number>     Select specific season (1, 2, 3...)
+  -e, --episode <number>    Specify episode number (e.g. 1, 5)
+  -q, --quality <quality>   Video quality (1080p, 720p, 360p, best)
+  --dub                     Play English dubbed version (Anime)
+  -ns, --no-sub             Disable subtitles
+  -g, --gui                 Launch native GTK 4 / Libadwaita OmniView application
+
+Examples:
+  omniview "Solo Leveling"           # Unified search across Anime, Movies & Shows
+  omniview --movie "Interstellar"    # Watch Interstellar movie
+  omniview --show "Breaking Bad"     # Watch Breaking Bad TV series
+  omniview -c                        # Resume last played media
+  omniview -t "TV" "Frieren"         # Cast Frieren directly to TV
+EOF
+            exit 0
+            ;;
+        -g|--gui)
+            if [ -x ~/.local/bin/omniview-gui ]; then
+                exec ~/.local/bin/omniview-gui
+            elif [ -x "$BASE_DIR/gui/omniview-gui" ]; then
+                exec "$BASE_DIR/gui/omniview-gui"
+            else
+                echo "Launching CLI mode..."
+            fi
+            ;;
+        -c|--continue)
+            CONTINUE_MODE=1
+            if [ $# -ge 2 ] && [[ "$2" != -* ]]; then
+                CONTINUE_QUERY="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        -l|--local)
+            TARGET_MODE="local"
+            DEVICE_NAME="This Device"
+            export OMNIVIEW_LOCAL=1
+            shift
+            ;;
+        -t|--device)
+            if [ $# -ge 2 ]; then
+                DEVICE_NAME="$2"
+                if [ "$2" = "local" ] || [ "$2" = "0" ] || [ "$2" = "this" ]; then
+                    TARGET_MODE="local"
+                else
+                    TARGET_MODE="cast"
+                fi
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        -m|--movie)
+            FORCE_TYPE="movie"
+            if [ $# -ge 2 ] && [[ "$2" != -* ]]; then
+                POSITIONAL_ARGS+=("$2")
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        --show|--tv)
+            FORCE_TYPE="tv"
+            if [ $# -ge 2 ] && [[ "$2" != -* ]]; then
+                POSITIONAL_ARGS+=("$2")
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        -a|--anime)
+            FORCE_TYPE="anime"
+            if [ $# -ge 2 ] && [[ "$2" != -* ]]; then
+                POSITIONAL_ARGS+=("$2")
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        -s|--season)
+            if [ $# -ge 2 ]; then
+                SEASON="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        -e|--episode)
+            if [ $# -ge 2 ]; then
+                EPISODE="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        -q|--quality)
+            if [ $# -ge 2 ]; then
+                QUALITY="${2%p}p"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        --dub)
+            MODE="dub"
+            shift
+            ;;
+        -ns|--no-sub|--no-subs)
+            export OMNIVIEW_NO_SUB=1
+            shift
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+QUERY="${POSITIONAL_ARGS[*]}"
+
+# Handle --continue
+if [ "$CONTINUE_MODE" = "1" ]; then
+    python3 -c "
+import sys
+sys.path.insert(0, '$BASE_DIR/lib')
+import cli_runner
+cli_runner.handle_continue('$CONTINUE_QUERY' if '$CONTINUE_QUERY' else None)
+"
+    exit 0
+fi
+
+# Execute unified python CLI runner
+exec python3 -c "
+import sys
+sys.path.insert(0, '$BASE_DIR/lib')
+import cli_runner
+
+query = '''$QUERY'''.strip()
+target_mode = '''$TARGET_MODE'''
+device_name = '''$DEVICE_NAME'''
+force_type = '''$FORCE_TYPE''' or None
+quality = '''$QUALITY'''
+mode = '''$MODE'''
+season_opt = int('''$SEASON''') if '''$SEASON'''.isdigit() else None
+episode_opt = int('''$EPISODE''') if '''$EPISODE'''.isdigit() else None
+
+cli_runner.run_interactive_selection(
+    query,
+    target_mode=target_mode,
+    device_name=device_name,
+    force_type=force_type,
+    quality=quality,
+    mode=mode,
+    season_opt=season_opt,
+    episode_opt=episode_opt,
+)
+"

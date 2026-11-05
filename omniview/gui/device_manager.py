@@ -12,8 +12,12 @@ import gi
 gi.require_version("GLib", "2.0")
 from gi.repository import GLib
 
-DEVICES_CACHE_FILE = os.path.expanduser("~/.local/state/ani-cast/discovered_devices.json")
-LAST_DEVICE_FILE = os.path.expanduser("~/.local/state/ani-cast/last_device.txt")
+STATE_DIR = os.path.expanduser("~/.local/state/omniview")
+LEGACY_STATE_DIR = os.path.expanduser("~/.local/state/ani-cast")
+DEVICES_CACHE_FILE = os.path.join(STATE_DIR, "discovered_devices.json")
+LEGACY_DEVICES_CACHE_FILE = os.path.join(LEGACY_STATE_DIR, "discovered_devices.json")
+LAST_DEVICE_FILE = os.path.join(STATE_DIR, "last_device.txt")
+LEGACY_LAST_DEVICE_FILE = os.path.join(LEGACY_STATE_DIR, "last_device.txt")
 
 LOCAL_DEVICE = {
     "name": "This Device (Local Screen / MPV)",
@@ -36,9 +40,10 @@ class DeviceManager:
         self._zconf = None
 
     def _load_cached_devices(self):
-        if os.path.exists(DEVICES_CACHE_FILE):
+        target = DEVICES_CACHE_FILE if os.path.exists(DEVICES_CACHE_FILE) else LEGACY_DEVICES_CACHE_FILE
+        if os.path.exists(target):
             try:
-                with open(DEVICES_CACHE_FILE, "r", encoding="utf-8") as f:
+                with open(target, "r", encoding="utf-8") as f:
                     cached = json.load(f)
                     for d in cached:
                         dev = {
@@ -73,9 +78,10 @@ class DeviceManager:
 
     def _load_last_selected(self):
         saved = None
-        if os.path.exists(LAST_DEVICE_FILE):
+        target = LAST_DEVICE_FILE if os.path.exists(LAST_DEVICE_FILE) else LEGACY_LAST_DEVICE_FILE
+        if os.path.exists(target):
             try:
-                with open(LAST_DEVICE_FILE, "r", encoding="utf-8") as f:
+                with open(target, "r", encoding="utf-8") as f:
                     content = f.read().strip()
                     if content:
                         saved = content

@@ -22,6 +22,46 @@ if LIB_DIR not in sys.path:
 import anicast_engine
 
 BASE_ANIME_DIR = os.path.expanduser("~/Videos/Anime")
+BASE_MOVIES_DIR = os.path.expanduser("~/Videos/Movies")
+
+
+def scan_local_library():
+    """Scans local media directories for downloaded files."""
+    results = []
+    dirs_to_scan = [BASE_ANIME_DIR, BASE_MOVIES_DIR, os.path.expanduser("~/Videos")]
+    seen_paths = set()
+
+    for d in dirs_to_scan:
+        if not os.path.exists(d):
+            continue
+        for root, _, files in os.walk(d):
+            for f in files:
+                ext = f.rsplit(".", 1)[-1].lower() if "." in f else ""
+                if ext in ["mp4", "mkv", "webm", "avi", "mov"]:
+                    full_p = os.path.join(root, f)
+                    if full_p in seen_paths:
+                        continue
+                    seen_paths.add(full_p)
+                    try:
+                        sz = os.path.getsize(full_p)
+                        if sz < 1024 * 1024:  # Skip files < 1MB
+                            continue
+                        mb = sz / (1024 * 1024)
+                        sz_str = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{int(mb)} MB"
+                        mtime = os.path.getmtime(full_p)
+                        title = f.rsplit(".", 1)[0]
+                        results.append({
+                            "path": full_p,
+                            "filename": f,
+                            "title": title,
+                            "size_str": sz_str,
+                            "mtime": mtime,
+                        })
+                    except Exception:
+                        pass
+
+    results.sort(key=lambda x: x["mtime"], reverse=True)
+    return results
 
 
 class DownloadManager:

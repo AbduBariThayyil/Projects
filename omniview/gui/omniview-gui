@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native GTK 4 / Libadwaita GUI launcher for AniCast
+# Native GTK 4 / Libadwaita GUI launcher for OmniView Media Suite
 export GSK_RENDERER="${GSK_RENDERER:-cairo}"
 export GTK_A11Y="${GTK_A11Y:-none}"
 

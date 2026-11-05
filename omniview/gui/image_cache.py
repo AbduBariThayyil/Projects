@@ -10,7 +10,8 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Gdk, Gio, GLib
 
-CACHE_DIR = os.path.expanduser("~/.cache/ani-cast/posters")
+CACHE_DIR = os.path.expanduser("~/.cache/omniview/posters")
+LEGACY_CACHE_DIR = os.path.expanduser("~/.cache/ani-cast/posters")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 _memory_cache = {}
@@ -18,6 +19,9 @@ _memory_cache = {}
 
 def _url_to_path(url: str) -> str:
     h = hashlib.md5(url.encode("utf-8")).hexdigest()
+    legacy_file = os.path.join(LEGACY_CACHE_DIR, f"{h}.jpg")
+    if os.path.exists(legacy_file):
+        return legacy_file
     return os.path.join(CACHE_DIR, f"{h}.jpg")
 
 

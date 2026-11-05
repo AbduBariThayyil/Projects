@@ -14,9 +14,10 @@ import urllib.parse
 import urllib.request
 import subprocess
 
-RESUME_FILE = os.path.expanduser("~/.local/state/ani-cast/resume_state.json")
-SESSION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "ani_cast_current_session.json")
-ACTION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "ani_cast_action")
+RESUME_FILE = os.path.expanduser("~/.local/state/omniview/resume_state.json")
+LEGACY_RESUME_FILE = os.path.expanduser("~/.local/state/ani-cast/resume_state.json")
+SESSION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "omniview_current_session.json")
+ACTION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "omniview_action")
 
 BASE_URL = "https://hianime.at"
 SEARCH_URL = f"{BASE_URL}/search?keyword="
@@ -37,13 +38,20 @@ def format_time(seconds):
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 def load_resume_state():
+    state = {}
+    if os.path.exists(LEGACY_RESUME_FILE):
+        try:
+            with open(LEGACY_RESUME_FILE, "r", encoding="utf-8") as f:
+                state.update(json.load(f))
+        except Exception:
+            pass
     if os.path.exists(RESUME_FILE):
         try:
             with open(RESUME_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                state.update(json.load(f))
         except Exception:
             pass
-    return {}
+    return state
 
 def parse_anime_title(title):
     """

@@ -1,17 +1,21 @@
 -- ani_cast_mpv_resume.lua
--- MPV script for ani-cast local playback
--- Tracks playback position in ~/.local/state/ani-cast/resume_state.json
--- Handles EOF and season finale auto-advance via ani-cast action flags
+-- MPV script for OmniView (formerly ani-cast) local playback
+-- Tracks playback position in ~/.local/state/omniview/resume_state.json
+-- Handles EOF and season finale auto-advance via omniview action flags
 
 local utils = require "mp.utils"
 local msg = require "mp.msg"
 
 local home = os.getenv("HOME") or "/home/vibecoder"
 local runtime_dir = os.getenv("XDG_RUNTIME_DIR") or "/tmp"
-local state_dir = home .. "/.local/state/ani-cast"
+local state_dir = home .. "/.local/state/omniview"
+local legacy_state_dir = home .. "/.local/state/ani-cast"
 local resume_file = state_dir .. "/resume_state.json"
-local action_file = runtime_dir .. "/ani_cast_action"
-local next_flag = runtime_dir .. "/ani_cast_next_season_pending"
+local legacy_resume_file = legacy_state_dir .. "/resume_state.json"
+local action_file = runtime_dir .. "/omniview_action"
+local legacy_action_file = runtime_dir .. "/ani_cast_action"
+local next_flag = runtime_dir .. "/omniview_next_season_pending"
+local legacy_next_flag = runtime_dir .. "/ani_cast_next_season_pending"
 
 local current_title = ""
 local last_pos = 0.0
@@ -21,15 +25,15 @@ local has_finished = false
 local has_saved_final = false
 
 local function get_clean_title()
-    if current_title and current_title ~= "" and current_title ~= "Anime Episode" and not current_title:match("^https?://") then
+    if current_title and current_title ~= "" and current_title ~= "Anime Episode" and current_title ~= "Media Episode" and not current_title:match("^https?://") then
         return current_title
     end
     local title = mp.get_property("media-title")
-    if not title or title == "" or title == "Anime Episode" or title:match("^https?://") then
-        title = os.getenv("ANI_CAST_TITLE") or ""
+    if not title or title == "" or title == "Anime Episode" or title == "Media Episode" or title:match("^https?://") then
+        title = os.getenv("OMNIVIEW_TITLE") or os.getenv("ANI_CAST_TITLE") or ""
     end
     if title == "" then
-        title = mp.get_property("filename") or "Anime Episode"
+        title = mp.get_property("filename") or "Media Playback"
     end
     current_title = title
     return current_title
@@ -40,6 +44,11 @@ local function write_action(action)
     if f then
         f:write(action .. "\n")
         f:close()
+    end
+    local f2 = io.open(legacy_action_file, "w")
+    if f2 then
+        f2:write(action .. "\n")
+        f2:close()
     end
 end
 
@@ -53,7 +62,7 @@ end
 
 local function check_season_finale_async(title)
     if not title or title == "" then return end
-    local script_dir = mp.get_script_directory() or (home .. "/Projects/ani-cast/lib")
+    local script_dir = mp.get_script_directory() or (home .. "/Projects/omniview/lib")
     local engine_py = script_dir .. "/anicast_engine.py"
     mp.command_native_async({
         name = "subprocess",
@@ -72,12 +81,15 @@ local function check_season_finale_async(title)
 end
 
 local function save_resume_state(title, position, duration, finished)
-    if not title or title == "" or title == "Anime Episode" then return end
+    if not title or title == "" or title == "Anime Episode" or title == "Media Episode" then return end
     
     utils.subprocess({args = {"mkdir", "-p", state_dir}})
     
     local data = {}
     local f = io.open(resume_file, "r")
+    if not f then
+        f = io.open(legacy_resume_file, "r")
+    end
     if f then
         local content = f:read("*a")
         f:close()

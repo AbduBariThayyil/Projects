@@ -49,10 +49,10 @@ if [ -z "$VIDEO_URL" ]; then
     exit 1
 fi
 
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ani-cast"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omniview"
 mkdir -p "$CACHE_DIR"
 
-if [ "$ANI_CAST_NO_SUB" = "1" ]; then
+if [ "$ANI_CAST_NO_SUB" = "1" ] || [ "$OMNIVIEW_NO_SUB" = "1" ]; then
     SUB_FILE=""
     rm -f "$CACHE_DIR/subtitles.vtt" 2>/dev/null || true
 else
@@ -64,22 +64,24 @@ else
 fi
 
 # Ensure subsequent episodes in the same session start at 00:00 unless prior resume state exists
-FIRST_EP_FLAG="${XDG_RUNTIME_DIR:-/tmp}/ani_cast_first_ep_done"
-if [ -f "$FIRST_EP_FLAG" ]; then
+FIRST_EP_FLAG="${XDG_RUNTIME_DIR:-/tmp}/omniview_first_ep_done"
+if [ -f "$FIRST_EP_FLAG" ] || [ -f "${XDG_RUNTIME_DIR:-/tmp}/ani_cast_first_ep_done" ]; then
     unset ANI_CAST_START_TIME
+    unset OMNIVIEW_START_TIME
 else
     touch "$FIRST_EP_FLAG" 2>/dev/null || true
 fi
 
 # Check for Local Mode (-l or ANI_CAST_LOCAL=1 or target device is local)
-if [ "$ANI_CAST_LOCAL" = "1" ] || [ "${ANI_CAST_DEVICE,,}" = "local" ] || [ "$ANI_CAST_DEVICE" = "0" ] || [ "${ANI_CAST_DEVICE,,}" = "this" ]; then
+TARGET_DEV="${OMNIVIEW_DEVICE:-$ANI_CAST_DEVICE}"
+if [ "$ANI_CAST_LOCAL" = "1" ] || [ "$OMNIVIEW_LOCAL" = "1" ] || [ "${TARGET_DEV,,}" = "local" ] || [ "$TARGET_DEV" = "0" ] || [ "${TARGET_DEV,,}" = "this" ]; then
     pkill -f hls_streamer.py 2>/dev/null || true
     MPV_ARGS=(
         "--force-media-title=$TITLE"
         "--script=$BASE_DIR/lib/ani_cast_mpv_resume.lua"
     )
     [ -n "$REF" ] && MPV_ARGS+=("--referrer=$REF")
-    if [ "$ANI_CAST_NO_SUB" = "1" ]; then
+    if [ "$ANI_CAST_NO_SUB" = "1" ] || [ "$OMNIVIEW_NO_SUB" = "1" ]; then
         MPV_ARGS+=("--no-sub")
     elif [ -f "$SUB_FILE" ] && [ -s "$SUB_FILE" ]; then
         MPV_ARGS+=("--sub-file=$SUB_FILE")
@@ -87,13 +89,15 @@ if [ "$ANI_CAST_LOCAL" = "1" ] || [ "${ANI_CAST_DEVICE,,}" = "local" ] || [ "$AN
         MPV_ARGS+=("--sub-file=$SUB_URL")
     fi
 
-    # Resume position: Check ANI_CAST_START_TIME first, then fallback to resume_state.json if not set
-    START_POS="${ANI_CAST_START_TIME:-}"
+    # Resume position: Check ANI_CAST_START_TIME / OMNIVIEW_START_TIME first, then fallback to resume_state.json
+    START_POS="${OMNIVIEW_START_TIME:-${ANI_CAST_START_TIME:-}}"
     if [ -z "$START_POS" ] || [ "$START_POS" = "0" ] || [ "$START_POS" = "0.0" ]; then
         START_POS=$(python3 -c "
 import json, os, sys
 title = '''$TITLE'''.strip().lower()
-rf = os.path.expanduser('~/.local/state/ani-cast/resume_state.json')
+rf = os.path.expanduser('~/.local/state/omniview/resume_state.json')
+if not os.path.exists(rf):
+    rf = os.path.expanduser('~/.local/state/ani-cast/resume_state.json')
 if os.path.exists(rf):
     try:
         data = json.load(open(rf))

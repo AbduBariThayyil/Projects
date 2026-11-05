@@ -2,12 +2,12 @@
   "workspace": "/home/vibecoder/Projects",
   "description": "Multi-project Arch Linux / BSPWM desktop ecosystem",
   "projects": {
-    "ani-cast": {
-      "path": "ani-cast",
-      "context": "ani-cast/context.md",
+    "omniview": {
+      "path": "omniview",
+      "context": "omniview/context.md",
       "type": "streaming-suite",
-      "stack": ["Python", "PySide6", "MPV", "Lua", "HLS"],
-      "description": "Anime streaming, Chromecast casting, MPV resume hooks, and PySide6 player GUI."
+      "stack": ["Python", "GTK4", "Libadwaita", "MPV", "Lua", "HLS"],
+      "description": "Universal Anime, Movies, and TV Shows Streaming & Casting Media Suite"
     },
     "ant-gm320": {
       "path": "ant-gm320",

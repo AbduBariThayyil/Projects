@@ -1,0 +1,219 @@
+/* OmniView GTK 4 / Libadwaita Stylesheet */
+/* Catppuccin Mocha Dark Palette & Responsive Sizing for Arch Linux / BSPWM */
+
+/* Catppuccin Mocha Root Accents */
+@define-color base #1e1e2e;
+@define-color mantle #181825;
+@define-color crust #11111b;
+@define-color surface0 #313244;
+@define-color surface1 #45475a;
+@define-color surface2 #585b70;
+@define-color overlay0 #6c7086;
+@define-color mocha_text #cdd6f4;
+@define-color subtext0 #a6adc8;
+@define-color mauve #cba6f7;
+@define-color blue #89b4fa;
+@define-color sapphire #74c7ec;
+@define-color green #a6e3a1;
+@define-color yellow #f9e2af;
+@define-color peach #fab387;
+@define-color red #f38ba8;
+
+/* ViewSwitcher Tab Styling */
+viewswitcher button {
+    border-radius: 8px;
+    padding: 6px 14px;
+    margin: 2px 4px;
+    font-weight: 600;
+    transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+viewswitcher button:checked {
+    background-color: alpha(@mauve, 0.22);
+    color: @mauve;
+    border-bottom: 2px solid @mauve;
+}
+
+viewswitcher button:hover:not(:checked) {
+    background-color: alpha(@surface1, 0.45);
+}
+
+/* Hero Cards */
+.hero-card {
+    background: linear-gradient(135deg, alpha(@mauve, 0.16), alpha(@mantle, 0.90));
+    border: 1px solid alpha(@mauve, 0.35);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+}
+
+.hero-card:hover {
+    border-color: alpha(@mauve, 0.60);
+}
+
+.hero-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: @mocha_text;
+}
+
+.hero-subtitle {
+    font-size: 0.88rem;
+    color: @mauve;
+    font-weight: 600;
+}
+
+.hero-time {
+    font-size: 0.80rem;
+    color: @subtext0;
+}
+
+.poster-frame {
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+.poster-img {
+    border-radius: 8px;
+}
+
+/* Media Cards (Anime, Movie, TV) */
+.media-card {
+    background-color: alpha(@surface0, 0.55);
+    border: 1px solid alpha(@surface1, 0.50);
+    border-radius: 10px;
+    padding: 6px;
+    transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.media-card:hover {
+    background-color: alpha(@surface1, 0.70);
+    border-color: alpha(@mauve, 0.55);
+}
+
+.media-card-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 4px 2px;
+    color: @mocha_text;
+}
+
+.anime-card {
+    background-color: alpha(@surface0, 0.50);
+    border: 1px solid alpha(@surface1, 0.40);
+    border-radius: 10px;
+    padding: 6px;
+    transition: background-color 180ms ease, border-color 180ms ease;
+}
+
+.anime-card:hover {
+    background-color: alpha(@surface1, 0.70);
+    border-color: alpha(@mauve, 0.50);
+}
+
+.anime-card-title {
+    font-size: 0.84rem;
+    font-weight: 600;
+    padding: 2px 4px;
+    color: @mocha_text;
+}
+
+/* Category & Status Badges */
+.badge-watched {
+    background-color: alpha(@green, 0.20);
+    color: @green;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+
+.badge-progress {
+    background-color: alpha(@blue, 0.20);
+    color: @blue;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+
+.badge-movie {
+    background-color: alpha(@peach, 0.22);
+    color: @peach;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+
+.badge-tv {
+    background-color: alpha(@sapphire, 0.22);
+    color: @sapphire;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+
+.badge-anime {
+    background-color: alpha(@mauve, 0.22);
+    color: @mauve;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+
+/* Dual Action Buttons */
+.btn-play {
+    background-color: alpha(@mauve, 0.20);
+    color: @mauve;
+    border: 1px solid alpha(@mauve, 0.40);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.btn-play:hover {
+    background-color: alpha(@mauve, 0.35);
+    border-color: @mauve;
+}
+
+.btn-cast {
+    background-color: alpha(@sapphire, 0.20);
+    color: @sapphire;
+    border: 1px solid alpha(@sapphire, 0.40);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.btn-cast:hover {
+    background-color: alpha(@sapphire, 0.35);
+    border-color: @sapphire;
+}
+
+/* Download Banner */
+.download-banner {
+    background-color: alpha(@surface0, 0.75);
+    border: 1px solid alpha(@mauve, 0.35);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+}
+
+/* Compact search entry that does not overflow */
+searchentry {
+    min-height: 38px;
+    padding: 2px 10px;
+    border-radius: 8px;
+}
+
+/* Compact row styling for list preferences to fit 768p displays */
+preferencesgroup list > row {
+    min-height: 38px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}

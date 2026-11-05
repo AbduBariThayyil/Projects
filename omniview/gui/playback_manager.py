@@ -22,8 +22,10 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import anicast_engine
+import movies_engine
 
-RESUME_FILE = os.path.expanduser("~/.local/state/ani-cast/resume_state.json")
+RESUME_FILE = os.path.expanduser("~/.local/state/omniview/resume_state.json")
+LEGACY_RESUME_FILE = os.path.expanduser("~/.local/state/ani-cast/resume_state.json")
 LOCAL_HLS = os.path.abspath(os.path.join(LIB_DIR, "hls_streamer.py"))
 HLS_STREAMER_PY = LOCAL_HLS if os.path.exists(LOCAL_HLS) else os.path.expanduser("~/Videos/Anime/hls_streamer.py")
 
@@ -190,6 +192,100 @@ class PlaybackManager:
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
 
+    def play_movie(self, imdb_id: str, title: str, target_device: dict = None):
+        """Streams a mainstream movie locally or to Chromecast."""
+        self.stop_playback()
+        self._stop_requested = False
+        if not target_device:
+            target_device = {
+                "name": "This Device (Local Screen / MPV)",
+                "id": "local",
+                "ip": "127.0.0.1",
+                "is_local": True,
+            }
+        self.current_title = title
+        self.current_device = target_device
+        if self.on_status_change:
+            GLib.idle_add(self.on_status_change, "loading", title)
+
+        def _worker():
+            try:
+                stream_info = movies_engine.resolve_movie_stream(imdb_id, title)
+                start_time = get_resume_position(title)
+                is_local = target_device.get("is_local", True)
+                if is_local:
+                    self._play_local_mpv(stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), title, start_time)
+                else:
+                    self._play_chromecast(stream_info.get("master_url") or stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), title, start_time, target_device)
+            except Exception as e:
+                if self.on_status_change:
+                    GLib.idle_add(self.on_status_change, "error", str(e))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def play_tv_show(self, imdb_id: str, season_num: int, episode_num: int, title: str, target_device: dict = None):
+        """Streams a TV series episode locally or to Chromecast."""
+        self.stop_playback()
+        self._stop_requested = False
+        if not target_device:
+            target_device = {
+                "name": "This Device (Local Screen / MPV)",
+                "id": "local",
+                "ip": "127.0.0.1",
+                "is_local": True,
+            }
+        full_title = f"{title} S{season_num:02d}E{episode_num:02d}"
+        self.current_title = full_title
+        self.current_device = target_device
+        if self.on_status_change:
+            GLib.idle_add(self.on_status_change, "loading", full_title)
+
+        def _worker():
+            try:
+                stream_info = movies_engine.resolve_tv_stream(imdb_id, season_num, episode_num, title)
+                start_time = get_resume_position(full_title)
+                is_local = target_device.get("is_local", True)
+                if is_local:
+                    self._play_local_mpv(stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), full_title, start_time)
+                else:
+                    self._play_chromecast(stream_info.get("master_url") or stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), full_title, start_time, target_device)
+            except Exception as e:
+                if self.on_status_change:
+                    GLib.idle_add(self.on_status_change, "error", str(e))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def play_local_file(self, file_path: str, title: str = None, target_device: dict = None):
+        """Plays a local media file in MPV or casts to TV."""
+        self.stop_playback()
+        self._stop_requested = False
+        if not target_device:
+            target_device = {
+                "name": "This Device (Local Screen / MPV)",
+                "id": "local",
+                "ip": "127.0.0.1",
+                "is_local": True,
+            }
+        clean_title = title or os.path.basename(file_path).rsplit(".", 1)[0]
+        self.current_title = clean_title
+        self.current_device = target_device
+        if self.on_status_change:
+            GLib.idle_add(self.on_status_change, "loading", clean_title)
+
+        def _worker():
+            try:
+                start_time = get_resume_position(clean_title)
+                is_local = target_device.get("is_local", True)
+                if is_local:
+                    self._play_local_mpv(file_path, "", "", clean_title, start_time)
+                else:
+                    self._play_chromecast(file_path, "", "", clean_title, start_time, target_device)
+            except Exception as e:
+                if self.on_status_change:
+                    GLib.idle_add(self.on_status_change, "error", str(e))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _play_local_mpv(self, video_url, referer, sub_url, title, start_time):
         runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
         sock_path = os.path.join(runtime_dir, f"anicast_mpv_{os.getpid()}_{int(time.time())}.sock")
@@ -353,7 +449,7 @@ class PlaybackManager:
             env["ANI_CAST_START_TIME"] = str(round(start_time, 1))
 
         # Download subtitles file locally if present
-        cache_dir = os.path.expanduser("~/.cache/ani-cast")
+        cache_dir = os.path.expanduser("~/.cache/omniview")
         os.makedirs(cache_dir, exist_ok=True)
         sub_file = os.path.join(cache_dir, "subtitles.vtt")
         if sub_url:

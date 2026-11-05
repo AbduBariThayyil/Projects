@@ -31,10 +31,15 @@ for logger_name in [
     logging.getLogger(logger_name).setLevel(logging.CRITICAL)
 
 DEFAULT_PORT = 8765
-RESUME_FILE = os.path.expanduser("~/.local/state/ani-cast/resume_state.json")
-SESSION_DEVICE_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "ani_cast_session_device")
-ACTION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "ani_cast_action")
-DEVICES_CACHE_FILE = os.path.expanduser("~/.local/state/ani-cast/discovered_devices.json")
+STATE_DIR = os.path.expanduser("~/.local/state/omniview")
+LEGACY_STATE_DIR = os.path.expanduser("~/.local/state/ani-cast")
+RESUME_FILE = os.path.join(STATE_DIR, "resume_state.json")
+LEGACY_RESUME_FILE = os.path.join(LEGACY_STATE_DIR, "resume_state.json")
+SESSION_DEVICE_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "omniview_session_device")
+ACTION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "omniview_action")
+LEGACY_ACTION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "ani_cast_action")
+DEVICES_CACHE_FILE = os.path.join(STATE_DIR, "discovered_devices.json")
+LEGACY_DEVICES_CACHE_FILE = os.path.join(LEGACY_STATE_DIR, "discovered_devices.json")
 
 def find_free_port(start_port=8765):
     """Find an available port starting from start_port."""
@@ -53,13 +58,20 @@ def normalize_title(t):
     return " ".join(t.strip().lower().split())
 
 def load_all_resume_state():
+    state = {}
+    try:
+        if os.path.exists(LEGACY_RESUME_FILE):
+            with open(LEGACY_RESUME_FILE, "r", encoding="utf-8") as f:
+                state.update(json.load(f))
+    except Exception:
+        pass
     try:
         if os.path.exists(RESUME_FILE):
             with open(RESUME_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                state.update(json.load(f))
     except Exception:
         pass
-    return {}
+    return state
 
 def save_resume_state(title, position, duration=0.0, finished=False):
     """Atomically save resume state for the given title."""
@@ -1179,6 +1191,11 @@ def main():
             except Exception:
                 pass
             try:
+                if os.path.exists(LEGACY_ACTION_FILE):
+                    os.remove(LEGACY_ACTION_FILE)
+            except Exception:
+                pass
+            try:
                 if os.path.exists(SESSION_DEVICE_FILE):
                     os.remove(SESSION_DEVICE_FILE)
             except Exception:
@@ -1203,11 +1220,12 @@ def main():
         elif reason == "finished":
             save_resume_state(TITLE, 0.0, duration, finished=True)
             action_val = "auto_next_season" if is_season_finale else "auto_next"
-            try:
-                with open(ACTION_FILE, "w") as f:
-                    f.write(action_val + "\n")
-            except Exception:
-                pass
+            for a_f in [ACTION_FILE, LEGACY_ACTION_FILE]:
+                try:
+                    with open(a_f, "w") as f:
+                        f.write(action_val + "\n")
+                except Exception:
+                    pass
             msg = "Season completed!" if is_season_finale else "Episode finished."
             sys.stdout.write(f"\r\033[K\n\033[1;32m[+] {msg}\033[0m\n")
             sys.stdout.flush()
@@ -1216,11 +1234,12 @@ def main():
         elif reason == "next":
             save_resume_state(TITLE, 0.0, duration, finished=True)
             action_val = "next_season" if is_season_finale else "next"
-            try:
-                with open(ACTION_FILE, "w") as f:
-                    f.write(action_val + "\n")
-            except Exception:
-                pass
+            for a_f in [ACTION_FILE, LEGACY_ACTION_FILE]:
+                try:
+                    with open(a_f, "w") as f:
+                        f.write(action_val + "\n")
+                except Exception:
+                    pass
             msg = "Advancing to next season..." if is_season_finale else "Advancing to next episode..."
             sys.stdout.write(f"\r\033[K\n\033[1;32m==> {msg}\033[0m\n")
             sys.stdout.flush()

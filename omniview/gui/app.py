@@ -1,5 +1,5 @@
 """
-Adw.Application setup for AniCast.
+Adw.Application setup for OmniView Media Suite.
 """
 import os
 import sys
@@ -17,13 +17,13 @@ gi.require_version("Gio", "2.0")
 
 from gi.repository import Gtk, Adw, Gio, Gdk
 
-from window import AniCastWindow
+from window import OmniViewWindow, AniCastWindow
 
-APP_ID = "com.vibecoder.anicast"
+APP_ID = "com.vibecoder.omniview"
 CSS_PATH = os.path.join(os.path.dirname(__file__), "style.css")
 
 
-class AniCastApp(Adw.Application):
+class OmniViewApp(Adw.Application):
     def __init__(self):
         super().__init__(
             application_id=APP_ID,
@@ -34,7 +34,7 @@ class AniCastApp(Adw.Application):
     def do_startup(self):
         Adw.Application.do_startup(self)
 
-        # Prefer dark theme for media application
+        # Prefer dark theme for media application (Catppuccin Mocha)
         style_mgr = Adw.StyleManager.get_default()
         style_mgr.set_color_scheme(Adw.ColorScheme.PREFER_DARK)
 
@@ -50,12 +50,15 @@ class AniCastApp(Adw.Application):
 
     def do_activate(self):
         if not self.window:
-            self.window = AniCastWindow(application=self)
+            self.window = OmniViewWindow(application=self)
         self.window.present()
 
 
+AniCastApp = OmniViewApp
+
+
 def main():
-    app = AniCastApp()
+    app = OmniViewApp()
     return app.run(sys.argv)
 
 
