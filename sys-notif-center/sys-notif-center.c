@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <regex.h>
 #include <math.h>
 #include <signal.h>
@@ -579,13 +580,104 @@ static GdkPixbuf *create_fallback_badge(const char *app, const char *title, int 
     return res;
 }
 
+static gboolean is_group_indicator_string(const char *str) {
+    if (!str || strlen(str) == 0) return FALSE;
+    char *low = g_ascii_strdown(str, -1);
+    gboolean is_grp = FALSE;
+
+    if (strstr(low, "group") != NULL ||
+        strstr(low, "groupchat") != NULL) {
+        is_grp = TRUE;
+    } else if (strstr(low, "chat") != NULL) {
+        if (g_ascii_strcasecmp(low, "chat") != 0) {
+            is_grp = TRUE;
+        }
+    }
+
+    if (!is_grp && strstr(low, "gc") != NULL) {
+        const char *p = low;
+        while ((p = strstr(p, "gc")) != NULL) {
+            gboolean start_bound = (p == low || !g_ascii_isalpha(*(p - 1)));
+            gboolean end_bound = (!g_ascii_isalpha(*(p + 2)));
+            if (start_bound && end_bound) {
+                is_grp = TRUE;
+                break;
+            }
+            p += 2;
+        }
+    }
+    g_free(low);
+    return is_grp;
+}
+
+static gboolean files_are_identical(const char *path1, const char *path2) {
+    struct stat st1, st2;
+    if (stat(path1, &st1) != 0 || stat(path2, &st2) != 0) return FALSE;
+    if (st1.st_size != st2.st_size || st1.st_size == 0) return FALSE;
+
+    FILE *f1 = fopen(path1, "rb");
+    FILE *f2 = fopen(path2, "rb");
+    if (!f1 || !f2) {
+        if (f1) fclose(f1);
+        if (f2) fclose(f2);
+        return FALSE;
+    }
+
+    char b1[4096], b2[4096];
+    gboolean identical = TRUE;
+    while (!feof(f1) && !feof(f2)) {
+        size_t n1 = fread(b1, 1, sizeof(b1), f1);
+        size_t n2 = fread(b2, 1, sizeof(b2), f2);
+        if (n1 != n2 || memcmp(b1, b2, n1) != 0) {
+            identical = FALSE;
+            break;
+        }
+    }
+    fclose(f1);
+    fclose(f2);
+    return identical;
+}
+
+static gboolean group_avatar_matches_individual_contact(const char *cache_dir, const char *app, const char *group_avatar_file) {
+    GDir *dir = g_dir_open(cache_dir, 0, NULL);
+    if (!dir) return FALSE;
+
+    char prefix[32] = {0};
+    int pos = 0;
+    for (int i = 0; app[i] && pos < 15; i++) {
+        if (g_ascii_isalnum(app[i])) prefix[pos++] = (char)g_ascii_tolower(app[i]);
+    }
+    prefix[pos++] = '_';
+    prefix[pos] = '\0';
+
+    char grp_path[512];
+    snprintf(grp_path, sizeof(grp_path), "%s/%s", cache_dir, group_avatar_file);
+
+    gboolean matches = FALSE;
+    const gchar *entry;
+    while ((entry = g_dir_read_name(dir)) != NULL) {
+        if (strcmp(entry, group_avatar_file) == 0) continue;
+        if (!g_str_has_prefix(entry, prefix) || !g_str_has_suffix(entry, ".png")) continue;
+
+        char contact_path[512];
+        snprintf(contact_path, sizeof(contact_path), "%s/%s", cache_dir, entry);
+        if (files_are_identical(grp_path, contact_path)) {
+            matches = TRUE;
+            break;
+        }
+    }
+    g_dir_close(dir);
+    return matches;
+}
+
 static GdkPixbuf *load_avatar_or_icon(const char *app, const char *group, const char *sender, const char *icon_hint, int size) {
     const char *a = app ? app : "app";
     char avatar_path[512];
-    gboolean is_group = (group && sender && strlen(group) > 0 && strlen(sender) > 0 &&
-                         g_ascii_strcasecmp(group, sender) != 0);
+    gboolean is_group = ((group && sender && strlen(group) > 0 && strlen(sender) > 0 &&
+                          g_ascii_strcasecmp(group, sender) != 0) ||
+                         (group && is_group_indicator_string(group)));
 
-    /* 1. For a Group Chat, prioritize the Group Icon */
+    /* 1. For a Group Chat, prioritize dedicated Group Icon */
     if (is_group) {
         char grp_name[128] = {0};
         int pos = 0;
@@ -599,22 +691,47 @@ static GdkPixbuf *load_avatar_or_icon(const char *app, const char *group, const 
         }
         grp_name[pos] = '\0';
 
-        snprintf(avatar_path, sizeof(avatar_path), "%s/%s.png", AVATAR_DIR, grp_name);
+        char filename[160];
+        snprintf(filename, sizeof(filename), "%s.png", grp_name);
+        snprintf(avatar_path, sizeof(avatar_path), "%s/%s", AVATAR_DIR, filename);
+
         if (access(avatar_path, R_OK) == 0) {
-            GdkPixbuf *raw = gdk_pixbuf_new_from_file(avatar_path, NULL);
+            if (group_avatar_matches_individual_contact(AVATAR_DIR, a, filename)) {
+                unlink(avatar_path);
+            } else {
+                GdkPixbuf *raw = gdk_pixbuf_new_from_file(avatar_path, NULL);
+                if (raw) {
+                    GdkPixbuf *res = pixbuf_round_crop(raw, size);
+                    g_object_unref(raw);
+                    return res;
+                }
+            }
+        }
+
+        /* Group icon not found: fallback cleanly to app icon or initial badge, never sender's photo */
+        GtkIconTheme *theme = gtk_icon_theme_get_default();
+        const char *icon_name = "preferences-desktop-notification-bell";
+        char *low = g_ascii_strdown(app ? app : "", -1);
+        if (strstr(low, "whatsapp")) icon_name = "whatsapp-desktop";
+        else if (strstr(low, "instagram")) icon_name = "instagram";
+        else if (strstr(low, "discord")) icon_name = "discord";
+        else if (strstr(low, "power") || strstr(low, "battery")) icon_name = "battery-charging";
+        g_free(low);
+
+        if (gtk_icon_theme_has_icon(theme, icon_name)) {
+            GdkPixbuf *raw = gtk_icon_theme_load_icon(theme, icon_name, size, GTK_ICON_LOOKUP_FORCE_SIZE, NULL);
             if (raw) {
                 GdkPixbuf *res = pixbuf_round_crop(raw, size);
                 g_object_unref(raw);
                 return res;
             }
         }
-        /* Group icon not found: fallback to clean badge, never use sender's personal photo */
         return create_fallback_badge(app, group, size);
     }
 
     /* 2. For Direct Messages / 1-on-1 contact, check contact avatar */
     const char *target = (sender && strlen(sender) > 0) ? sender : group;
-    if (target && strlen(target) > 0) {
+    if (target && strlen(target) > 0 && !is_group_indicator_string(target)) {
         char clean_name[128] = {0};
         int pos = 0;
         for (int i = 0; a[i] && pos < 15; i++) {

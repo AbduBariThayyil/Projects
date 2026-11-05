@@ -22,6 +22,7 @@
 #include <math.h>
 #include <signal.h>
 #include <malloc.h>
+#include <sys/stat.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -629,6 +630,37 @@ static gboolean is_instagram_unread_notice(const char *app, const char *sum, con
     return FALSE;
 }
 
+/* Detect whether a summary or contact name indicates a group chat */
+static gboolean is_group_indicator_string(const char *str) {
+    if (!str || strlen(str) == 0) return FALSE;
+    char *low = g_ascii_strdown(str, -1);
+    gboolean is_grp = FALSE;
+
+    if (strstr(low, "group") != NULL ||
+        strstr(low, "groupchat") != NULL) {
+        is_grp = TRUE;
+    } else if (strstr(low, "chat") != NULL) {
+        if (g_ascii_strcasecmp(low, "chat") != 0) {
+            is_grp = TRUE;
+        }
+    }
+
+    if (!is_grp && strstr(low, "gc") != NULL) {
+        const char *p = low;
+        while ((p = strstr(p, "gc")) != NULL) {
+            gboolean start_bound = (p == low || !g_ascii_isalpha(*(p - 1)));
+            gboolean end_bound = (!g_ascii_isalpha(*(p + 2)));
+            if (start_bound && end_bound) {
+                is_grp = TRUE;
+                break;
+            }
+            p += 2;
+        }
+    }
+    g_free(low);
+    return is_grp;
+}
+
 /* Helper to extract base group name and individual sender name across messaging apps */
 static void parse_chat_conversation(const char *app_name, const char *summary, const char *body,
                                      char **out_group, char **out_sender) {
@@ -700,32 +732,62 @@ static void parse_chat_conversation(const char *app_name, const char *summary, c
         free(grp);
     }
 
-    /* 4. Single chat / direct message fallback */
+    /* 4. Group indicator in summary (e.g. "10th gc") */
+    if (is_group_indicator_string(sum)) {
+        *out_group = strdup(sum);
+        /* Check if body starts with "Sender: Message" */
+        const char *col = strchr(bod, ':');
+        if (col && (col - bod) >= 2 && (col - bod) <= 36) {
+            char *snd = g_strndup(bod, (int)(col - bod));
+            g_strstrip(snd);
+            *out_sender = snd;
+        } else {
+            *out_sender = strdup("");
+        }
+        return;
+    }
+
+    /* 5. Single chat / direct message fallback */
     *out_group = strdup(sum);
     *out_sender = strdup(sum);
 }
 
-/* Cache avatar pixbuf to disk for group chat continuity and Notification Center display */
-static char *cache_avatar_pixbuf(GdkPixbuf *pb, const char *app_name, const char *summary) {
-    if (!pb) return NULL;
+/* Cache avatar pixbuf to disk for individual contact profile pictures.
+ * NEVER cache an individual sender avatar under a group chat name! */
+static char *cache_avatar_pixbuf(GdkPixbuf *pb, const char *app_name, const char *sender_name) {
+    if (!pb || !sender_name || strlen(sender_name) == 0) return NULL;
+    if (is_group_indicator_string(sender_name)) return NULL;
+
+    char *grp = NULL, *snd = NULL;
+    parse_chat_conversation(app_name, sender_name, NULL, &grp, &snd);
+
+    const char *target = NULL;
+    if (snd && strlen(snd) > 0 && (!grp || g_ascii_strcasecmp(grp, snd) != 0)) {
+        target = snd;
+    } else if (snd && strlen(snd) > 0) {
+        target = snd;
+    } else if (grp && strlen(grp) > 0) {
+        target = grp;
+    }
+
+    if (!target || strlen(target) == 0 || is_group_indicator_string(target)) {
+        free(grp);
+        free(snd);
+        return NULL;
+    }
+
     const char *cache_dir = "/home/vibecoder/.cache/sys-notif/avatars";
     g_mkdir_with_parents(cache_dir, 0755);
 
-    char *grp = NULL, *snd = NULL;
-    parse_chat_conversation(app_name, summary, NULL, &grp, &snd);
-
     const char *app = app_name ? app_name : "app";
-    const char *target_snd = (snd && strlen(snd) > 0) ? snd : grp;
-
-    /* Sender avatar key */
     char sender_key[128] = {0};
     int pos = 0;
     for (int i = 0; app[i] && pos < 15; i++) {
         if (g_ascii_isalnum(app[i])) sender_key[pos++] = (char)g_ascii_tolower(app[i]);
     }
     sender_key[pos++] = '_';
-    for (int i = 0; target_snd[i] && pos < 60; i++) {
-        if (g_ascii_isalnum(target_snd[i])) sender_key[pos++] = (char)g_ascii_tolower(target_snd[i]);
+    for (int i = 0; target[i] && pos < 60; i++) {
+        if (g_ascii_isalnum(target[i])) sender_key[pos++] = (char)g_ascii_tolower(target[i]);
         else sender_key[pos++] = '_';
     }
     sender_key[pos] = '\0';
@@ -739,63 +801,218 @@ static char *cache_avatar_pixbuf(GdkPixbuf *pb, const char *app_name, const char
     return avatar_path;
 }
 
-/* Load previously cached avatar (for group chats, only loads group icon; for DMs, loads contact icon) */
-static GdkPixbuf *load_cached_group_avatar(const char *app_name, const char *summary, char **out_path) {
+/* Cache dedicated group avatar pixbuf to disk */
+static char *cache_group_avatar_pixbuf(GdkPixbuf *pb, const char *app_name, const char *group_name) {
+    if (!pb || !group_name || strlen(group_name) == 0) return NULL;
     const char *cache_dir = "/home/vibecoder/.cache/sys-notif/avatars";
-    char *grp = NULL, *snd = NULL;
-    parse_chat_conversation(app_name, summary, NULL, &grp, &snd);
+    g_mkdir_with_parents(cache_dir, 0755);
 
+    const char *app = app_name ? app_name : "app";
+    char grp_key[128] = {0};
+    int gpos = 0;
+    for (int i = 0; app[i] && gpos < 15; i++) {
+        if (g_ascii_isalnum(app[i])) grp_key[gpos++] = (char)g_ascii_tolower(app[i]);
+    }
+    grp_key[gpos++] = '_';
+    for (int i = 0; group_name[i] && gpos < 60; i++) {
+        if (g_ascii_isalnum(group_name[i])) grp_key[gpos++] = (char)g_ascii_tolower(group_name[i]);
+        else grp_key[gpos++] = '_';
+    }
+    grp_key[gpos] = '\0';
+
+    static char avatar_path[512];
+    snprintf(avatar_path, sizeof(avatar_path), "%s/%s.png", cache_dir, grp_key);
+    gdk_pixbuf_save(pb, avatar_path, "png", NULL, NULL);
+    return avatar_path;
+}
+
+static gboolean files_are_identical(const char *path1, const char *path2) {
+    struct stat st1, st2;
+    if (stat(path1, &st1) != 0 || stat(path2, &st2) != 0) return FALSE;
+    if (st1.st_size != st2.st_size || st1.st_size == 0) return FALSE;
+
+    FILE *f1 = fopen(path1, "rb");
+    FILE *f2 = fopen(path2, "rb");
+    if (!f1 || !f2) {
+        if (f1) fclose(f1);
+        if (f2) fclose(f2);
+        return FALSE;
+    }
+
+    char b1[4096], b2[4096];
+    gboolean identical = TRUE;
+    while (!feof(f1) && !feof(f2)) {
+        size_t n1 = fread(b1, 1, sizeof(b1), f1);
+        size_t n2 = fread(b2, 1, sizeof(b2), f2);
+        if (n1 != n2 || memcmp(b1, b2, n1) != 0) {
+            identical = FALSE;
+            break;
+        }
+    }
+    fclose(f1);
+    fclose(f2);
+    return identical;
+}
+
+static gboolean group_avatar_matches_individual_contact(const char *cache_dir, const char *app, const char *group_avatar_file) {
+    GDir *dir = g_dir_open(cache_dir, 0, NULL);
+    if (!dir) return FALSE;
+
+    char prefix[32] = {0};
+    int pos = 0;
+    for (int i = 0; app[i] && pos < 15; i++) {
+        if (g_ascii_isalnum(app[i])) prefix[pos++] = (char)g_ascii_tolower(app[i]);
+    }
+    prefix[pos++] = '_';
+    prefix[pos] = '\0';
+
+    char grp_path[512];
+    snprintf(grp_path, sizeof(grp_path), "%s/%s", cache_dir, group_avatar_file);
+
+    gboolean matches = FALSE;
+    const gchar *entry;
+    while ((entry = g_dir_read_name(dir)) != NULL) {
+        if (strcmp(entry, group_avatar_file) == 0) continue;
+        if (!g_str_has_prefix(entry, prefix) || !g_str_has_suffix(entry, ".png")) continue;
+
+        char contact_path[512];
+        snprintf(contact_path, sizeof(contact_path), "%s/%s", cache_dir, entry);
+        if (files_are_identical(grp_path, contact_path)) {
+            matches = TRUE;
+            break;
+        }
+    }
+    g_dir_close(dir);
+    return matches;
+}
+
+/* Load dedicated group avatar. Strictly ensures no individual sender avatar is returned */
+static GdkPixbuf *load_cached_group_avatar(const char *app_name, const char *group_name, char **out_path) {
+    if (out_path) *out_path = NULL;
+    if (!group_name || strlen(group_name) == 0) return NULL;
+
+    const char *cache_dir = "/home/vibecoder/.cache/sys-notif/avatars";
     const char *app = app_name ? app_name : "app";
     static char avatar_path[512];
 
-    gboolean is_group = (grp && snd && strlen(grp) > 0 && strlen(snd) > 0 && g_ascii_strcasecmp(grp, snd) != 0);
-
-    if (is_group) {
-        /* Group chat: check ONLY group-specific avatar, never sender's avatar */
-        char grp_key[128] = {0};
-        int gpos = 0;
-        for (int i = 0; app[i] && gpos < 15; i++) {
-            if (g_ascii_isalnum(app[i])) grp_key[gpos++] = (char)g_ascii_tolower(app[i]);
-        }
-        grp_key[gpos++] = '_';
-        for (int i = 0; grp[i] && gpos < 60; i++) {
-            if (g_ascii_isalnum(grp[i])) grp_key[gpos++] = (char)g_ascii_tolower(grp[i]);
-            else grp_key[gpos++] = '_';
-        }
-        grp_key[gpos] = '\0';
-        snprintf(avatar_path, sizeof(avatar_path), "%s/%s.png", cache_dir, grp_key);
-        if (access(avatar_path, R_OK) == 0) {
-            if (out_path) *out_path = avatar_path;
-            free(grp); free(snd);
-            return gdk_pixbuf_new_from_file_at_scale(avatar_path, 42, 42, TRUE, NULL);
-        }
-        free(grp); free(snd);
-        return NULL;
+    char grp_key[128] = {0};
+    int gpos = 0;
+    for (int i = 0; app[i] && gpos < 15; i++) {
+        if (g_ascii_isalnum(app[i])) grp_key[gpos++] = (char)g_ascii_tolower(app[i]);
     }
-
-    /* 1-on-1 contact / DM avatar */
-    if (snd && strlen(snd) > 0) {
-        char snd_key[128] = {0};
-        int pos = 0;
-        for (int i = 0; app[i] && pos < 15; i++) {
-            if (g_ascii_isalnum(app[i])) snd_key[pos++] = (char)g_ascii_tolower(app[i]);
-        }
-        snd_key[pos++] = '_';
-        for (int i = 0; snd[i] && pos < 60; i++) {
-            if (g_ascii_isalnum(snd[i])) snd_key[pos++] = (char)g_ascii_tolower(snd[i]);
-            else snd_key[pos++] = '_';
-        }
-        snd_key[pos] = '\0';
-        snprintf(avatar_path, sizeof(avatar_path), "%s/%s.png", cache_dir, snd_key);
-        if (access(avatar_path, R_OK) == 0) {
-            if (out_path) *out_path = avatar_path;
-            free(grp); free(snd);
-            return gdk_pixbuf_new_from_file_at_scale(avatar_path, 42, 42, TRUE, NULL);
-        }
+    grp_key[gpos++] = '_';
+    for (int i = 0; group_name[i] && gpos < 60; i++) {
+        if (g_ascii_isalnum(group_name[i])) grp_key[gpos++] = (char)g_ascii_tolower(group_name[i]);
+        else grp_key[gpos++] = '_';
     }
+    grp_key[gpos] = '\0';
 
-    free(grp);
-    free(snd);
+    char filename[160];
+    snprintf(filename, sizeof(filename), "%s.png", grp_key);
+    snprintf(avatar_path, sizeof(avatar_path), "%s/%s", cache_dir, filename);
+
+    if (access(avatar_path, R_OK) == 0) {
+        if (group_avatar_matches_individual_contact(cache_dir, app, filename)) {
+            unlink(avatar_path);
+            return NULL;
+        }
+        if (out_path) *out_path = avatar_path;
+        return gdk_pixbuf_new_from_file_at_scale(avatar_path, 42, 42, TRUE, NULL);
+    }
+    return NULL;
+}
+
+/* Load 1-on-1 contact avatar for Direct Messages */
+static GdkPixbuf *load_cached_contact_avatar(const char *app_name, const char *sender_name, char **out_path) {
+    if (out_path) *out_path = NULL;
+    if (!sender_name || strlen(sender_name) == 0) return NULL;
+    if (is_group_indicator_string(sender_name)) return NULL;
+
+    const char *cache_dir = "/home/vibecoder/.cache/sys-notif/avatars";
+    const char *app = app_name ? app_name : "app";
+    static char avatar_path[512];
+
+    char snd_key[128] = {0};
+    int pos = 0;
+    for (int i = 0; app[i] && pos < 15; i++) {
+        if (g_ascii_isalnum(app[i])) snd_key[pos++] = (char)g_ascii_tolower(app[i]);
+    }
+    snd_key[pos++] = '_';
+    for (int i = 0; sender_name[i] && pos < 60; i++) {
+        if (g_ascii_isalnum(sender_name[i])) snd_key[pos++] = (char)g_ascii_tolower(sender_name[i]);
+        else snd_key[pos++] = '_';
+    }
+    snd_key[pos] = '\0';
+
+    snprintf(avatar_path, sizeof(avatar_path), "%s/%s.png", cache_dir, snd_key);
+    if (access(avatar_path, R_OK) == 0) {
+        if (out_path) *out_path = avatar_path;
+        return gdk_pixbuf_new_from_file_at_scale(avatar_path, 42, 42, TRUE, NULL);
+    }
+    return NULL;
+}
+
+/* Extract explicit group avatar hint if provided */
+static GdkPixbuf *extract_group_avatar_from_hints(GVariant *hints) {
+    if (!hints) return NULL;
+    static const char *grp_keys[] = {
+        "group-icon", "group-avatar", "group_icon", "group_avatar", NULL
+    };
+    for (int k = 0; grp_keys[k]; k++) {
+        GVariant *v = g_variant_lookup_value(hints, grp_keys[k], NULL);
+        if (!v) continue;
+        v = unwrap_variant(v);
+
+        if (g_variant_is_of_type(v, G_VARIANT_TYPE("(iiibiiay)"))) {
+            gint width = 0, height = 0, rowstride = 0, bits_per_sample = 0, n_channels = 0;
+            gboolean has_alpha = FALSE;
+            GVariant *data_v = NULL;
+
+            g_variant_get(v, "(iiibii@ay)",
+                          &width, &height, &rowstride,
+                          &has_alpha, &bits_per_sample, &n_channels,
+                          &data_v);
+
+            if (data_v && width > 0 && height > 0) {
+                gsize data_len = 0;
+                const guchar *bytes = (const guchar *)g_variant_get_fixed_array(data_v, &data_len, sizeof(guchar));
+                if (bytes && data_len > 0) {
+                    guchar *pixels_copy = g_memdup2(bytes, data_len);
+                    GdkPixbuf *raw_pb = gdk_pixbuf_new_from_data(
+                        pixels_copy,
+                        GDK_COLORSPACE_RGB,
+                        has_alpha,
+                        bits_per_sample,
+                        width,
+                        height,
+                        rowstride,
+                        free_pixbuf_data,
+                        NULL
+                    );
+                    if (raw_pb) {
+                        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(raw_pb, 42, 42, GDK_INTERP_BILINEAR);
+                        g_object_unref(raw_pb);
+                        g_variant_unref(data_v);
+                        g_variant_unref(v);
+                        return scaled;
+                    }
+                }
+                g_variant_unref(data_v);
+            }
+        } else if (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)) {
+            const gchar *img_path = g_variant_get_string(v, NULL);
+            if (img_path && strlen(img_path) > 0) {
+                const char *real_path = img_path;
+                if (strncmp(real_path, "file://", 7) == 0) real_path += 7;
+                if (access(real_path, R_OK) == 0) {
+                    GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_scale(real_path, 42, 42, TRUE, NULL);
+                    g_variant_unref(v);
+                    if (pb) return pb;
+                }
+            }
+        }
+        g_variant_unref(v);
+    }
     return NULL;
 }
 
@@ -806,7 +1023,7 @@ static GdkPixbuf *extract_pfp_from_hints(GVariant *hints, const char *app_icon, 
     if (hints) {
         static const char *data_keys[] = {
             "image-data", "image_data", "icon_data", "image", "icon",
-            "avatar", "group-icon", "group-avatar", "sender-icon", NULL
+            "avatar", "sender-icon", NULL
         };
         for (int k = 0; data_keys[k]; k++) {
             GVariant *v = g_variant_lookup_value(hints, data_keys[k], NULL);
@@ -2571,6 +2788,13 @@ static void normalize_notification_content(const char *app_name,
                         snprintf(sum, sizeof(sum), "%s", sender);
                         snprintf(bod, sizeof(bod), "%s", clean_action);
                         is_generic_sum = FALSE;
+                    } else if (is_group_indicator_string(sum) && strstr(sum, " • ") == NULL) {
+                        char grp[128] = {0};
+                        snprintf(grp, sizeof(grp), "%s", sum);
+                        g_strstrip(grp);
+                        snprintf(sum, sizeof(sum), "%s • %s", grp, sender);
+                        snprintf(bod, sizeof(bod), "%s", clean_action);
+                        is_generic_sum = FALSE;
                     }
                     break;
                 }
@@ -2815,8 +3039,10 @@ static guint show_notification(const char *app_name, const char *summary, const 
     char *chat_grp = NULL, *chat_snd = NULL;
     parse_chat_conversation(app_name, clean_summary, clean_body, &chat_grp, &chat_snd);
 
-    gboolean is_group_chat = (chat_grp && chat_snd && strlen(chat_grp) > 0 && strlen(chat_snd) > 0 &&
-                              g_ascii_strcasecmp(chat_grp, chat_snd) != 0);
+    gboolean is_group_chat = ((chat_grp && chat_snd && strlen(chat_grp) > 0 && strlen(chat_snd) > 0 &&
+                               g_ascii_strcasecmp(chat_grp, chat_snd) != 0) ||
+                              (chat_grp && is_group_indicator_string(chat_grp)) ||
+                              (strlen(clean_summary) > 0 && is_group_indicator_string(clean_summary)));
 
     /* Extract avatar / PFP or icon (with group & contact avatar cache support) */
     gboolean is_avatar = FALSE;
@@ -2825,20 +3051,31 @@ static guint show_notification(const char *app_name, const char *summary, const 
 
     if (is_group_chat) {
         /* In a group chat, the card avatar MUST be the group icon */
-        pb = load_cached_group_avatar(app_name, chat_grp, &cached_avatar_path);
-        if (pb) {
+        const char *target_group = (chat_grp && strlen(chat_grp) > 0) ? chat_grp : clean_summary;
+        GdkPixbuf *grp_hint_pb = extract_group_avatar_from_hints(hints);
+        if (grp_hint_pb) {
+            cached_avatar_path = cache_group_avatar_pixbuf(grp_hint_pb, app_name, target_group);
+            pb = grp_hint_pb;
             is_avatar = TRUE;
         } else {
-            /* Fallback to app icon, NEVER use an individual sender's face as the group's icon */
-            pb = load_app_icon(icon_name, app_name, 38);
-            is_avatar = FALSE;
+            pb = load_cached_group_avatar(app_name, target_group, &cached_avatar_path);
+            if (pb) {
+                is_avatar = TRUE;
+            } else {
+                /* Fallback to app icon, NEVER use an individual sender's face as the group's icon */
+                pb = load_app_icon(icon_name, app_name, 38);
+                cached_avatar_path = NULL;
+                is_avatar = FALSE;
+            }
         }
 
         /* If hints contained the individual sender's profile picture, cache it under sender's name */
         gboolean snd_is_avatar = FALSE;
         GdkPixbuf *snd_pb = extract_pfp_from_hints(hints, icon_name, &snd_is_avatar);
         if (snd_pb && snd_is_avatar) {
-            cache_avatar_pixbuf(snd_pb, app_name, chat_snd);
+            if (chat_snd && strlen(chat_snd) > 0 && !is_group_indicator_string(chat_snd)) {
+                cache_avatar_pixbuf(snd_pb, app_name, chat_snd);
+            }
             g_object_unref(snd_pb);
         } else if (snd_pb) {
             g_object_unref(snd_pb);
@@ -2847,13 +3084,16 @@ static guint show_notification(const char *app_name, const char *summary, const 
         /* Direct message (DM) or system notification */
         pb = extract_pfp_from_hints(hints, icon_name, &is_avatar);
         if (pb && is_avatar) {
-            cached_avatar_path = cache_avatar_pixbuf(pb, app_name, clean_summary);
+            if (!is_group_indicator_string(clean_summary)) {
+                cached_avatar_path = cache_avatar_pixbuf(pb, app_name, clean_summary);
+            }
         } else {
-            pb = load_cached_group_avatar(app_name, clean_summary, &cached_avatar_path);
+            pb = load_cached_contact_avatar(app_name, clean_summary, &cached_avatar_path);
             if (pb) {
                 is_avatar = TRUE;
             } else {
                 pb = load_app_icon(icon_name, app_name, 38);
+                cached_avatar_path = NULL;
                 is_avatar = FALSE;
             }
         }
