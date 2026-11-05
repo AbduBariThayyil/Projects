@@ -1,5 +1,12 @@
 {
-  "active_agents": {},
+  "active_agents": {
+    "omniview-player-engineer": {
+      "role": "Inbuilt Video Player Architect",
+      "project": "omniview",
+      "registered_at": 1793878355.0234892,
+      "status": "active"
+    }
+  },
   "file_locks": {},
   "session_tasks": []
 }
