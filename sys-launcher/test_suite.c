@@ -199,8 +199,8 @@ static void test_active_monitor_positioning(void) {
     printf("[TEST] Running test_active_monitor_positioning...\n");
 
     GtkWidget *win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_default_size(GTK_WINDOW(win), 480, 420);
-    position_window_on_active_monitor(GTK_WINDOW(win), 480, 420);
+    gtk_window_set_default_size(GTK_WINDOW(win), LAUNCHER_WIDTH, LAUNCHER_HEIGHT);
+    position_window_on_active_monitor(GTK_WINDOW(win), LAUNCHER_WIDTH, LAUNCHER_HEIGHT);
 
     gint win_x = 0, win_y = 0;
     gtk_window_get_position(GTK_WINDOW(win), &win_x, &win_y);
@@ -216,8 +216,8 @@ static void test_active_monitor_positioning(void) {
     GdkRectangle geo;
     gdk_monitor_get_geometry(mon, &geo);
 
-    gint expected_x = geo.x + (geo.width - 480) / 2;
-    gint expected_y = geo.y + (geo.height - 420) / 2;
+    gint expected_x = geo.x + (geo.width - LAUNCHER_WIDTH) / 2;
+    gint expected_y = geo.y + (geo.height - LAUNCHER_HEIGHT) / 2;
 
     printf("  Monitor geo: %dx%d+%d+%d, Window pos: %d,%d, Expected: %d,%d\n",
            geo.width, geo.height, geo.x, geo.y, win_x, win_y, expected_x, expected_y);

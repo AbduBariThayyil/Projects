@@ -18,6 +18,8 @@
 #include <gdk/gdk.h>
 
 #define VERSION "1.2.0"
+#define LAUNCHER_WIDTH 650
+#define LAUNCHER_HEIGHT 560
 
 typedef struct {
     char *id;            /* Desktop ID, e.g. "firefox.desktop" */
@@ -1064,16 +1066,14 @@ static void load_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
     const char *css =
         "window {\n"
-        "  background-color: rgba(30, 30, 46, 0.88);\n"
-        "  border: 1.5px solid rgba(189, 147, 249, 0.85);\n"
-        "  border-radius: 12px;\n"
+        "  background-color: transparent;\n"
         "}\n"
         "#main-box {\n"
         "  padding: 12px;\n"
         "}\n"
         "entry {\n"
-        "  background-color: rgba(40, 42, 54, 0.92);\n"
-        "  border: 1px solid rgba(68, 71, 90, 0.75);\n"
+        "  background-color: rgba(40, 42, 54, 0.95);\n"
+        "  border: 1px solid rgba(68, 71, 90, 0.8);\n"
         "  border-radius: 8px;\n"
         "  color: #f8f8f2;\n"
         "  font-family: 'JetBrainsMono Nerd Font', monospace;\n"
@@ -1093,7 +1093,7 @@ static void load_css(void) {
         "}\n"
         "row {\n"
         "  border-radius: 6px;\n"
-        "  padding: 6px 10px;\n"
+        "  padding: 6px 12px;\n"
         "  margin: 2px 0px;\n"
         "  background-color: transparent;\n"
         "  color: #f8f8f2;\n"
@@ -1335,18 +1335,41 @@ static void populate_apps(void) {
 
 static gboolean on_window_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
     (void)user_data;
-    (void)widget;
-    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.0);
+    int width = gtk_widget_get_allocated_width(widget);
+    int height = gtk_widget_get_allocated_height(widget);
+
+    /* Clear to transparent alpha first */
     cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
     cairo_paint(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-    return FALSE; /* Let GTK CSS render on top of cleared transparent surface */
+
+    /* Draw rounded rectangle with dark Catppuccin Mocha base */
+    double radius = 12.0;
+    double degrees = G_PI / 180.0;
+
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, width - radius, radius, radius, -90 * degrees, 0 * degrees);
+    cairo_arc(cr, width - radius, height - radius, radius, 0 * degrees, 90 * degrees);
+    cairo_arc(cr, radius, height - radius, radius, 90 * degrees, 180 * degrees);
+    cairo_arc(cr, radius, radius, radius, 180 * degrees, 270 * degrees);
+    cairo_close_path(cr);
+
+    /* Fill with rich dark Catppuccin Mocha (#1e1e2e at 0.95 opacity - readable, not completely transparent) */
+    cairo_set_source_rgba(cr, 30.0/255.0, 30.0/255.0, 46.0/255.0, 0.95);
+    cairo_fill_preserve(cr);
+
+    /* Stroke glowing border (#bd93f9 Dracula purple) */
+    cairo_set_source_rgba(cr, 189.0/255.0, 147.0/255.0, 249.0/255.0, 0.90);
+    cairo_set_line_width(cr, 1.5);
+    cairo_stroke(cr);
+
+    return FALSE;
 }
 
 static gboolean on_window_map(GtkWidget *widget, GdkEvent *event, gpointer user_data) {
     (void)event;
     (void)user_data;
-    position_window_on_active_monitor(GTK_WINDOW(widget), 480, 420);
+    position_window_on_active_monitor(GTK_WINDOW(widget), LAUNCHER_WIDTH, LAUNCHER_HEIGHT);
     return GDK_EVENT_PROPAGATE;
 }
 
@@ -1361,8 +1384,8 @@ static void build_ui(void) {
                          app_state.is_toggle_mode ? "sys-launcher --toggle" : "sys-launcher");
     gtk_window_set_decorated(GTK_WINDOW(app_state.window), FALSE);
     gtk_window_set_position(GTK_WINDOW(app_state.window), GTK_WIN_POS_NONE);
-    gtk_window_set_default_size(GTK_WINDOW(app_state.window), 480, 420);
-    gtk_widget_set_size_request(app_state.window, 480, 420);
+    gtk_window_set_default_size(GTK_WINDOW(app_state.window), LAUNCHER_WIDTH, LAUNCHER_HEIGHT);
+    gtk_widget_set_size_request(app_state.window, LAUNCHER_WIDTH, LAUNCHER_HEIGHT);
     gtk_window_set_skip_taskbar_hint(GTK_WINDOW(app_state.window), TRUE);
     gtk_window_set_skip_pager_hint(GTK_WINDOW(app_state.window), TRUE);
     gtk_window_set_type_hint(GTK_WINDOW(app_state.window), GDK_WINDOW_TYPE_HINT_DIALOG);
@@ -1460,9 +1483,9 @@ static void build_ui(void) {
     gtk_widget_add_events(app_state.window, GDK_FOCUS_CHANGE_MASK);
     g_signal_connect(app_state.window, "focus-out-event", G_CALLBACK(on_window_focus_out), NULL);
 
-    position_window_on_active_monitor(GTK_WINDOW(app_state.window), 480, 420);
+    position_window_on_active_monitor(GTK_WINDOW(app_state.window), LAUNCHER_WIDTH, LAUNCHER_HEIGHT);
     gtk_widget_show_all(app_state.window);
-    position_window_on_active_monitor(GTK_WINDOW(app_state.window), 480, 420);
+    position_window_on_active_monitor(GTK_WINDOW(app_state.window), LAUNCHER_WIDTH, LAUNCHER_HEIGHT);
 
     gtk_widget_grab_focus(app_state.entry);
     select_first_visible_row(GTK_LIST_BOX(app_state.listbox));
