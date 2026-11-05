@@ -175,6 +175,10 @@ typedef struct NotificationItem {
     double progress;
     gboolean is_hovered; /* True when mouse cursor is hovering over the card */
     guint anim_timer_id;
+    gboolean is_battery_alert;
+    gboolean is_battery_critical; /* <= 10% */
+    gboolean is_battery_emergency;/* <= 5% */
+    int battery_pct;              /* e.g. 5, 10, or -1 if unknown */
     struct NotificationItem *next;
 } NotificationItem;
 
@@ -188,6 +192,9 @@ static PangoFontDescription *f_badge = NULL;
 static PangoFontDescription *f_group = NULL;
 static PangoFontDescription *f_osd_icon = NULL;
 static PangoFontDescription *f_osd_pct = NULL;
+static PangoFontDescription *f_bat_icon = NULL;
+static PangoFontDescription *f_bat_title = NULL;
+static PangoFontDescription *f_bat_pill = NULL;
 
 static void init_fonts(void) {
     if (!f_app) f_app = pango_font_description_from_string("JetBrains Mono Bold 9");
@@ -197,6 +204,9 @@ static void init_fonts(void) {
     if (!f_group) f_group = pango_font_description_from_string("JetBrains Mono Bold 8");
     if (!f_osd_icon) f_osd_icon = pango_font_description_from_string("JetBrainsMono Nerd Font 13");
     if (!f_osd_pct) f_osd_pct = pango_font_description_from_string("JetBrains Mono Bold 10");
+    if (!f_bat_icon) f_bat_icon = pango_font_description_from_string("JetBrainsMono Nerd Font Bold 22");
+    if (!f_bat_title) f_bat_title = pango_font_description_from_string("JetBrains Mono Bold 11");
+    if (!f_bat_pill) f_bat_pill = pango_font_description_from_string("JetBrains Mono Bold 8.5");
 }
 
 /* Helper: draw rounded rectangle */
@@ -226,7 +236,215 @@ static void init_visual() {
     }
 }
 
-/* Debounced sound triggers with spam volume lowering */
+/* ==========================================================================
+ * Native Battery & Power Monitor State & Audio Dispatch
+ * ========================================================================== */
+static char g_bat_path[256] = {0};
+static char g_bat_last_status[32] = {0};
+static gboolean g_bat_alert_20 = FALSE;
+static gboolean g_bat_alert_10 = FALSE;
+static gboolean g_bat_alert_5 = FALSE;
+static gboolean g_bat_alert_full = FALSE;
+
+static void init_battery_monitor(void) {
+    if (access("/sys/class/power_supply/BAT1", F_OK) == 0) {
+        snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/BAT1");
+    } else if (access("/sys/class/power_supply/BAT0", F_OK) == 0) {
+        snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/BAT0");
+    } else {
+        GDir *dir = g_dir_open("/sys/class/power_supply", 0, NULL);
+        if (dir) {
+            const char *name;
+            while ((name = g_dir_read_name(dir)) != NULL) {
+                if (g_str_has_prefix(name, "BAT")) {
+                    snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/%s", name);
+                    break;
+                }
+            }
+            g_dir_close(dir);
+        }
+    }
+
+    if (g_bat_path[0] != '\0') {
+        char path_st[300];
+        snprintf(path_st, sizeof(path_st), "%s/status", g_bat_path);
+        FILE *f = fopen(path_st, "r");
+        if (f) {
+            if (fgets(g_bat_last_status, sizeof(g_bat_last_status), f)) {
+                g_strstrip(g_bat_last_status);
+            }
+            fclose(f);
+        }
+    }
+}
+
+static int get_current_battery_capacity(void) {
+    if (g_bat_path[0] == '\0') {
+        init_battery_monitor();
+    }
+    if (g_bat_path[0] == '\0') return -1;
+
+    char path_cap[300];
+    snprintf(path_cap, sizeof(path_cap), "%s/capacity", g_bat_path);
+    FILE *f = fopen(path_cap, "r");
+    if (!f) return -1;
+    int cap = -1;
+    if (fscanf(f, "%d", &cap) != 1) cap = -1;
+    fclose(f);
+    return cap;
+}
+
+/* Detect any battery low/critical warning and extract remaining percentage */
+static gboolean detect_battery_alert(const char *app, const char *sum, const char *bod, guint8 urgency, int *out_pct) {
+    if (out_pct) *out_pct = -1;
+    if (!app && !sum) return FALSE;
+
+    /* Filter out harmless AC and charged notifications */
+    if (sum) {
+        if (strcasestr(sum, "AC Power") || strcasestr(sum, "Connected") ||
+            strcasestr(sum, "Fully Charged") || strcasestr(sum, "Charged") ||
+            strcasestr(sum, "Disconnected")) {
+            return FALSE;
+        }
+    }
+    if (bod) {
+        if (strcasestr(bod, "now charging") || strcasestr(bod, "Fully Charged") ||
+            strcasestr(bod, "Charger Disconnected")) {
+            return FALSE;
+        }
+    }
+
+    if (app && (strcasestr(app, "whatsapp") || strcasestr(app, "telegram") ||
+                strcasestr(app, "discord") || strcasestr(app, "slack") ||
+                strcasestr(app, "instagram"))) {
+        return FALSE;
+    }
+
+    gboolean is_pm = (app && (strcasestr(app, "Power Manager") || strcasestr(app, "power-manager") ||
+                              strcasestr(app, "upower") || strcasestr(app, "battery")));
+    gboolean has_bat = ((sum && strcasestr(sum, "battery") != NULL) ||
+                        (bod && strcasestr(bod, "battery") != NULL) ||
+                        (app && strcasestr(app, "battery") != NULL));
+    gboolean has_warn_word = ((sum && (strcasestr(sum, "warn") || strcasestr(sum, "crit") ||
+                                       strcasestr(sum, "emerg") || strcasestr(sum, "low") ||
+                                       strcasestr(sum, "empty") || strcasestr(sum, "caution"))) ||
+                              (bod && (strcasestr(bod, "warn") || strcasestr(bod, "crit") ||
+                                       strcasestr(bod, "emerg") || strcasestr(bod, "low") ||
+                                       strcasestr(bod, "empty") || strcasestr(bod, "caution"))));
+    gboolean has_urg = (urgency == 2);
+
+    if ((is_pm || has_bat) && (has_warn_word || has_urg)) {
+        int pct = -1;
+        /* Look for digits followed by % in sum */
+        if (sum) {
+            const char *p = sum;
+            while (*p) {
+                if (g_ascii_isdigit(*p)) {
+                    int val = atoi(p);
+                    const char *q = p;
+                    while (g_ascii_isdigit(*q)) q++;
+                    if (*q == '%' || (val >= 1 && val <= 100)) {
+                        pct = val;
+                        break;
+                    }
+                    p = q;
+                } else {
+                    p++;
+                }
+            }
+        }
+        /* Look in bod if not found in sum */
+        if (pct < 0 && bod) {
+            const char *p = bod;
+            while (*p) {
+                if (g_ascii_isdigit(*p)) {
+                    int val = atoi(p);
+                    const char *q = p;
+                    while (g_ascii_isdigit(*q)) q++;
+                    if (*q == '%' || (val >= 1 && val <= 100)) {
+                        pct = val;
+                        break;
+                    }
+                    p = q;
+                } else {
+                    p++;
+                }
+            }
+        }
+        /* Fallback to sysfs capacity if still not found */
+        if (pct < 0) {
+            pct = get_current_battery_capacity();
+        }
+        /* Fallback if sysfs has no battery or desktop: infer from urgency / keywords */
+        if (pct < 0) {
+            if ((sum && strcasestr(sum, "emerg")) || (bod && strcasestr(bod, "emerg"))) pct = 5;
+            else if (urgency == 2 || (sum && strcasestr(sum, "crit")) || (bod && strcasestr(bod, "crit"))) pct = 10;
+            else pct = 20;
+        }
+
+        if (pct > 20 && !has_warn_word && !has_urg) {
+            return FALSE;
+        }
+
+        if (out_pct) *out_pct = pct;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* Dedicated Battery Audio Alert Engine (PipeWire / PulseAudio / MPV native audio) */
+static void play_battery_alert_audio(int tier) {
+    /* Debounce rapid repeat triggers within 1 second */
+    static gint64 last_bat_sound_time = 0;
+    gint64 now = g_get_monotonic_time();
+    if (now - last_bat_sound_time < 1000000) {
+        return;
+    }
+    last_bat_sound_time = now;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        setsid();
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+
+        /* 1. Unmute default sink to ensure emergency sounds are audible */
+        system("pactl set-sink-mute @DEFAULT_SINK@ 0 2>/dev/null");
+
+        /* 2. Determine sound file and repetition based on urgency tier */
+        const char *sound_file;
+        int repeat_count = 1;
+
+        if (tier <= 5) {
+            /* <= 5%: urgent repeated loud alarm */
+            sound_file = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga";
+            repeat_count = 2;
+        } else if (tier <= 10) {
+            /* <= 10%: loud warning alarm sound */
+            sound_file = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga";
+            repeat_count = 1;
+        } else {
+            /* <= 20%: audible warning chime */
+            sound_file = "/usr/share/sounds/freedesktop/stereo/dialog-warning.oga";
+            repeat_count = 1;
+        }
+
+        for (int i = 0; i < repeat_count; i++) {
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd),
+                     "pw-play --volume 1.0 '%s' 2>/dev/null || "
+                     "paplay --volume 65536 '%s' 2>/dev/null || "
+                     "mpv --no-video --volume=100 '%s' 2>/dev/null || "
+                     "canberra-gtk-play -f '%s' 2>/dev/null",
+                     sound_file, sound_file, sound_file, sound_file);
+            system(cmd);
+        }
+        _exit(0);
+    }
+}
+
+/* Debounced sound triggers with spam volume lowering and PipeWire fallback */
 static void play_sound(const char *sound_id) {
     gint64 now = g_get_monotonic_time();
     gint64 delta_us = now - last_sound_time;
@@ -238,22 +456,36 @@ static void play_sound(const char *sound_id) {
 
     /* Lower volume if messages are spamming in rapid succession */
     const char *vol_db = NULL;
+    const char *pw_vol = "1.0";
     if (delta_us < 800000) {
         vol_db = "-18.0";
+        pw_vol = "0.2";
     } else if (delta_us < 2000000) {
         vol_db = "-10.0";
+        pw_vol = "0.5";
     }
 
     pid_t pid = fork();
     if (pid == 0) {
+        setsid();
         close(STDIN_FILENO);
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
+        char cmd[512];
         if (vol_db) {
-            execlp("canberra-gtk-play", "canberra-gtk-play", "-i", sound_id, "-V", vol_db, (char *)NULL);
+            snprintf(cmd, sizeof(cmd),
+                     "canberra-gtk-play -i '%s' -V '%s' 2>/dev/null || "
+                     "pw-play --volume %s '/usr/share/sounds/freedesktop/stereo/%s.oga' 2>/dev/null || "
+                     "paplay '/usr/share/sounds/freedesktop/stereo/%s.oga' 2>/dev/null",
+                     sound_id, vol_db, pw_vol, sound_id, sound_id);
         } else {
-            execlp("canberra-gtk-play", "canberra-gtk-play", "-i", sound_id, (char *)NULL);
+            snprintf(cmd, sizeof(cmd),
+                     "canberra-gtk-play -i '%s' 2>/dev/null || "
+                     "pw-play --volume 1.0 '/usr/share/sounds/freedesktop/stereo/%s.oga' 2>/dev/null || "
+                     "paplay '/usr/share/sounds/freedesktop/stereo/%s.oga' 2>/dev/null",
+                     sound_id, sound_id, sound_id);
         }
+        execlp("sh", "sh", "-c", cmd, (char *)NULL);
         _exit(0);
     }
 }
@@ -955,14 +1187,21 @@ static void show_osd(const char *type, int percent, gboolean is_muted, const cha
  * ------------------------------------------------------------- */
 static void reposition_notifications() {
     int screen_w = DisplayWidth(dpy, screen);
-    int current_y = 45; /* Below Polybar */
+    int normal_y = 45;  /* Below Polybar, right edge */
+    int battery_y = 45; /* Below Polybar, screen top middle */
     NotificationItem *cur = notif_list;
 
     while (cur) {
-        cur->x = screen_w - cur->width - 16;
-        cur->y = current_y;
+        if (cur->is_battery_alert) {
+            cur->x = (screen_w - cur->width) / 2;
+            cur->y = battery_y;
+            battery_y += cur->height + 10;
+        } else {
+            cur->x = screen_w - cur->width - 16;
+            cur->y = normal_y;
+            normal_y += cur->height + 10;
+        }
         XMoveWindow(dpy, cur->win, cur->x, cur->y);
-        current_y += cur->height + 10;
         cur = cur->next;
     }
     XFlush(dpy);
@@ -1249,6 +1488,11 @@ static NotificationItem *find_group_match(const char *app_name, const char *summ
             if (summaries_match(summary, cur->summary)) {
                 return cur;
             }
+            if ((strcasestr(app_name, "Power") || strcasestr(app_name, "Battery")) &&
+                (cur->is_battery_alert || (cur->summary && strcasestr(cur->summary, "Battery"))) &&
+                (summary && (strcasestr(summary, "Battery") || strcasestr(summary, "Alert") || strcasestr(summary, "EMERGENCY")))) {
+                return cur;
+            }
         }
         cur = cur->next;
     }
@@ -1365,7 +1609,7 @@ static void prune_oldest_notif_if_needed(void) {
         NotificationItem *oldest_non_crit = NULL;
         NotificationItem *cur = notif_list;
         while (cur) {
-            if (cur->urgency < 2) {
+            if (cur->urgency < 2 && !cur->is_battery_alert) {
                 oldest_non_crit = cur;
             }
             cur = cur->next;
@@ -1417,15 +1661,35 @@ static void render_notification(NotificationItem *item) {
     cairo_paint(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
+    /* Glowing aura for scary critical battery alert */
+    if (item->is_battery_critical) {
+        draw_rounded_rect(cr, 1.5, 1.5, w - 3.0, h - 3.0, 12.0);
+        cairo_set_source_rgba(cr, 1.0, 0.333, 0.333, 0.25);
+        cairo_set_line_width(cr, 4.5);
+        cairo_stroke(cr);
+    }
+
     /* Background Card */
     draw_rounded_rect(cr, 1.0, 1.0, w - 2.0, h - 2.0, 12.0);
-    cairo_set_source_rgba(cr, COLOR_BASE_R, COLOR_BASE_G, COLOR_BASE_B, COLOR_BASE_A);
+    if (item->is_battery_critical) {
+        /* Dark red emergency background tint: #2b141d */
+        cairo_set_source_rgba(cr, 43.0 / 255.0, 20.0 / 255.0, 29.0 / 255.0, 0.98);
+    } else {
+        cairo_set_source_rgba(cr, COLOR_BASE_R, COLOR_BASE_G, COLOR_BASE_B, COLOR_BASE_A);
+    }
     cairo_fill_preserve(cr);
 
-    /* Border with subtle accent (Catppuccin Red for Critical Urgency) */
-    if (item->urgency == 2) {
+    /* Border with subtle accent (Catppuccin Red for Critical Urgency, glowing #ff5555 for battery critical) */
+    if (item->is_battery_critical) {
+        /* Prominent red glowing border: 2.5px solid #ff5555 */
+        cairo_set_source_rgba(cr, 1.0, 0.333, 0.333, 1.0);
+        cairo_set_line_width(cr, 2.5);
+    } else if (item->urgency == 2) {
         cairo_set_source_rgba(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B, 0.85);
         cairo_set_line_width(cr, 1.8);
+    } else if (item->is_battery_alert) {
+        cairo_set_source_rgba(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B, 0.85);
+        cairo_set_line_width(cr, 1.5);
     } else {
         cairo_set_source_rgba(cr, COLOR_SURFACE_R, COLOR_SURFACE_G, COLOR_SURFACE_B, 0.9);
         cairo_set_line_width(cr, 1.2);
@@ -1434,8 +1698,12 @@ static void render_notification(NotificationItem *item) {
 
     /* Left accent vertical indicator strip (Red for Critical, Blue for Normal/Low) */
     draw_rounded_rect(cr, 3.0, 10.0, 4.0, h - 20.0, 2.0);
-    if (item->urgency == 2) {
+    if (item->is_battery_critical) {
+        cairo_set_source_rgb(cr, 1.0, 0.25, 0.25);
+    } else if (item->urgency == 2) {
         cairo_set_source_rgb(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B);
+    } else if (item->is_battery_alert) {
+        cairo_set_source_rgb(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B);
     } else {
         cairo_set_source_rgb(cr, COLOR_BLUE_R, COLOR_BLUE_G, COLOR_BLUE_B);
     }
@@ -1443,11 +1711,45 @@ static void render_notification(NotificationItem *item) {
 
     /* App Icon / PFP Rendering */
     int content_x = 18;
-    int icon_size = 38;
+    int icon_size = 40;
     int icon_x = 16;
     int icon_y = 16;
 
-    if (item->icon_surf) {
+    if (item->is_battery_critical) {
+        /* Prominent large warning icon/glyph: 󰂃 or 󰁺 in red glowing container */
+        draw_rounded_rect(cr, icon_x, icon_y, icon_size, icon_size, 9.0);
+        cairo_set_source_rgba(cr, 1.0, 0.25, 0.25, 0.22);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, 1.0, 0.333, 0.333, 0.9);
+        cairo_set_line_width(cr, 1.5);
+        cairo_stroke(cr);
+
+        PangoLayout *layout_bat = pango_cairo_create_layout(cr);
+        pango_layout_set_font_description(layout_bat, f_bat_icon);
+        pango_layout_set_text(layout_bat, (item->is_battery_emergency ? "󰁺" : "󰂃"), -1);
+        cairo_set_source_rgb(cr, 1.0, 0.333, 0.333); /* Bold warning red #ff5555 */
+        cairo_move_to(cr, icon_x + 8, icon_y + 4);
+        pango_cairo_show_layout(cr, layout_bat);
+        g_object_unref(layout_bat);
+        content_x = 68;
+    } else if (item->is_battery_alert) {
+        /* Mild 20% warning glyph in peach container */
+        draw_rounded_rect(cr, icon_x, icon_y, icon_size, icon_size, 9.0);
+        cairo_set_source_rgba(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B, 0.20);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B, 0.85);
+        cairo_set_line_width(cr, 1.2);
+        cairo_stroke(cr);
+
+        PangoLayout *layout_bat = pango_cairo_create_layout(cr);
+        pango_layout_set_font_description(layout_bat, f_bat_icon);
+        pango_layout_set_text(layout_bat, "󰂃", -1);
+        cairo_set_source_rgb(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B);
+        cairo_move_to(cr, icon_x + 8, icon_y + 4);
+        pango_cairo_show_layout(cr, layout_bat);
+        g_object_unref(layout_bat);
+        content_x = 68;
+    } else if (item->icon_surf) {
         cairo_surface_t *surf = item->icon_surf;
         cairo_save(cr);
         if (item->is_avatar) {
@@ -1529,8 +1831,54 @@ static void render_notification(NotificationItem *item) {
     cairo_move_to(cr, content_x, 12);
     pango_cairo_show_layout(cr, layout);
 
-    /* Pill Badges in top-right (Messages pill and Reels pill) */
+    /* Pill Badges in top-right (Battery % pill, Messages pill and Reels pill) */
     double cur_pill_right = (double)w - 30.0; /* to the left of the close button */
+
+    /* 0. Battery Percentage Pill Badge */
+    if (item->is_battery_alert && item->battery_pct >= 0) {
+        char bat_txt[32];
+        if (item->is_battery_emergency) {
+            snprintf(bat_txt, sizeof(bat_txt), "󰁺 %d%% IMMINENT", item->battery_pct);
+        } else if (item->is_battery_critical) {
+            snprintf(bat_txt, sizeof(bat_txt), "󰂃 %d%% CRITICAL", item->battery_pct);
+        } else {
+            snprintf(bat_txt, sizeof(bat_txt), "󰂃 %d%% LOW", item->battery_pct);
+        }
+
+        PangoLayout *layout_bat_pill = pango_cairo_create_layout(cr);
+        pango_layout_set_font_description(layout_bat_pill, f_bat_pill ? f_bat_pill : f_group);
+        pango_layout_set_text(layout_bat_pill, bat_txt, -1);
+
+        int text_w = 0, text_h = 0;
+        pango_layout_get_pixel_size(layout_bat_pill, &text_w, &text_h);
+
+        double pill_w = text_w + 14.0;
+        double pill_h = 17.0;
+        double pill_x = cur_pill_right - pill_w;
+        double pill_y = 10.0;
+
+        draw_rounded_rect(cr, pill_x, pill_y, pill_w, pill_h, 8.5);
+        if (item->is_battery_critical) {
+            cairo_set_source_rgba(cr, 1.0, 0.2, 0.2, 0.25);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgba(cr, 1.0, 0.333, 0.333, 0.9);
+            cairo_set_line_width(cr, 1.0);
+            cairo_stroke(cr);
+            cairo_set_source_rgb(cr, 1.0, 0.333, 0.333);
+        } else {
+            cairo_set_source_rgba(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B, 0.22);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgba(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B, 0.6);
+            cairo_set_line_width(cr, 1.0);
+            cairo_stroke(cr);
+            cairo_set_source_rgb(cr, COLOR_PEACH_R, COLOR_PEACH_G, COLOR_PEACH_B);
+        }
+        cairo_move_to(cr, pill_x + 7.0, pill_y + 1.5);
+        pango_cairo_show_layout(cr, layout_bat_pill);
+        g_object_unref(layout_bat_pill);
+
+        cur_pill_right = pill_x - 6.0;
+    }
 
     /* 1. Reel Pill Badge (Catppuccin Pink/Mauve) */
     if (item->reel_count > 0) {
@@ -1609,7 +1957,11 @@ static void render_notification(NotificationItem *item) {
     pango_cairo_show_layout(cr, layout);
 
     /* Title / Summary */
-    pango_layout_set_font_description(layout, f_sum);
+    if (item->is_battery_critical) {
+        pango_layout_set_font_description(layout, f_bat_title ? f_bat_title : f_sum);
+    } else {
+        pango_layout_set_font_description(layout, f_sum);
+    }
     pango_layout_set_width(layout, text_available_w * PANGO_SCALE);
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
@@ -1621,7 +1973,11 @@ static void render_notification(NotificationItem *item) {
     int sum_w = 0, sum_h = 0;
     pango_layout_get_pixel_size(layout, &sum_w, &sum_h);
 
-    cairo_set_source_rgb(cr, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+    if (item->is_battery_critical) {
+        cairo_set_source_rgb(cr, 1.0, 0.333, 0.333); /* Bold warning red #ff5555 */
+    } else {
+        cairo_set_source_rgb(cr, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+    }
     cairo_move_to(cr, content_x, 30);
     pango_cairo_show_layout(cr, layout);
 
@@ -1713,16 +2069,27 @@ static void render_notification(NotificationItem *item) {
     cairo_set_source_rgba(cr, COLOR_SURFACE_R, COLOR_SURFACE_G, COLOR_SURFACE_B, 0.45);
     cairo_fill(cr);
 
-    /* Active progress bar shrinking backwards (Red for Critical Urgency, White for Normal) */
+    /* Active progress bar shrinking backwards (Red glowing for Battery Critical, Red for Critical Urgency, White for Normal) */
     double cur_w = bar_w_total * p;
     if (cur_w > 1.0) {
-        draw_rounded_rect(cr, bar_margin, bar_y, cur_w, bar_h, 1.25);
-        if (item->urgency == 2) {
+        if (item->is_battery_critical) {
+            /* Urgent backward-shrinking progress countdown bar (red glowing) */
+            draw_rounded_rect(cr, bar_margin - 0.5, bar_y - 0.5, cur_w + 1.0, bar_h + 1.0, 1.5);
+            cairo_set_source_rgba(cr, 1.0, 0.333, 0.333, 0.35); /* Outer glow */
+            cairo_fill(cr);
+
+            draw_rounded_rect(cr, bar_margin, bar_y, cur_w, bar_h, 1.25);
+            cairo_set_source_rgba(cr, 1.0, 0.333, 0.333, 1.0); /* Glowing red #ff5555 */
+            cairo_fill(cr);
+        } else if (item->urgency == 2) {
+            draw_rounded_rect(cr, bar_margin, bar_y, cur_w, bar_h, 1.25);
             cairo_set_source_rgba(cr, COLOR_RED_R, COLOR_RED_G, COLOR_RED_B, 0.95); /* Vivid Red */
+            cairo_fill(cr);
         } else {
+            draw_rounded_rect(cr, bar_margin, bar_y, cur_w, bar_h, 1.25);
             cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.85); /* Clean white */
+            cairo_fill(cr);
         }
-        cairo_fill(cr);
     }
 
     /* Atomically blit the complete rendered frame to the window in a single operation */
@@ -2413,6 +2780,13 @@ static guint show_notification(const char *app_name, const char *summary, const 
         }
     }
 
+    /* Battery Alert Detection & Classification */
+    int bat_pct = -1;
+    gboolean is_bat = detect_battery_alert(app_name, clean_summary, clean_body, urgency, &bat_pct);
+    if (is_bat && (bat_pct <= 10 || urgency == 2)) {
+        urgency = 2; /* Force critical urgency so emergency battery alerts bypass DND */
+    }
+
     /* Do Not Disturb mode: Critical urgency (2) bypasses DND so emergency alerts are never missed */
     if (is_dnd_active() && urgency < 2) {
         if (!is_transient) {
@@ -2562,6 +2936,16 @@ static guint show_notification(const char *app_name, const char *summary, const 
             pb = NULL;
         }
 
+        if (is_bat) {
+            existing->is_battery_alert = TRUE;
+            existing->battery_pct = bat_pct;
+            existing->is_battery_critical = (bat_pct <= 10 || urgency == 2);
+            existing->is_battery_emergency = (bat_pct <= 5);
+            if (existing->is_battery_critical) {
+                existing->urgency = 2;
+            }
+        }
+
         /* Dynamic card height to fit stacked messages */
         int needed_h = calculate_notification_height(existing->summary, existing->messages, existing->msg_count, existing->total_msgs, existing->latest_reel_text, existing->width);
         if (existing->height != needed_h) {
@@ -2572,6 +2956,8 @@ static guint show_notification(const char *app_name, const char *summary, const 
             existing->surface = cairo_xlib_surface_create(dpy, existing->win, visual, existing->width, existing->height);
             existing->cr = cairo_create(existing->surface);
             reposition_notifications();
+        } else if (is_bat) {
+            reposition_notifications();
         }
 
         if (urgency > existing->urgency) {
@@ -2579,7 +2965,13 @@ static guint show_notification(const char *app_name, const char *summary, const 
         }
 
         int to = timeout_ms > 0 ? timeout_ms : 5000;
-        if (existing->urgency == 2 && to < 20000) {
+        if (existing->is_battery_emergency && to < 20000) {
+            to = 20000;
+        } else if (existing->is_battery_critical && to < 15000) {
+            to = 15000;
+        } else if (existing->is_battery_alert && to < 8000) {
+            to = 8000;
+        } else if (existing->urgency == 2 && to < 20000) {
             to = 20000;
         }
         existing->start_time_us = g_get_monotonic_time();
@@ -2593,7 +2985,9 @@ static guint show_notification(const char *app_name, const char *summary, const 
         cairo_surface_flush(existing->surface);
         XFlush(dpy);
 
-        if (existing->urgency == 2) {
+        if (is_bat) {
+            play_battery_alert_audio(bat_pct);
+        } else if (existing->urgency == 2) {
             play_sound("dialog-warning");
         } else {
             play_sound("message");
@@ -2641,7 +3035,7 @@ static guint show_notification(const char *app_name, const char *summary, const 
     int h = calculate_notification_height(display_title, init_messages, init_msgs, init_total, init_reel_text, w);
 
     int screen_w = DisplayWidth(dpy, screen);
-    int x = screen_w - w - 16;
+    int x = is_bat ? ((screen_w - w) / 2) : (screen_w - w - 16);
     int y = 45;
 
     /* Burst queue throttling: ensure at most MAX_VISIBLE_NOTIFS cards exist simultaneously */
@@ -2700,6 +3094,15 @@ static guint show_notification(const char *app_name, const char *summary, const 
     item->height = h;
     item->x = x;
     item->y = y;
+    item->is_battery_alert = is_bat;
+    item->battery_pct = bat_pct;
+    if (is_bat) {
+        item->is_battery_critical = (bat_pct <= 10 || urgency == 2);
+        item->is_battery_emergency = (bat_pct <= 5);
+        if (item->is_battery_critical) {
+            item->urgency = 2;
+        }
+    }
     item->surface = cairo_xlib_surface_create(dpy, win, visual, w, h);
     item->cr = cairo_create(item->surface);
 
@@ -2714,8 +3117,10 @@ static guint show_notification(const char *app_name, const char *summary, const 
     XMapRaised(dpy, win);
     XFlush(dpy);
 
-    /* Play distinct chime: warning sound for critical urgency, message chime otherwise */
-    if (item->urgency == 2) {
+    /* Play audio: dedicated PipeWire audio engine for battery alerts, or chime */
+    if (is_bat) {
+        play_battery_alert_audio(bat_pct);
+    } else if (item->urgency == 2) {
         play_sound("dialog-warning");
     } else {
         play_sound("message");
@@ -2737,7 +3142,13 @@ static guint show_notification(const char *app_name, const char *summary, const 
     free(chat_snd);
 
     int to = timeout_ms > 0 ? timeout_ms : 5000;
-    if (item->urgency == 2 && to < 20000) {
+    if (item->is_battery_emergency && to < 20000) {
+        to = 20000;
+    } else if (item->is_battery_critical && to < 15000) {
+        to = 15000;
+    } else if (item->is_battery_alert && to < 8000) {
+        to = 8000;
+    } else if (item->urgency == 2 && to < 20000) {
         to = 20000;
     }
     item->start_time_us = g_get_monotonic_time();
@@ -2752,44 +3163,6 @@ static guint show_notification(const char *app_name, const char *summary, const 
  * Native Low-Overhead Battery & Power Monitor
  * Replaces external Bash daemon (0 extra RAM, microsecond direct sysfs read)
  * ========================================================================== */
-static char g_bat_path[256] = {0};
-static char g_bat_last_status[32] = {0};
-static gboolean g_bat_alert_20 = FALSE;
-static gboolean g_bat_alert_10 = FALSE;
-static gboolean g_bat_alert_5 = FALSE;
-static gboolean g_bat_alert_full = FALSE;
-
-static void init_battery_monitor(void) {
-    if (access("/sys/class/power_supply/BAT1", F_OK) == 0) {
-        snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/BAT1");
-    } else if (access("/sys/class/power_supply/BAT0", F_OK) == 0) {
-        snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/BAT0");
-    } else {
-        GDir *dir = g_dir_open("/sys/class/power_supply", 0, NULL);
-        if (dir) {
-            const char *name;
-            while ((name = g_dir_read_name(dir)) != NULL) {
-                if (g_str_has_prefix(name, "BAT")) {
-                    snprintf(g_bat_path, sizeof(g_bat_path), "/sys/class/power_supply/%s", name);
-                    break;
-                }
-            }
-            g_dir_close(dir);
-        }
-    }
-
-    if (g_bat_path[0] != '\0') {
-        char path_st[300];
-        snprintf(path_st, sizeof(path_st), "%s/status", g_bat_path);
-        FILE *f = fopen(path_st, "r");
-        if (f) {
-            if (fgets(g_bat_last_status, sizeof(g_bat_last_status), f)) {
-                g_strstrip(g_bat_last_status);
-            }
-            fclose(f);
-        }
-    }
-}
 
 static gboolean battery_monitor_tick(gpointer user_data) {
     (void)user_data;
@@ -2825,6 +3198,16 @@ static gboolean battery_monitor_tick(gpointer user_data) {
     /* 1. Charger connected transition */
     if (!is_discharging) {
         if (strlen(g_bat_last_status) > 0 && g_ascii_strcasecmp(g_bat_last_status, "Discharging") == 0) {
+            /* Dismiss any open battery alert cards when charger is connected */
+            NotificationItem *cur = notif_list;
+            while (cur) {
+                NotificationItem *next = cur->next;
+                if (cur->is_battery_alert) {
+                    notif_timeout_callback(cur);
+                }
+                cur = next;
+            }
+
             char body[128];
             snprintf(body, sizeof(body), "Battery is now charging (%d%%).", capacity);
             show_notification("Power Manager", "AC Power Connected", body, "battery-charging", NULL, NULL, 5000, 0);
@@ -2874,7 +3257,6 @@ static gboolean battery_monitor_tick(gpointer user_data) {
             snprintf(sum, sizeof(sum), "EMERGENCY: Battery at %d%%", capacity);
             snprintf(bod, sizeof(bod), "System will shut down imminently! Plug in your charger immediately.");
             show_notification("Power Manager", sum, bod, "battery-empty", hints, NULL, 20000, 0);
-            play_sound("alarm-clock-elapsed");
             g_bat_alert_5 = TRUE;
         }
     } else if (capacity <= 10) {
@@ -2888,7 +3270,6 @@ static gboolean battery_monitor_tick(gpointer user_data) {
             snprintf(sum, sizeof(sum), "Critical Battery Alert (%d%%)", capacity);
             snprintf(bod, sizeof(bod), "Battery level is critical! Please connect your charger to avoid data loss.");
             show_notification("Power Manager", sum, bod, "battery-empty", hints, NULL, 15000, 0);
-            play_sound("dialog-warning");
             g_bat_alert_10 = TRUE;
         }
     } else if (capacity <= 20) {
@@ -2897,7 +3278,6 @@ static gboolean battery_monitor_tick(gpointer user_data) {
             snprintf(sum, sizeof(sum), "Low Battery Warning (%d%%)", capacity);
             snprintf(bod, sizeof(bod), "Battery is running low. Please connect your charger.");
             show_notification("Power Manager", sum, bod, "battery-caution", NULL, NULL, 8000, 0);
-            play_sound("dialog-information");
             g_bat_alert_20 = TRUE;
         }
     }
@@ -3323,8 +3703,18 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    /* Fast single-instance check for daemon mode */
-    const char *lock_file = "/tmp/.sys_notif_daemon.pid";
+    /* Fast single-instance check for daemon mode (display-scoped to permit isolated headless testing) */
+    char lock_file[128];
+    const char *disp_str = getenv("DISPLAY");
+    char safe_disp[64] = "0";
+    if (disp_str) {
+        snprintf(safe_disp, sizeof(safe_disp), "%s", disp_str);
+        for (int i = 0; safe_disp[i]; i++) {
+            if (safe_disp[i] == ':' || safe_disp[i] == '.') safe_disp[i] = '_';
+        }
+    }
+    snprintf(lock_file, sizeof(lock_file), "/tmp/.sys_notif_daemon_%s.pid", safe_disp);
+
     FILE *lf = fopen(lock_file, "r");
     if (lf) {
         pid_t existing_pid = 0;
