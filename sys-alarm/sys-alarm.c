@@ -19,12 +19,69 @@
 #include <signal.h>
 #include <math.h>
 
-#define CONFIG_DIR          "/home/vibecoder/.config/sys-alarm"
-#define CONFIG_FILE         "/home/vibecoder/.config/sys-alarm/config.json"
 #define ACTIVE_ALARM_FILE   "/tmp/sys-alarm.active"
 #define SNOOZE_STATE_FILE   "/tmp/sys-alarm.snooze"
-#define DEFAULT_MUSIC_DIR   "/home/vibecoder/Music"
 #define DEFAULT_SINK_HINT   "alsa_output.pci-0000_00_1b.0.analog-stereo"
+
+static const char *get_config_dir(void) {
+    static char *dir = NULL;
+    if (!dir) {
+        dir = g_build_filename(g_get_user_config_dir(), "sys-alarm", NULL);
+    }
+    return dir;
+}
+
+static const char *get_config_file(void) {
+    static char *file = NULL;
+    if (!file) {
+        file = g_build_filename(get_config_dir(), "config.json", NULL);
+    }
+    return file;
+}
+
+static const char *get_music_dir(void) {
+    static char *music = NULL;
+    if (!music) {
+        const char *special = g_get_user_special_dir(G_USER_DIRECTORY_MUSIC);
+        if (special && special[0] != '\0') {
+            music = g_strdup(special);
+        } else {
+            music = g_build_filename(g_get_home_dir(), "Music", NULL);
+        }
+    }
+    return music;
+}
+
+static char *get_fallback_alarm_file(void) {
+    /* 1. Dynamic check for user Downloads/nuclear_alarm.mp3 */
+    const char *dl_dir = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
+    char *user_dl = dl_dir ? g_build_filename(dl_dir, "nuclear_alarm.mp3", NULL)
+                           : g_build_filename(g_get_home_dir(), "Downloads", "nuclear_alarm.mp3", NULL);
+    if (g_file_test(user_dl, G_FILE_TEST_EXISTS)) {
+        return user_dl;
+    }
+    g_free(user_dl);
+
+    /* 2. Standard freedesktop system sound files in priority order */
+    static const char * const freedesktop_fallbacks[] = {
+        "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga",
+        "/usr/share/sounds/freedesktop/stereo/dialog-warning.oga",
+        "/usr/share/sounds/freedesktop/stereo/complete.oga",
+        NULL
+    };
+
+    for (int i = 0; freedesktop_fallbacks[i] != NULL; i++) {
+        if (g_file_test(freedesktop_fallbacks[i], G_FILE_TEST_EXISTS)) {
+            return g_strdup(freedesktop_fallbacks[i]);
+        }
+    }
+
+    return NULL;
+}
+
+#define CONFIG_DIR          (get_config_dir())
+#define CONFIG_FILE         (get_config_file())
+#define DEFAULT_MUSIC_DIR   (get_music_dir())
 
 typedef enum {
     REPEAT_DAILY = 0,
@@ -316,6 +373,7 @@ static void scan_audio_files_rec(const char *dir_path, GPtrArray *arr) {
                     g_ascii_strcasecmp(dot, ".m4a") == 0 ||
                     g_ascii_strcasecmp(dot, ".wav") == 0 ||
                     g_ascii_strcasecmp(dot, ".ogg") == 0 ||
+                    g_ascii_strcasecmp(dot, ".oga") == 0 ||
                     g_ascii_strcasecmp(dot, ".opus") == 0) {
                     g_ptr_array_add(arr, g_strdup(full));
                 }
@@ -348,10 +406,8 @@ static char *pick_audio_file(SoundType type, const char *path) {
         guint idx = g_random_int_range(0, arr->len);
         result = g_strdup((char *)g_ptr_array_index(arr, idx));
     } else {
-        /* Fallback check for nuclear alarm or system chimes */
-        if (g_file_test("/home/vibecoder/Downloads/nuclear_alarm.mp3", G_FILE_TEST_EXISTS)) {
-            result = g_strdup("/home/vibecoder/Downloads/nuclear_alarm.mp3");
-        }
+        /* Fallback check for nuclear alarm or freedesktop system sound files */
+        result = get_fallback_alarm_file();
     }
     g_ptr_array_free(arr, TRUE);
     return result;
@@ -636,7 +692,7 @@ static void sync_system_timers(AlarmConfig *cfg) {
     time_t next_t = 0;
     Alarm *next_alarm = config_get_next_alarm(cfg, now, &next_t);
 
-    char *timer_dir = g_build_filename(g_get_home_dir(), ".config/systemd/user", NULL);
+    char *timer_dir = g_build_filename(g_get_user_config_dir(), "systemd", "user", NULL);
     g_mkdir_with_parents(timer_dir, 0755);
 
     char *timer_file = g_build_filename(timer_dir, "sys-alarm-wake.timer", NULL);
@@ -651,8 +707,10 @@ static void sync_system_timers(AlarmConfig *cfg) {
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
-        "Environment=\"DISPLAY=:0\" \"XAUTHORITY=%s/.Xauthority\" \"XDG_RUNTIME_DIR=/run/user/1000\"\n"
-        "ExecStart=/home/vibecoder/.local/bin/sys-alarm ring\n",
+        "Environment=\"DISPLAY=:0\" \"XAUTHORITY=%s/.Xauthority\" \"XDG_RUNTIME_DIR=/run/user/%u\"\n"
+        "ExecStart=%s/.local/bin/sys-alarm ring\n",
+        g_get_home_dir(),
+        (unsigned int)getuid(),
         g_get_home_dir()
     );
     g_file_set_contents(service_file, service_content, -1, NULL);
@@ -706,7 +764,21 @@ static void sync_system_timers(AlarmConfig *cfg) {
 /* --------------------------------------------------------------------------
  * Audio Blaster & Ringer Engine
  * -------------------------------------------------------------------------- */
+static void on_ring_sigterm(int signum) {
+    (void)signum;
+    cmd_dismiss();
+    _exit(0);
+}
+
 static int cmd_ring(const char *alarm_id_or_null) {
+    /* Clean termination on SIGINT/SIGTERM */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = on_ring_sigterm;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
     AlarmConfig *cfg = config_load();
     Alarm *a = NULL;
 
@@ -736,50 +808,71 @@ static int cmd_ring(const char *alarm_id_or_null) {
     /* Clear snooze state upon ringing */
     unlink(SNOOZE_STATE_FILE);
 
-    /* 1. Unmute speaker and set volume to 150% */
+    /* 1. Unmute speaker and boost volume on BOTH candidate sink and @DEFAULT_SINK@ */
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0 2>/dev/null", sink);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "pactl set-sink-volume %s %d%% 2>/dev/null", sink, volume);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "pactl set-sink-port %s analog-output-speaker 2>/dev/null", sink);
+    if (sink && g_strcmp0(sink, "@DEFAULT_SINK@") != 0) {
+        snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0; pactl set-sink-volume %s %d%% 2>/dev/null", sink, sink, volume);
+        system(cmd);
+        snprintf(cmd, sizeof(cmd), "pactl set-sink-port %s analog-output-speaker 2>/dev/null", sink);
+        system(cmd);
+    }
+    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute @DEFAULT_SINK@ 0; pactl set-sink-volume @DEFAULT_SINK@ %d%% 2>/dev/null", volume);
     system(cmd);
 
     /* 2. Pick audio track */
     char *song_file = pick_audio_file(stype, spath);
     if (!song_file) {
-        song_file = g_strdup("/home/vibecoder/Downloads/nuclear_alarm.mp3");
+        song_file = get_fallback_alarm_file();
     }
 
-    char *track_name = g_path_get_basename(song_file);
+    char *track_name = song_file ? g_path_get_basename(song_file) : g_strdup("Default Alarm Track");
 
     /* 3. Fork audio player process */
     pid_t audio_pid = fork();
     if (audio_pid == 0) {
-        /* In child: play audio continuously */
+        /* In child: reset signals so kill from cmd_dismiss terminates cleanly */
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTERM, SIG_DFL);
+
+        /* Play audio continuously */
         while (1) {
             char opt_vol[64];
             snprintf(opt_vol, sizeof(opt_vol), "--volume=%d", volume);
             char opt_dev[512];
-            snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
+            if (sink && sink[0]) {
+                snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
+            } else {
+                snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse");
+            }
+
+            if (!song_file) {
+                song_file = get_fallback_alarm_file();
+            }
 
             pid_t mpv_pid = fork();
             if (mpv_pid == 0) {
-                execlp("mpv", "mpv",
-                       "--no-config",
-                       "--no-video",
-                       "--loop-file=inf",
-                       opt_vol,
-                       opt_dev,
-                       song_file,
-                       NULL);
+                if (song_file) {
+                    execlp("mpv", "mpv",
+                           "--no-config",
+                           "--no-video",
+                           "--loop-file=inf",
+                           opt_vol,
+                           opt_dev,
+                           song_file,
+                           NULL);
+                }
                 _exit(1);
             }
             int status;
             waitpid(mpv_pid, &status, 0);
             /* If mpv finished or failed, re-pick another track and keep blasting */
-            g_free(song_file);
-            song_file = pick_audio_file(stype, spath);
+            char *next_song = pick_audio_file(stype, spath);
+            if (next_song) {
+                g_free(song_file);
+                song_file = next_song;
+            } else if (!song_file) {
+                song_file = get_fallback_alarm_file();
+            }
             sleep(1);
         }
         _exit(0);
@@ -792,10 +885,10 @@ static int cmd_ring(const char *alarm_id_or_null) {
         audio_pid,
         a ? a->id : "unknown",
         alarm_name,
-        song_file,
+        song_file ? song_file : "none",
         volume,
         a ? a->snooze_min : 5,
-        sink
+        sink ? sink : "default"
     );
     g_file_set_contents(ACTIVE_ALARM_FILE, active_info, -1, NULL);
 
@@ -889,28 +982,38 @@ static int cmd_test(void) {
     AlarmConfig *cfg = config_load();
     char *sink = cfg->default_speaker_sink ? g_strdup(cfg->default_speaker_sink) : detect_speaker_sink();
     char *song = pick_audio_file(SOUND_RANDOM_MUSIC, DEFAULT_MUSIC_DIR);
-    if (!song) song = g_strdup("/home/vibecoder/Downloads/nuclear_alarm.mp3");
+    if (!song) song = get_fallback_alarm_file();
 
-    /* Unmute and set 150% */
+    /* Unmute and set 150% on candidate sink AND @DEFAULT_SINK@ */
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0; pactl set-sink-volume %s 150%%; pactl set-sink-port %s analog-output-speaker 2>/dev/null", sink, sink, sink);
+    if (sink && g_strcmp0(sink, "@DEFAULT_SINK@") != 0) {
+        snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0 2>/dev/null; pactl set-sink-volume %s 150%% 2>/dev/null; pactl set-sink-port %s analog-output-speaker 2>/dev/null", sink, sink, sink);
+        system(cmd);
+    }
+    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute @DEFAULT_SINK@ 0 2>/dev/null; pactl set-sink-volume @DEFAULT_SINK@ 150%% 2>/dev/null");
     system(cmd);
 
     char opt_vol[64];
     snprintf(opt_vol, sizeof(opt_vol), "--volume=150");
     char opt_dev[512];
-    snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
+    if (sink && sink[0]) {
+        snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
+    } else {
+        snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse");
+    }
 
     pid_t pid = fork();
     if (pid == 0) {
-        execlp("mpv", "mpv",
-               "--no-config",
-               "--no-video",
-               "--loop-file=inf",
-               opt_vol,
-               opt_dev,
-               song,
-               NULL);
+        if (song) {
+            execlp("mpv", "mpv",
+                   "--no-config",
+                   "--no-video",
+                   "--loop-file=inf",
+                   opt_vol,
+                   opt_dev,
+                   song,
+                   NULL);
+        }
         _exit(1);
     }
 
@@ -1058,7 +1161,12 @@ static gboolean on_popup_delete_event(GtkWidget *widget, GdkEvent *event, gpoint
 }
 
 static void run_popup_window(const char *alarm_name, const char *track_title, int volume) {
-    if (!gtk_init_check(NULL, NULL)) {
+    if (!gtk_init_check(NULL, NULL) || gdk_display_get_default() == NULL || gdk_screen_get_default() == NULL) {
+        g_warning("sys-alarm: Headless environment or display unavailable (gdk_display_get_default() is NULL). Running audio ringer in headless mode.");
+        /* Keep process alive while alarm is ringing so child audio playback continues */
+        while (g_file_test(ACTIVE_ALARM_FILE, G_FILE_TEST_EXISTS)) {
+            g_usleep(500000);
+        }
         return;
     }
 
@@ -1391,28 +1499,38 @@ static void on_test_alarm_clicked(GtkButton *btn, gpointer user_data) {
     AlarmConfig *cfg = app->cfg;
     char *sink = cfg->default_speaker_sink ? g_strdup(cfg->default_speaker_sink) : detect_speaker_sink();
     char *song = pick_audio_file(SOUND_RANDOM_MUSIC, DEFAULT_MUSIC_DIR);
-    if (!song) song = g_strdup("/home/vibecoder/Downloads/nuclear_alarm.mp3");
+    if (!song) song = get_fallback_alarm_file();
 
-    /* Unmute speaker and set 150% asynchronously without blocking */
+    /* Unmute speaker and set 150% asynchronously on candidate sink AND @DEFAULT_SINK@ */
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0; pactl set-sink-volume %s 150%%; pactl set-sink-port %s analog-output-speaker 2>/dev/null", sink, sink, sink);
+    if (sink && g_strcmp0(sink, "@DEFAULT_SINK@") != 0) {
+        snprintf(cmd, sizeof(cmd), "pactl set-sink-mute %s 0 2>/dev/null; pactl set-sink-volume %s 150%% 2>/dev/null; pactl set-sink-port %s analog-output-speaker 2>/dev/null", sink, sink, sink);
+        system(cmd);
+    }
+    snprintf(cmd, sizeof(cmd), "pactl set-sink-mute @DEFAULT_SINK@ 0 2>/dev/null; pactl set-sink-volume @DEFAULT_SINK@ 150%% 2>/dev/null");
     system(cmd);
 
     char opt_vol[64];
     snprintf(opt_vol, sizeof(opt_vol), "--volume=150");
     char opt_dev[512];
-    snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
+    if (sink && sink[0]) {
+        snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse/%s", sink);
+    } else {
+        snprintf(opt_dev, sizeof(opt_dev), "--audio-device=pulse");
+    }
 
     test_audio_pid = fork();
     if (test_audio_pid == 0) {
-        execlp("mpv", "mpv",
-               "--no-config",
-               "--no-video",
-               "--loop-file=inf",
-               opt_vol,
-               opt_dev,
-               song,
-               NULL);
+        if (song) {
+            execlp("mpv", "mpv",
+                   "--no-config",
+                   "--no-video",
+                   "--loop-file=inf",
+                   opt_vol,
+                   opt_dev,
+                   song,
+                   NULL);
+        }
         _exit(1);
     }
 
@@ -1506,7 +1624,10 @@ static void refresh_alarm_list(GuiApp *app) {
 }
 
 static void run_gui_app(int argc, char **argv) {
-    gtk_init(&argc, &argv);
+    if (!gtk_init_check(&argc, &argv) || gdk_display_get_default() == NULL || gdk_screen_get_default() == NULL) {
+        fprintf(stderr, "sys-alarm: Cannot open display. Running in headless mode or DISPLAY is not set.\n");
+        return;
+    }
 
     GuiApp *app = g_new0(GuiApp, 1);
     app->cfg = config_load();
@@ -1596,6 +1717,23 @@ static void run_gui_app(int argc, char **argv) {
  * Main Entry Point
  * -------------------------------------------------------------------------- */
 int main(int argc, char **argv) {
+    if (argc > 1 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "help") == 0)) {
+        printf("Usage: sys-alarm [command]\n\n"
+               "Lightweight GTK3 & RTC wake alarm clock for Arch Linux / BSPWM.\n\n"
+               "Available commands:\n"
+               "  gui              Open interactive Clock GUI (default)\n"
+               "  ring [alarm_id]  Trigger alarm ring and launch modal popup\n"
+               "  dismiss          Dismiss currently ringing alarm\n"
+               "  snooze [mins]    Snooze currently ringing alarm (default 5m)\n"
+               "  list             View active configured alarms and next trigger countdown\n"
+               "  daemon           Run zero-overhead daemon monitor loop\n"
+               "  test             Test audio blast and speaker routing (4s test)\n"
+               "  sync             Synchronize systemd RTC wake timer\n"
+               "  add <HH:MM> [name] [repeat: daily|weekdays|weekends|once]\n"
+               "  --help, -h       Display this help message\n");
+        return 0;
+    }
+
     if (argc <= 1 || strcmp(argv[1], "gui") == 0) {
         run_gui_app(argc, argv);
         return 0;
