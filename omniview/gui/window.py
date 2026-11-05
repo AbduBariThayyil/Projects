@@ -30,6 +30,7 @@ import movies_engine
 from image_cache import load_texture_async
 from device_manager import DeviceManager
 from playback_manager import PlaybackManager
+from player_view import PlayerView
 from download_manager import DownloadManager, scan_local_library, BASE_ANIME_DIR, BASE_MOVIES_DIR
 
 
@@ -54,6 +55,8 @@ class OmniViewWindow(Adw.ApplicationWindow):
         self.playback_mgr = PlaybackManager(
             on_status_change=self._on_playback_status_change,
             on_auto_advance=self._on_auto_advance,
+            on_progress=self._on_player_progress,
+            on_pause_change=self._on_player_pause_change,
         )
         self.download_mgr = DownloadManager()
 
@@ -69,6 +72,8 @@ class OmniViewWindow(Adw.ApplicationWindow):
         self.current_movie_item = None
         self.movie_seasons_dict = {}
         self.current_movie_season_num = 1
+        self.tv_episode_rows = []
+        self.library_rows = []
 
         # Global stream preferences
         self.quality = "1080p"
@@ -78,9 +83,27 @@ class OmniViewWindow(Adw.ApplicationWindow):
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
 
-        # ToolbarView
+        # Root Stack for seamless switching between Browse View and Inbuilt Player View
+        self.root_stack = Gtk.Stack()
+        self.root_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.root_stack.set_transition_duration(160)
+        self.toast_overlay.set_child(self.root_stack)
+
+        # ToolbarView (Browse view with HeaderBar and multi-tab ViewStack)
         self.toolbar_view = Adw.ToolbarView()
-        self.toast_overlay.set_child(self.toolbar_view)
+        self.root_stack.add_named(self.toolbar_view, "browse")
+
+        # Inbuilt Native Video Player View
+        self.player_view = PlayerView(
+            self.playback_mgr,
+            on_back=self._on_player_back_clicked,
+            on_cast=self._on_player_cast_clicked,
+            on_fullscreen=self._on_player_fullscreen_clicked,
+            on_prev=self._on_player_prev_clicked,
+            on_next=self._on_player_next_clicked,
+        )
+        self.root_stack.add_named(self.player_view, "player")
+        self.root_stack.set_visible_child_name("browse")
 
         # Build ViewStack first so HeaderBar switcher can bind to it
         self._build_main_view_stack()
@@ -97,8 +120,129 @@ class OmniViewWindow(Adw.ApplicationWindow):
         self.connect("close-request", self._on_close_request)
 
     def _on_close_request(self, win):
+        if hasattr(self, "player_view"):
+            self.player_view.cleanup()
         self.playback_mgr.stop_playback()
         return False
+
+    def _start_local_player(self, title: str, subtitle: str = ""):
+        """Transitions OmniView into the embedded native player view and returns child XID."""
+        self.realize()
+        surf = self.get_surface()
+        parent_xid = surf.get_xid() if (surf and hasattr(surf, "get_xid")) else 0
+
+        self.player_view.prepare_playback(
+            title=title,
+            subtitle=subtitle,
+            quality=self.quality,
+            mode=self.mode,
+        )
+        child_xid = self.player_view.attach_x11_surface(parent_xid)
+        self.root_stack.set_visible_child_name("player")
+        self._update_player_nav_buttons()
+        return child_xid
+
+    def _on_player_back_clicked(self):
+        """Returns from player view to browse view."""
+        if hasattr(self, "player_view"):
+            self.player_view.cleanup()
+        if self.is_fullscreen():
+            self.unfullscreen()
+            self.player_view.set_fullscreen(False)
+        self.root_stack.set_visible_child_name("browse")
+        self.refresh_anime_continue_watching()
+        self.refresh_local_library()
+
+    def _on_player_fullscreen_clicked(self):
+        """Toggles window fullscreen mode for immersive playback."""
+        if self.is_fullscreen():
+            self.unfullscreen()
+            self.player_view.set_fullscreen(False)
+        else:
+            self.fullscreen()
+            self.player_view.set_fullscreen(True)
+
+    def _on_player_cast_clicked(self):
+        """Seamlessly hands off local stream to Chromecast."""
+        dev = self.device_mgr.get_selected_device()
+        if dev.get("is_local"):
+            cast_dev = next((d for d in self.device_mgr.devices if not d.get("is_local")), None)
+            if cast_dev:
+                self.device_mgr.set_selected_device(cast_dev["id"])
+                dev = cast_dev
+            else:
+                self.show_toast("No Chromecast detected on local network. Scan devices in menu.")
+                return
+
+        self.show_toast(f"Casting stream to {dev['name']}...")
+        self.player_view.cleanup()
+        self.root_stack.set_visible_child_name("browse")
+
+        # Trigger on Chromecast device
+        if self.current_anime and self.playback_mgr.current_episodes_list:
+            cur_ep = self.playback_mgr.current_ep
+            ep_obj = next((e for e in self.playback_mgr.current_episodes_list if int(float(e["number"])) == cur_ep), None)
+            if ep_obj:
+                self._on_play_anime_episode(ep_obj, force_local=False)
+        elif self.current_movie_item:
+            if self.current_movie_item.get("type") == "tv":
+                self._on_play_tv_episode(self.current_movie_season_num, self.playback_mgr.current_ep, force_local=False)
+            else:
+                self._on_quick_pick_clicked(self.current_movie_item, force_local=False)
+
+    def _on_player_prev_clicked(self):
+        if self.playback_mgr.current_episodes_list:
+            cur_ep = self.playback_mgr.current_ep
+            prev_ep = next((e for e in self.playback_mgr.current_episodes_list if int(float(e["number"])) == cur_ep - 1), None)
+            if prev_ep:
+                self._on_play_anime_episode(prev_ep, force_local=True)
+            else:
+                self.show_toast("First episode of season reached.")
+        elif self.movie_seasons_dict and self.current_movie_item and self.current_movie_item.get("type") == "tv":
+            episodes = self.movie_seasons_dict.get(self.current_movie_season_num, [])
+            cur_ep = self.playback_mgr.current_ep
+            prev_ep = next((e for e in episodes if int(float(e["number"])) == cur_ep - 1), None)
+            if prev_ep:
+                self._on_play_tv_episode(self.current_movie_season_num, prev_ep["number"], force_local=True)
+            else:
+                self.show_toast("First episode of season reached.")
+
+    def _on_player_next_clicked(self):
+        if self.playback_mgr.current_episodes_list:
+            cur_ep = self.playback_mgr.current_ep
+            next_ep = next((e for e in self.playback_mgr.current_episodes_list if int(float(e["number"])) == cur_ep + 1), None)
+            if next_ep:
+                self._on_play_anime_episode(next_ep, force_local=True)
+            else:
+                self.show_toast("Season finale episode reached.")
+        elif self.movie_seasons_dict and self.current_movie_item and self.current_movie_item.get("type") == "tv":
+            episodes = self.movie_seasons_dict.get(self.current_movie_season_num, [])
+            cur_ep = self.playback_mgr.current_ep
+            next_ep = next((e for e in episodes if int(float(e["number"])) == cur_ep + 1), None)
+            if next_ep:
+                self._on_play_tv_episode(self.current_movie_season_num, next_ep["number"], force_local=True)
+            else:
+                self.show_toast("Season finale episode reached.")
+
+    def _update_player_nav_buttons(self):
+        has_prev = False
+        has_next = False
+        if self.playback_mgr.current_episodes_list:
+            cur_ep = self.playback_mgr.current_ep
+            has_prev = any(int(float(e["number"])) == cur_ep - 1 for e in self.playback_mgr.current_episodes_list)
+            has_next = any(int(float(e["number"])) == cur_ep + 1 for e in self.playback_mgr.current_episodes_list)
+        elif self.movie_seasons_dict and self.current_movie_item and self.current_movie_item.get("type") == "tv":
+            episodes = self.movie_seasons_dict.get(self.current_movie_season_num, [])
+            cur_ep = self.playback_mgr.current_ep
+            has_prev = any(int(float(e["number"])) == cur_ep - 1 for e in episodes)
+            has_next = any(int(float(e["number"])) == cur_ep + 1 for e in episodes)
+        self.player_view.set_nav_buttons_state(has_prev, has_next)
+
+    def _on_player_progress(self, pos, dur):
+        self.player_view.on_progress(pos, dur)
+
+    def _on_player_pause_change(self, is_paused):
+        self.player_view.on_pause_change(is_paused)
 
     def _build_header_bar(self):
         self.header = Adw.HeaderBar()
@@ -568,9 +712,14 @@ class OmniViewWindow(Adw.ApplicationWindow):
         anime_base, season, ep = anicast_engine.parse_anime_title(title)
         pos = float(item.get("position", 0.0))
         search_q = f"{anime_base} Season {season}" if season > 1 else anime_base
+        full_title = f"{anime_base} Season {season} Episode {ep}" if season > 1 else f"{anime_base} Episode {ep}"
 
         dev = {"name": "This Device (Local Screen / MPV)", "id": "local", "ip": "127.0.0.1", "is_local": True} if force_local else self.device_mgr.get_selected_device()
         self.show_toast(f"Loading {anime_base} S{season}E{ep} on {dev['name']}...")
+
+        child_xid = None
+        if force_local:
+            child_xid = self._start_local_player(title=full_title, subtitle=f"Season {season} • Episode {ep}")
 
         def _worker():
             results = anicast_engine.search_anime(search_q)
@@ -591,13 +740,26 @@ class OmniViewWindow(Adw.ApplicationWindow):
                         mode=self.mode,
                         quality=self.quality,
                         explicit_start_time=pos if pos > 5.0 else None,
+                        wid=child_xid,
                     )
+                else:
+                    if force_local:
+                        GLib.idle_add(self.player_view.on_playback_error, f"Episode {ep} not found in anime listing")
+            else:
+                if force_local:
+                    GLib.idle_add(self.player_view.on_playback_error, "Anime search returned no results")
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_continue_clicked(self, target, force_local=True):
         dev = {"name": "This Device (Local Screen / MPV)", "id": "local", "ip": "127.0.0.1", "is_local": True} if force_local else self.device_mgr.get_selected_device()
         self.show_toast(f"Starting {target['anime_base']} on {dev['name']}...")
+
+        full_title = f"{target['anime_base']} Season {target['season']} Episode {target['episode']}" if target['season'] > 1 else f"{target['anime_base']} Episode {target['episode']}"
+
+        child_xid = None
+        if force_local:
+            child_xid = self._start_local_player(title=full_title, subtitle=f"Season {target['season']} • Episode {target['episode']}")
 
         def _worker():
             results = anicast_engine.search_anime(target["search_title"])
@@ -618,7 +780,14 @@ class OmniViewWindow(Adw.ApplicationWindow):
                         mode=self.mode,
                         quality=self.quality,
                         explicit_start_time=target["timestamp"],
+                        wid=child_xid,
                     )
+                else:
+                    if force_local:
+                        GLib.idle_add(self.player_view.on_playback_error, "Target episode not found")
+            else:
+                if force_local:
+                    GLib.idle_add(self.player_view.on_playback_error, "Anime not found")
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -947,6 +1116,15 @@ class OmniViewWindow(Adw.ApplicationWindow):
             ep_int = 1
 
         base_title, _, _ = anicast_engine.parse_anime_title(self.current_anime["title"])
+        full_title = f"{base_title} Season {self.current_season_num} Episode {ep_int}" if self.current_season_num > 1 else f"{base_title} Episode {ep_int}"
+
+        child_xid = None
+        if force_local:
+            child_xid = self._start_local_player(
+                title=full_title,
+                subtitle=f"Season {self.current_season_num} • Episode {ep_int}",
+            )
+
         self.playback_mgr.play_episode(
             base_title,
             self.current_season_num,
@@ -956,6 +1134,7 @@ class OmniViewWindow(Adw.ApplicationWindow):
             dev,
             mode=self.mode,
             quality=self.quality,
+            wid=child_xid,
         )
 
     def _on_play_anime_season(self, force_local=True):
@@ -1106,10 +1285,16 @@ class OmniViewWindow(Adw.ApplicationWindow):
 
     def _on_quick_pick_clicked(self, item, force_local=True):
         dev = {"name": "This Device (Local Screen / MPV)", "id": "local", "ip": "127.0.0.1", "is_local": True} if force_local else self.device_mgr.get_selected_device()
+        child_xid = None
+        if force_local:
+            sub = f"{item.get('year', '')} • Movie" if item["type"] == "movie" else "Season 1 Episode 1"
+            child_xid = self._start_local_player(title=item["title"], subtitle=sub)
+
         if item["type"] == "movie":
-            self.playback_mgr.play_movie(item["id"], item["title"], target_device=dev)
+            self.playback_mgr.play_movie(item["id"], item["title"], target_device=dev, wid=child_xid)
         else:
-            self.playback_mgr.play_tv_show(item["id"], 1, 1, item["title"], target_device=dev)
+            self.current_movie_item = item
+            self.playback_mgr.play_tv_show(item["id"], 1, 1, item["title"], target_device=dev, wid=child_xid)
 
     # Movies Search Page
     def _create_movies_search_page(self):
@@ -1382,10 +1567,12 @@ class OmniViewWindow(Adw.ApplicationWindow):
         self._display_tv_seasons_and_episodes(self.movie_seasons_dict)
 
     def _populate_tv_episodes(self, s_num):
-        # Clear existing rows
-        child = self.tv_episodes_group.get_first_child()
-        # Libadwaita PreferencesGroup children removal
-        clear_container(self.tv_episodes_group)
+        for r in self.tv_episode_rows:
+            try:
+                self.tv_episodes_group.remove(r)
+            except Exception:
+                pass
+        self.tv_episode_rows.clear()
 
         episodes = self.movie_seasons_dict.get(s_num, [])
         self.tv_episodes_group.set_title(f"Season {s_num} Episodes ({len(episodes)} total)")
@@ -1416,15 +1603,26 @@ class OmniViewWindow(Adw.ApplicationWindow):
             row.add_controller(gesture)
 
             self.tv_episodes_group.add(row)
+            self.tv_episode_rows.append(row)
 
     def _on_play_tv_episode(self, season_num, episode_num, force_local=True):
         dev = {"name": "This Device (Local Screen / MPV)", "id": "local", "ip": "127.0.0.1", "is_local": True} if force_local else self.device_mgr.get_selected_device()
+        full_title = f"{self.current_movie_item['title']} S{season_num:02d}E{episode_num:02d}"
+
+        child_xid = None
+        if force_local:
+            child_xid = self._start_local_player(
+                title=full_title,
+                subtitle=f"Season {season_num} • Episode {episode_num}",
+            )
+
         self.playback_mgr.play_tv_show(
             self.current_movie_item["id"],
             season_num,
             episode_num,
             self.current_movie_item["title"],
             target_device=dev,
+            wid=child_xid,
         )
 
     # =========================================================================
@@ -1479,7 +1677,13 @@ class OmniViewWindow(Adw.ApplicationWindow):
         return scrolled
 
     def refresh_local_library(self):
-        clear_container(self.library_group)
+        for r in self.library_rows:
+            try:
+                self.library_group.remove(r)
+            except Exception:
+                pass
+        self.library_rows.clear()
+
         files = scan_local_library()
         if not files:
             self.library_empty_lbl.set_visible(True)
@@ -1510,10 +1714,17 @@ class OmniViewWindow(Adw.ApplicationWindow):
             row.add_controller(gesture)
 
             self.library_group.add(row)
+            self.library_rows.append(row)
 
     def _on_play_local_file(self, file_path, title, force_local=True):
         dev = {"name": "This Device (Local Screen / MPV)", "id": "local", "ip": "127.0.0.1", "is_local": True} if force_local else self.device_mgr.get_selected_device()
-        self.playback_mgr.play_local_file(file_path, title=title, target_device=dev)
+        clean_title = title or os.path.basename(file_path).rsplit(".", 1)[0]
+
+        child_xid = None
+        if force_local:
+            child_xid = self._start_local_player(title=clean_title, subtitle="Local File Playback")
+
+        self.playback_mgr.play_local_file(file_path, title=clean_title, target_device=dev, wid=child_xid)
 
     def _on_open_videos_folder(self, btn):
         target_dir = BASE_ANIME_DIR if os.path.exists(BASE_ANIME_DIR) else os.path.expanduser("~/Videos")
@@ -1551,6 +1762,8 @@ class OmniViewWindow(Adw.ApplicationWindow):
     def _on_playback_status_change(self, status, detail):
         if status == "playing":
             self.stop_btn.set_visible(True)
+            if hasattr(self, "player_view"):
+                self.player_view.on_playback_started()
             self.show_toast(f"Playing {detail}")
         elif status == "loading":
             self.show_toast(f"Loading stream: {detail}...")
@@ -1560,10 +1773,16 @@ class OmniViewWindow(Adw.ApplicationWindow):
             self.refresh_local_library()
         elif status == "error":
             self.stop_btn.set_visible(False)
+            if hasattr(self, "player_view"):
+                self.player_view.on_playback_error(detail)
             self.show_toast(f"Playback error: {detail}")
 
     def _on_auto_advance(self, anime_title, season_num, episode_num, _ep_id):
-        self.show_toast(f"Auto-advancing: Season {season_num} Episode {episode_num}")
+        full_title = f"{anime_title} Season {season_num} Episode {episode_num}" if season_num > 1 else f"{anime_title} Episode {episode_num}"
+        self.show_toast(f"Auto-advancing: {full_title}")
+        if hasattr(self, "player_view") and self.root_stack.get_visible_child_name() == "player":
+            self.player_view.prepare_playback(title=full_title, subtitle=f"Season {season_num} • Episode {episode_num}")
+            self._update_player_nav_buttons()
         self.refresh_anime_continue_watching()
 
     def show_toast(self, text):

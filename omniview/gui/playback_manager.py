@@ -66,9 +66,11 @@ def get_resume_position(title: str) -> float:
 
 
 class PlaybackManager:
-    def __init__(self, on_status_change=None, on_auto_advance=None):
+    def __init__(self, on_status_change=None, on_auto_advance=None, on_progress=None, on_pause_change=None):
         self.on_status_change = on_status_change
         self.on_auto_advance = on_auto_advance
+        self.on_progress = on_progress
+        self.on_pause_change = on_pause_change
 
         self.current_process = None
         self.current_proc_type = None  # "mpv" or "cast"
@@ -80,6 +82,12 @@ class PlaybackManager:
         self.current_device = None
         self.current_mode = "sub"
         self.current_quality = "1080p"
+        self.current_wid = None
+
+        self.sock_path = None
+        self.last_pos = 0.0
+        self.last_dur = 0.0
+        self.is_paused = False
 
         self._stop_requested = False
         self._ipc_thread = None
@@ -89,6 +97,9 @@ class PlaybackManager:
 
     def stop_playback(self):
         self._stop_requested = True
+        if self.current_title and self.last_pos > 0:
+            save_resume_state(self.current_title, self.last_pos, self.last_dur, finished=False)
+
         if self.current_process and self.current_process.poll() is None:
             try:
                 self.current_process.terminate()
@@ -100,8 +111,56 @@ class PlaybackManager:
                     pass
         self.current_process = None
         self.current_proc_type = None
+        self.current_wid = None
+        if self.sock_path and os.path.exists(self.sock_path):
+            try:
+                os.remove(self.sock_path)
+            except Exception:
+                pass
+        self.sock_path = None
+
         if self.on_status_change:
             GLib.idle_add(self.on_status_change, "stopped", None)
+
+    def send_mpv_command(self, *args):
+        """Sends an arbitrary IPC command list to MPV via its UNIX socket."""
+        if not self.sock_path or not os.path.exists(self.sock_path):
+            return None
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.4)
+            s.connect(self.sock_path)
+            cmd = {"command": list(args)}
+            s.sendall(json.dumps(cmd).encode("utf-8") + b"\n")
+            resp = s.recv(1024)
+            s.close()
+            if resp:
+                return json.loads(resp.decode("utf-8", errors="ignore"))
+        except Exception:
+            pass
+        return None
+
+    def toggle_pause(self):
+        """Toggles MPV playback state."""
+        return self.send_mpv_command("cycle", "pause")
+
+    def set_pause(self, paused: bool):
+        """Explicitly sets pause state."""
+        return self.send_mpv_command("set_property", "pause", bool(paused))
+
+    def seek(self, seconds: float, relative: bool = False):
+        """Seeks MPV timeline (absolute or relative seconds)."""
+        mode = "relative" if relative else "absolute"
+        return self.send_mpv_command("seek", seconds, mode)
+
+    def set_volume(self, volume: float):
+        """Sets MPV volume level (0-100)."""
+        vol = max(0.0, min(100.0, float(volume)))
+        return self.send_mpv_command("set_property", "volume", vol)
+
+    def adjust_volume(self, delta: float):
+        """Adjusts MPV volume level by delta (e.g. +5 or -5)."""
+        return self.send_mpv_command("add", "volume", delta)
 
     def play_episode(
         self,
@@ -114,6 +173,7 @@ class PlaybackManager:
         mode: str = "sub",
         quality: str = "1080p",
         explicit_start_time: float = None,
+        wid: int = None,
     ):
         """
         Resolves stream and starts playback on target_device (defaults to local screen).
@@ -139,6 +199,7 @@ class PlaybackManager:
         self.current_device = target_device
         self.current_mode = mode
         self.current_quality = quality
+        self.current_wid = wid
 
         full_title = (
             f"{base_anime} Season {season_num} Episode {episode_num}"
@@ -181,7 +242,7 @@ class PlaybackManager:
                 is_local = target_device.get("is_local", True)
 
                 if is_local:
-                    self._play_local_mpv(vid_url, referer, sub_url, full_title, start_time)
+                    self._play_local_mpv(vid_url, referer, sub_url, full_title, start_time, wid=wid)
                 else:
                     self._play_chromecast(master_url, referer, sub_url, full_title, start_time, target_device)
 
@@ -192,7 +253,7 @@ class PlaybackManager:
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
 
-    def play_movie(self, imdb_id: str, title: str, target_device: dict = None):
+    def play_movie(self, imdb_id: str, title: str, target_device: dict = None, wid: int = None):
         """Streams a mainstream movie locally or to Chromecast."""
         self.stop_playback()
         self._stop_requested = False
@@ -205,6 +266,7 @@ class PlaybackManager:
             }
         self.current_title = title
         self.current_device = target_device
+        self.current_wid = wid
         if self.on_status_change:
             GLib.idle_add(self.on_status_change, "loading", title)
 
@@ -214,7 +276,7 @@ class PlaybackManager:
                 start_time = get_resume_position(title)
                 is_local = target_device.get("is_local", True)
                 if is_local:
-                    self._play_local_mpv(stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), title, start_time)
+                    self._play_local_mpv(stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), title, start_time, wid=wid)
                 else:
                     self._play_chromecast(stream_info.get("master_url") or stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), title, start_time, target_device)
             except Exception as e:
@@ -223,7 +285,7 @@ class PlaybackManager:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def play_tv_show(self, imdb_id: str, season_num: int, episode_num: int, title: str, target_device: dict = None):
+    def play_tv_show(self, imdb_id: str, season_num: int, episode_num: int, title: str, target_device: dict = None, wid: int = None):
         """Streams a TV series episode locally or to Chromecast."""
         self.stop_playback()
         self._stop_requested = False
@@ -237,6 +299,7 @@ class PlaybackManager:
         full_title = f"{title} S{season_num:02d}E{episode_num:02d}"
         self.current_title = full_title
         self.current_device = target_device
+        self.current_wid = wid
         if self.on_status_change:
             GLib.idle_add(self.on_status_change, "loading", full_title)
 
@@ -246,7 +309,7 @@ class PlaybackManager:
                 start_time = get_resume_position(full_title)
                 is_local = target_device.get("is_local", True)
                 if is_local:
-                    self._play_local_mpv(stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), full_title, start_time)
+                    self._play_local_mpv(stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), full_title, start_time, wid=wid)
                 else:
                     self._play_chromecast(stream_info.get("master_url") or stream_info["video_url"], stream_info.get("referer", ""), stream_info.get("sub_url", ""), full_title, start_time, target_device)
             except Exception as e:
@@ -255,7 +318,7 @@ class PlaybackManager:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def play_local_file(self, file_path: str, title: str = None, target_device: dict = None):
+    def play_local_file(self, file_path: str, title: str = None, target_device: dict = None, wid: int = None):
         """Plays a local media file in MPV or casts to TV."""
         self.stop_playback()
         self._stop_requested = False
@@ -269,6 +332,7 @@ class PlaybackManager:
         clean_title = title or os.path.basename(file_path).rsplit(".", 1)[0]
         self.current_title = clean_title
         self.current_device = target_device
+        self.current_wid = wid
         if self.on_status_change:
             GLib.idle_add(self.on_status_change, "loading", clean_title)
 
@@ -277,7 +341,7 @@ class PlaybackManager:
                 start_time = get_resume_position(clean_title)
                 is_local = target_device.get("is_local", True)
                 if is_local:
-                    self._play_local_mpv(file_path, "", "", clean_title, start_time)
+                    self._play_local_mpv(file_path, "", "", clean_title, start_time, wid=wid)
                 else:
                     self._play_chromecast(file_path, "", "", clean_title, start_time, target_device)
             except Exception as e:
@@ -286,7 +350,7 @@ class PlaybackManager:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _play_local_mpv(self, video_url, referer, sub_url, title, start_time):
+    def _play_local_mpv(self, video_url, referer, sub_url, title, start_time, wid: int = None):
         runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
         sock_path = os.path.join(runtime_dir, f"anicast_mpv_{os.getpid()}_{int(time.time())}.sock")
         if os.path.exists(sock_path):
@@ -294,22 +358,30 @@ class PlaybackManager:
                 os.remove(sock_path)
             except Exception:
                 pass
+        self.sock_path = sock_path
 
         cmd = [
             "mpv",
             f"--input-ipc-server={sock_path}",
             f"--force-media-title={title}",
-            f"--referrer={referer}",
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "--keep-open=no",
+            "--keep-open=yes",
+            "--osc=no",
+            "--osd-bar=no",
+            "--no-input-default-bindings",
+            "--vo=gpu,x11",
         ]
+        if referer:
+            cmd.append(f"--referrer={referer}")
+        if wid:
+            cmd.append(f"--wid={wid}")
         if sub_url:
             cmd.append(f"--sub-file={sub_url}")
         if start_time and start_time > 0:
             cmd.append(f"--start={start_time}")
         cmd.append(video_url)
 
-        proc = subprocess.Popen(cmd)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.current_process = proc
         self.current_proc_type = "mpv"
 
@@ -327,12 +399,12 @@ class PlaybackManager:
             sock_file = None
 
             # Connect to socket
-            for _ in range(25):
+            for _ in range(30):
                 if os.path.exists(sock_path):
                     try:
                         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                         client.connect(sock_path)
-                        client.settimeout(1.0)
+                        client.settimeout(0.5)
                         sock_file = client.makefile("r", encoding="utf-8")
                         break
                     except Exception:
@@ -343,15 +415,16 @@ class PlaybackManager:
                                 pass
                         client = None
                         sock_file = None
-                time.sleep(0.15)
+                time.sleep(0.1)
 
             while proc.poll() is None and not self._stop_requested:
                 if client and sock_file:
                     try:
                         client.sendall(json.dumps({"command": ["get_property", "time-pos"], "request_id": 1}).encode("utf-8") + b"\n")
                         client.sendall(json.dumps({"command": ["get_property", "duration"], "request_id": 2}).encode("utf-8") + b"\n")
+                        client.sendall(json.dumps({"command": ["get_property", "pause"], "request_id": 3}).encode("utf-8") + b"\n")
 
-                        for _ in range(10):
+                        for _ in range(12):
                             try:
                                 line = sock_file.readline()
                             except (socket.timeout, TimeoutError):
@@ -364,32 +437,39 @@ class PlaybackManager:
                                 continue
 
                             if msg.get("event") == "end-file":
-                                if msg.get("reason") == "eof":
+                                if msg.get("reason") in ["eof", "stop"]:
                                     eof_reached = True
 
                             req_id = msg.get("request_id")
                             if req_id == 1 and msg.get("data") is not None:
                                 try:
                                     last_pos = float(msg["data"])
+                                    self.last_pos = last_pos
                                 except (ValueError, TypeError):
                                     pass
-                            elif req_id == 2:
-                                if msg.get("data") is not None:
-                                    try:
-                                        last_dur = float(msg["data"])
-                                    except (ValueError, TypeError):
-                                        pass
-                                break
+                            elif req_id == 2 and msg.get("data") is not None:
+                                try:
+                                    last_dur = float(msg["data"])
+                                    self.last_dur = last_dur
+                                except (ValueError, TypeError):
+                                    pass
+                            elif req_id == 3 and msg.get("data") is not None:
+                                self.is_paused = bool(msg["data"])
+                                if self.on_pause_change:
+                                    GLib.idle_add(self.on_pause_change, self.is_paused)
+
+                        if self.on_progress:
+                            GLib.idle_add(self.on_progress, last_pos, last_dur)
                     except Exception:
                         pass
 
                     now = time.time()
-                    if last_pos > 0 and (abs(last_pos - last_saved_pos) >= 3.0 or (now - last_save_time) >= 5.0):
+                    if last_pos > 0 and (abs(last_pos - last_saved_pos) >= 3.0 or (now - last_save_time) >= 4.0):
                         save_resume_state(title, last_pos, last_dur, finished=False)
                         last_saved_pos = last_pos
                         last_save_time = now
 
-                time.sleep(1.5)
+                time.sleep(0.25)
 
             # Drain any final events from MPV
             if client and sock_file:
@@ -400,7 +480,7 @@ class PlaybackManager:
                         if not line:
                             break
                         msg = json.loads(line)
-                        if msg.get("event") == "end-file" and msg.get("reason") == "eof":
+                        if msg.get("event") == "end-file" and msg.get("reason") in ["eof", "stop"]:
                             eof_reached = True
                 except Exception:
                     pass

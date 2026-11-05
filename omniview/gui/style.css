@@ -245,3 +245,93 @@ preferencesgroup list > row {
     color: @mocha_text;
     letter-spacing: 0.4px;
 }
+
+/* Inbuilt Native Video Player Styling */
+.player-view {
+    background-color: @crust;
+}
+
+.player-top-bar {
+    background: linear-gradient(180deg, alpha(@mantle, 0.95), alpha(@crust, 0.85));
+    border-bottom: 1px solid alpha(@surface1, 0.45);
+    padding: 6px 14px;
+}
+
+.player-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: @mocha_text;
+}
+
+.player-subtitle {
+    font-size: 0.78rem;
+    color: @subtext0;
+}
+
+.player-canvas-area {
+    background-color: #000000;
+}
+
+.player-loading-overlay {
+    background-color: alpha(@crust, 0.85);
+    border-radius: 14px;
+    padding: 24px 32px;
+    border: 1px solid alpha(@surface1, 0.50);
+}
+
+.player-bottom-bar {
+    background: linear-gradient(0deg, alpha(@mantle, 0.98), alpha(@crust, 0.88));
+    border-top: 1px solid alpha(@surface1, 0.45);
+    padding-top: 6px;
+    padding-bottom: 8px;
+}
+
+.player-time-label {
+    font-family: monospace, monospace;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: @subtext0;
+}
+
+.player-play-btn {
+    min-width: 42px;
+    min-height: 42px;
+    padding: 0;
+    background-color: @mauve;
+    color: @crust;
+}
+
+.player-play-btn:hover {
+    background-color: alpha(@mauve, 0.85);
+}
+
+.badge-quality {
+    background-color: alpha(@mauve, 0.22);
+    color: @mauve;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.badge-audio {
+    background-color: alpha(@blue, 0.22);
+    color: @blue;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.player-scrub-scale highlight {
+    background-color: @mauve;
+    border-radius: 4px;
+}
+
+.player-scrub-scale trough {
+    background-color: alpha(@surface1, 0.6);
+    border-radius: 4px;
+    min-height: 6px;
+}

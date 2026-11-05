@@ -20,14 +20,19 @@ DEFAULT_HEADERS = {
 # Fallback open streams for testing/preview when external providers are blocked
 OPEN_STREAMS = [
     {
-        "title": "Tears of Steel (Sci-Fi 4K/1080p)",
-        "video_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-        "referer": "https://commondatastorage.googleapis.com",
+        "title": "Mux HLS Multitrack Stream (1080p)",
+        "video_url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+        "referer": "https://test-streams.mux.dev",
     },
     {
-        "title": "Big Buck Bunny (Animation 1080p)",
-        "video_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-        "referer": "https://commondatastorage.googleapis.com",
+        "title": "Oceans Wildlife (Documentary 1080p)",
+        "video_url": "https://vjs.zencdn.net/v/oceans.mp4",
+        "referer": "https://vjs.zencdn.net",
+    },
+    {
+        "title": "Big Buck Bunny (Animation HD)",
+        "video_url": "https://archive.org/download/BigBuckBunny_124/Content/big_buck_bunny_720p_surround.mp4",
+        "referer": "https://archive.org",
     },
 ]
 
@@ -194,18 +199,68 @@ def get_tv_seasons_and_episodes(imdb_id: str, title: Optional[str] = None) -> Di
     return seasons
 
 
+def is_direct_media(url: str) -> bool:
+    if not url:
+        return False
+    clean = url.split("?")[0].lower()
+    return any(clean.endswith(ext) for ext in [".m3u8", ".mp4", ".mkv", ".webm", ".ts", ".mpd"])
+
+
+def extract_direct_stream(providers: List[Dict[str, str]], identifier: str = "") -> Dict[str, Any]:
+    """
+    Attempts to extract a direct playable .m3u8 or .mp4 stream link from providers.
+    If providers are protected or only return HTML embeds, falls back cleanly to OPEN_STREAMS
+    so MPV never crashes with Unsupported URL.
+    """
+    for prov in providers:
+        url = prov.get("url", "")
+        referer = prov.get("referer", "")
+        if is_direct_media(url):
+            return {
+                "video_url": url,
+                "master_url": url,
+                "referer": referer,
+                "is_fallback": False,
+            }
+
+        # Try scraping embed page for direct video/m3u8 stream
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": USER_AGENT,
+                "Referer": referer,
+                "Accept": "text/html,application/json,*/*",
+            })
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                text = resp.read().decode("utf-8", errors="ignore")
+                
+                # Check for direct stream URLs in HTML/JS
+                matches = re.findall(r'https?://[^\s"\'<>]+\.(?:m3u8|mp4)(?:\?[^\s"\'<>]*)?', text)
+                for m in matches:
+                    if not any(x in m for x in ["favicon", "google-analytics", "thumbnail"]):
+                        return {
+                            "video_url": m,
+                            "master_url": m,
+                            "referer": referer,
+                            "is_fallback": False,
+                        }
+        except Exception:
+            continue
+
+    # Clean fallback to guaranteed working high-availability stream
+    idx = abs(hash(identifier)) % len(OPEN_STREAMS) if identifier else 0
+    fallback = OPEN_STREAMS[idx]
+    return {
+        "video_url": fallback["video_url"],
+        "master_url": fallback["video_url"],
+        "referer": fallback["referer"],
+        "is_fallback": True,
+    }
+
+
 def resolve_movie_stream(imdb_id: str, title: Optional[str] = None) -> Dict[str, Any]:
     """
     Resolves streaming video URL and playback metadata for a Movie.
-    Returns:
-    {
-        "video_url": "...",
-        "master_url": "...",
-        "referer": "...",
-        "headers": {...},
-        "sub_url": "...",
-        "title": "..."
-    }
+    Guarantees a valid, playable media URL for MPV.
     """
     clean_title = title.strip() if title else f"Movie {imdb_id}"
 
@@ -233,14 +288,15 @@ def resolve_movie_stream(imdb_id: str, title: Optional[str] = None) -> Dict[str,
         },
     ]
 
-    selected = providers[0]
+    stream_res = extract_direct_stream(providers, identifier=imdb_id)
     return {
-        "video_url": selected["url"],
-        "master_url": selected["url"],
-        "referer": selected["referer"],
+        "video_url": stream_res["video_url"],
+        "master_url": stream_res["master_url"],
+        "referer": stream_res["referer"],
+        "is_fallback": stream_res.get("is_fallback", False),
         "headers": {
             "User-Agent": USER_AGENT,
-            "Referer": selected["referer"],
+            "Referer": stream_res["referer"],
         },
         "sub_url": "",
         "title": clean_title,
@@ -253,6 +309,7 @@ def resolve_movie_stream(imdb_id: str, title: Optional[str] = None) -> Dict[str,
 def resolve_tv_stream(imdb_id: str, season: int = 1, episode: int = 1, title: Optional[str] = None) -> Dict[str, Any]:
     """
     Resolves streaming video URL and playback metadata for a TV Show episode.
+    Guarantees a valid, playable media URL for MPV.
     """
     full_title = f"{title} S{season:02d}E{episode:02d}" if title else f"TV {imdb_id} S{season}E{episode}"
 
@@ -279,14 +336,15 @@ def resolve_tv_stream(imdb_id: str, season: int = 1, episode: int = 1, title: Op
         },
     ]
 
-    selected = providers[0]
+    stream_res = extract_direct_stream(providers, identifier=f"{imdb_id}_s{season}e{episode}")
     return {
-        "video_url": selected["url"],
-        "master_url": selected["url"],
-        "referer": selected["referer"],
+        "video_url": stream_res["video_url"],
+        "master_url": stream_res["master_url"],
+        "referer": stream_res["referer"],
+        "is_fallback": stream_res.get("is_fallback", False),
         "headers": {
             "User-Agent": USER_AGENT,
-            "Referer": selected["referer"],
+            "Referer": stream_res["referer"],
         },
         "sub_url": "",
         "title": full_title,
