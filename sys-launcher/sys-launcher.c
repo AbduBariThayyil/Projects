@@ -1064,16 +1064,16 @@ static void load_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
     const char *css =
         "window {\n"
-        "  background-color: #1e1e2e;\n"
-        "  border: 1.5px solid #bd93f9;\n"
+        "  background-color: rgba(30, 30, 46, 0.88);\n"
+        "  border: 1.5px solid rgba(189, 147, 249, 0.85);\n"
         "  border-radius: 12px;\n"
         "}\n"
         "#main-box {\n"
         "  padding: 12px;\n"
         "}\n"
         "entry {\n"
-        "  background-color: #282a36;\n"
-        "  border: 1px solid #44475a;\n"
+        "  background-color: rgba(40, 42, 54, 0.92);\n"
+        "  border: 1px solid rgba(68, 71, 90, 0.75);\n"
         "  border-radius: 8px;\n"
         "  color: #f8f8f2;\n"
         "  font-family: 'JetBrainsMono Nerd Font', monospace;\n"
@@ -1099,7 +1099,7 @@ static void load_css(void) {
         "  color: #f8f8f2;\n"
         "}\n"
         "row:hover {\n"
-        "  background-color: #282a36;\n"
+        "  background-color: rgba(68, 71, 90, 0.55);\n"
         "}\n"
         "row:selected, row:selected:focus {\n"
         "  background-color: #bd93f9;\n"
@@ -1333,6 +1333,16 @@ static void populate_apps(void) {
     g_list_free_full(all, g_object_unref);
 }
 
+static gboolean on_window_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
+    (void)user_data;
+    (void)widget;
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.0);
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    return FALSE; /* Let GTK CSS render on top of cleared transparent surface */
+}
+
 static gboolean on_window_map(GtkWidget *widget, GdkEvent *event, gpointer user_data) {
     (void)event;
     (void)user_data;
@@ -1440,6 +1450,7 @@ static void build_ui(void) {
     /* Signal handlers */
     g_signal_connect(app_state.entry, "search-changed", G_CALLBACK(on_search_changed), NULL);
     g_signal_connect(app_state.entry, "activate", G_CALLBACK(on_entry_activate), NULL);
+    g_signal_connect(app_state.window, "draw", G_CALLBACK(on_window_draw), NULL);
     g_signal_connect(app_state.window, "key-press-event", G_CALLBACK(on_window_key_press), NULL);
     g_signal_connect(app_state.listbox, "row-activated", G_CALLBACK(on_row_activated), NULL);
     g_signal_connect(app_state.window, "map-event", G_CALLBACK(on_window_map), NULL);
