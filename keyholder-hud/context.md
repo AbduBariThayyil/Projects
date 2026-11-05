@@ -6,8 +6,8 @@
 ## Architecture & Technology
 - **Language**: Pure C (C99/GNU99).
 - **Graphics Pipeline**: Cairo 2D vector graphics with Pango text rendering, 32-bit ARGB TrueColor with rounded corners and Catppuccin Mocha aesthetic.
-- **IPC Mechanism**: Named FIFO pipe at `/tmp/keyholder-hud.fifo` for sub-millisecond asynchronous message delivery.
-- **Performance**: Sub-1ms render time, zero CPU when idle, <5 MB RSS memory.
+- **IPC Mechanism**: Per-user named FIFO pipe at `$XDG_RUNTIME_DIR/keyholder-hud.fifo` (with legacy fallback/symlink at `/tmp/keyholder-hud.fifo`) for sub-millisecond asynchronous message delivery with on-demand daemon autospawning.
+- **Performance**: Sub-1ms render time, cached Pango font descriptions, zero CPU when idle, idle auto-exit with instant CLI wake, <5 MB RSS memory.
 
 ## Key Files
 - `keyholder-hud.c`: Main event loop (Glib `GMainLoop`), X11 window initialization with `_NET_WM_WINDOW_TYPE_NOTIFICATION` / override-redirect, FIFO reader, and Cairo rendering.
