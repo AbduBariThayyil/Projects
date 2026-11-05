@@ -33,6 +33,7 @@ void             sys_polkit_dialog_clear_entry(SysPolkitDialog *dialog);
 void             sys_polkit_dialog_focus_entry(SysPolkitDialog *dialog);
 PolkitIdentity  *sys_polkit_dialog_get_selected_identity(SysPolkitDialog *dialog);
 GtkWidget       *sys_polkit_dialog_get_window(SysPolkitDialog *dialog);
+GtkWidget       *sys_polkit_dialog_get_cancel_button(SysPolkitDialog *dialog);
 void             sys_polkit_dialog_destroy(SysPolkitDialog *dialog);
 
 #endif /* SYS_POLKIT_DIALOG_H */

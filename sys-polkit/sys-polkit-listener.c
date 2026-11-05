@@ -10,6 +10,7 @@ typedef struct _AuthRequest {
     GTask               *task;
     GCancellable        *cancellable;
     gulong               cancellable_id;
+    guint                timeout_id;
 
     gchar               *action_id;
     gchar               *message;
@@ -25,6 +26,7 @@ typedef struct _AuthRequest {
 
 static void start_session(AuthRequest *req);
 static void finish_request(AuthRequest *req);
+static gboolean on_auth_timeout(gpointer user_data);
 
 static void disconnect_session(AuthRequest *req) {
     if (req->session != NULL) {
@@ -35,12 +37,44 @@ static void disconnect_session(AuthRequest *req) {
     }
 }
 
+static gboolean on_auth_timeout(gpointer user_data) {
+    AuthRequest *req = (AuthRequest *)user_data;
+    req->timeout_id = 0;
+
+    if (req->completed) return G_SOURCE_REMOVE;
+
+    g_warning("sys-polkit: Authentication timed out after 12s with no response from Polkit Authority.");
+
+    /* Abort stalled session */
+    disconnect_session(req);
+    req->in_progress = FALSE;
+
+    if (req->dialog != NULL) {
+        sys_polkit_dialog_set_error(req->dialog, "Authentication timed out. Please try again or cancel.");
+        sys_polkit_dialog_clear_entry(req->dialog);
+        sys_polkit_dialog_set_sensitive(req->dialog, TRUE);
+        sys_polkit_dialog_focus_entry(req->dialog);
+    }
+
+    /* Re-initiate session for new attempt */
+    start_session(req);
+
+    return G_SOURCE_REMOVE;
+}
+
 static void on_dialog_submit(const gchar *password, gpointer user_data) {
     AuthRequest *req = (AuthRequest *)user_data;
     if (req->completed) return;
 
     sys_polkit_dialog_set_sensitive(req->dialog, FALSE);
     req->in_progress = TRUE;
+
+    /* Arm 12-second safety watchdog timeout */
+    if (req->timeout_id != 0) {
+        g_source_remove(req->timeout_id);
+        req->timeout_id = 0;
+    }
+    req->timeout_id = g_timeout_add_seconds(12, on_auth_timeout, req);
 
     if (req->session != NULL) {
         polkit_agent_session_response(req->session, password);
@@ -51,12 +85,21 @@ static void on_dialog_cancel(gpointer user_data) {
     AuthRequest *req = (AuthRequest *)user_data;
     if (req->completed) return;
 
+    g_info("sys-polkit: Dialog cancelled by user.");
     req->completed = TRUE;
+
+    if (req->timeout_id != 0) {
+        g_source_remove(req->timeout_id);
+        req->timeout_id = 0;
+    }
+
     if (req->session != NULL) {
         polkit_agent_session_cancel(req->session);
     }
 
-    g_task_return_new_error(req->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "Authentication cancelled by user");
+    if (req->task != NULL && !g_task_get_completed(req->task)) {
+        g_task_return_new_error(req->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "Authentication cancelled by user");
+    }
     finish_request(req);
 }
 
@@ -64,10 +107,40 @@ static void on_dialog_identity_changed(PolkitIdentity *identity, gpointer user_d
     AuthRequest *req = (AuthRequest *)user_data;
     if (req->completed) return;
 
+    if (req->timeout_id != 0) {
+        g_source_remove(req->timeout_id);
+        req->timeout_id = 0;
+    }
+    req->in_progress = FALSE;
+
     req->selected_identity = identity;
     sys_polkit_dialog_set_error(req->dialog, NULL);
     sys_polkit_dialog_clear_entry(req->dialog);
     start_session(req);
+}
+
+static gboolean do_cancellable_cancel(gpointer user_data) {
+    AuthRequest *req = (AuthRequest *)user_data;
+    if (req->completed) return G_SOURCE_REMOVE;
+
+    g_info("sys-polkit: External D-Bus cancellation executed, destroying dialog.");
+    req->completed = TRUE;
+
+    if (req->timeout_id != 0) {
+        g_source_remove(req->timeout_id);
+        req->timeout_id = 0;
+    }
+
+    if (req->session != NULL) {
+        polkit_agent_session_cancel(req->session);
+    }
+
+    if (req->task != NULL && !g_task_get_completed(req->task)) {
+        g_task_return_new_error(req->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "Authentication request was cancelled");
+    }
+
+    finish_request(req);
+    return G_SOURCE_REMOVE;
 }
 
 static void on_cancellable_cancelled(GCancellable *cancellable, gpointer user_data) {
@@ -75,13 +148,11 @@ static void on_cancellable_cancelled(GCancellable *cancellable, gpointer user_da
     AuthRequest *req = (AuthRequest *)user_data;
     if (req->completed) return;
 
-    req->completed = TRUE;
-    if (req->session != NULL) {
-        polkit_agent_session_cancel(req->session);
-    }
+    /* Handler is currently running; clear cancellable_id so finish_request
+     * will not attempt g_cancellable_disconnect from within the callback (which deadlocks). */
+    req->cancellable_id = 0;
 
-    g_task_return_new_error(req->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "Authentication request was cancelled");
-    finish_request(req);
+    g_main_context_invoke(NULL, do_cancellable_cancel, req);
 }
 
 static void on_session_request(PolkitAgentSession *session,
@@ -92,6 +163,12 @@ static void on_session_request(PolkitAgentSession *session,
     (void)session;
     AuthRequest *req = (AuthRequest *)user_data;
     if (req->completed) return;
+
+    if (req->timeout_id != 0) {
+        g_source_remove(req->timeout_id);
+        req->timeout_id = 0;
+    }
+    req->in_progress = FALSE;
 
     sys_polkit_dialog_set_prompt(req->dialog, request_str, echo_on);
     sys_polkit_dialog_set_sensitive(req->dialog, TRUE);
@@ -126,13 +203,23 @@ static void on_session_completed(PolkitAgentSession *session,
     AuthRequest *req = (AuthRequest *)user_data;
     if (req->completed) return;
 
+    if (req->timeout_id != 0) {
+        g_source_remove(req->timeout_id);
+        req->timeout_id = 0;
+    }
+    req->in_progress = FALSE;
+
     if (gained_authorization) {
         req->completed = TRUE;
-        g_task_return_boolean(req->task, TRUE);
+        if (req->task != NULL && !g_task_get_completed(req->task)) {
+            g_task_return_boolean(req->task, TRUE);
+        }
         finish_request(req);
     } else if (req->cancellable != NULL && g_cancellable_is_cancelled(req->cancellable)) {
         req->completed = TRUE;
-        g_task_return_new_error(req->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "Authentication cancelled");
+        if (req->task != NULL && !g_task_get_completed(req->task)) {
+            g_task_return_new_error(req->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "Authentication cancelled");
+        }
         finish_request(req);
     } else {
         /* Authentication failed - allow user retry */
@@ -167,14 +254,20 @@ static void start_session(AuthRequest *req) {
 }
 
 static void finish_request(AuthRequest *req) {
+    if (req->timeout_id != 0) {
+        g_source_remove(req->timeout_id);
+        req->timeout_id = 0;
+    }
+
     if (req->dialog != NULL) {
         sys_polkit_dialog_destroy(req->dialog);
         req->dialog = NULL;
     }
 
     if (req->cancellable != NULL && req->cancellable_id != 0) {
-        g_cancellable_disconnect(req->cancellable, req->cancellable_id);
+        gulong cid = req->cancellable_id;
         req->cancellable_id = 0;
+        g_cancellable_disconnect(req->cancellable, cid);
     }
 
     disconnect_session(req);
@@ -245,6 +338,12 @@ static void sys_polkit_listener_initiate_authentication(PolkitAgentListener  *li
 
     if (cancellable != NULL) {
         req->cancellable = g_object_ref(cancellable);
+        if (g_cancellable_is_cancelled(cancellable)) {
+            req->completed = TRUE;
+            g_task_return_new_error(req->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "Authentication request was cancelled");
+            finish_request(req);
+            return;
+        }
         req->cancellable_id = g_cancellable_connect(cancellable,
                                                    G_CALLBACK(on_cancellable_cancelled),
                                                    req,

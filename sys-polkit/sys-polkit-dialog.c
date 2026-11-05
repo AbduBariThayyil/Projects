@@ -406,6 +406,7 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
     GtkStyleContext *ent_ctx = gtk_widget_get_style_context(dlg->entry);
     gtk_style_context_add_class(ent_ctx, "auth-entry");
     g_signal_connect(dlg->entry, "activate", G_CALLBACK(on_entry_activate), dlg);
+    g_signal_connect(dlg->entry, "key-press-event", G_CALLBACK(on_window_key_press), dlg);
     gtk_box_pack_start(GTK_BOX(main_box), dlg->entry, FALSE, FALSE, 0);
 
     /* Error Label */
@@ -424,7 +425,9 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
     dlg->btn_cancel = gtk_button_new_with_label("Cancel");
     GtkStyleContext *can_ctx = gtk_widget_get_style_context(dlg->btn_cancel);
     gtk_style_context_add_class(can_ctx, "btn-cancel");
+    gtk_widget_set_can_focus(dlg->btn_cancel, TRUE);
     g_signal_connect(dlg->btn_cancel, "clicked", G_CALLBACK(on_btn_cancel_clicked), dlg);
+    g_signal_connect(dlg->btn_cancel, "key-press-event", G_CALLBACK(on_window_key_press), dlg);
     gtk_box_pack_start(GTK_BOX(btn_box), dlg->btn_cancel, FALSE, FALSE, 0);
 
     dlg->btn_auth = gtk_button_new_with_label("Authenticate");
@@ -473,6 +476,14 @@ void sys_polkit_dialog_set_sensitive(SysPolkitDialog *dialog, gboolean sensitive
     if (dialog->identity_combo != NULL) {
         gtk_widget_set_sensitive(dialog->identity_combo, sensitive);
     }
+    /* Cancel button ALWAYS remains active and sensitive so user is NEVER locked out */
+    if (dialog->btn_cancel != NULL) {
+        gtk_widget_set_sensitive(dialog->btn_cancel, TRUE);
+        if (!sensitive) {
+            /* If the entry is disabled during PAM verification, ensure keyboard focus is on Cancel */
+            gtk_widget_grab_focus(dialog->btn_cancel);
+        }
+    }
 }
 
 void sys_polkit_dialog_clear_entry(SysPolkitDialog *dialog) {
@@ -495,9 +506,24 @@ GtkWidget *sys_polkit_dialog_get_window(SysPolkitDialog *dialog) {
     return dialog->window;
 }
 
+GtkWidget *sys_polkit_dialog_get_cancel_button(SysPolkitDialog *dialog) {
+    if (dialog == NULL) return NULL;
+    return dialog->btn_cancel;
+}
+
 void sys_polkit_dialog_destroy(SysPolkitDialog *dialog) {
     if (dialog == NULL) return;
     if (dialog->window != NULL) {
+        g_signal_handlers_disconnect_by_data(dialog->window, dialog);
+        if (dialog->entry != NULL) {
+            g_signal_handlers_disconnect_by_data(dialog->entry, dialog);
+        }
+        if (dialog->btn_cancel != NULL) {
+            g_signal_handlers_disconnect_by_data(dialog->btn_cancel, dialog);
+        }
+        if (dialog->btn_auth != NULL) {
+            g_signal_handlers_disconnect_by_data(dialog->btn_auth, dialog);
+        }
         gtk_widget_destroy(dialog->window);
         dialog->window = NULL;
     }
