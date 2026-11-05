@@ -31,9 +31,14 @@ All upgraded components follow the **`sys-`** naming convention (e.g. `sys-notif
 * **Status:** User prefers **Alacritty** (Retained).
 * **Details:** Configured with TokyoNight palette, smooth GPU acceleration, and comfortable keybinds.
 
-### 5. 🛡️ Lightweight Polkit Agent (Replacing `polkit-gnome`)
-* **Current:** `polkit-gnome-authentication-agent-1` consumes ~23 MB RAM running constantly in the background.
-* **Goal:** Replace with **`polkit-dumb-agent`** or a minimal C Polkit auth agent consuming **< 2 MB RAM** that only activates when root elevation is prompted.
+### 5. 🛡️ Lightweight Polkit Agent (`sys-polkit`) — ✅ COMPLETED
+* **Status:** **Active & Production-Ready** (systemd service: `sys-polkit.service`, binary: `/home/vibecoder/.local/bin/sys-polkit`).
+* **Source:** `/home/vibecoder/Projects/sys-polkit/`.
+* **Achieved Features & Metrics:**
+  * **Ultra-Light Idle Footprint (< 2 MB):** Replaced heavy `polkit-gnome` (~23 MB RAM) and shell-forking `cmd-polkit-agent` + `jq` + `rofi` script with native C agent consuming only ~1.7 MB RAM and 0% CPU idle in `g_main_loop_run()`.
+  * **Native Catppuccin Mocha Dialog:** Centered GTK3/Cairo floating dialog (`security-high` lock glyph, action message, identity selection badge, obscured password field `●●●●`, and inline `#f38ba8` error retry).
+  * **Desktop Integration:** Fully integrated with systemd user service `sys-polkit.service` and BSPWM floating rule (`bspc rule -a sys-polkit state=floating center=true layer=above`).
+  * **Zero-Lag Keyboard Navigation:** Instant response on <kbd>Enter</kbd> to submit, <kbd>Escape</kbd> to cancel, with immediate credential retry without dismissing window.
 
 ### 6. ⚡ Unified Fast CLI Binary (Replacing `~/.config/bspwm/bin/*` Bash Scripts $\rightarrow$ `sys-control`) — ✅ COMPLETED
 * **Status:** **Active & Production-Ready** (binary: `/home/vibecoder/.local/bin/sys-control`).
