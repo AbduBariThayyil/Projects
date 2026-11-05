@@ -643,9 +643,11 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "--apptoggle") == 0) {
         spawn_async("/home/vibecoder/.local/bin/sys-launcher --toggle");
     } else if (strcmp(arg, "--screenlocker") == 0 || strcmp(arg, "--lock") == 0 || strcmp(arg, "lock") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/OpenApps --screenlocker");
+        spawn_async("/home/vibecoder/.local/bin/sys-lock --blur");
     } else if (strcmp(arg, "--lock-rice") == 0) {
-        spawn_async("/home/vibecoder/.config/bspwm/bin/OpenApps --lock-rice");
+        spawn_async("/home/vibecoder/.local/bin/sys-lock --rice");
+    } else if (strcmp(arg, "--lock-dark") == 0) {
+        spawn_async("/home/vibecoder/.local/bin/sys-lock --dark");
     } else {
         /* General fallback to OpenApps for any unknown custom flags */
         char cmd[1024];
