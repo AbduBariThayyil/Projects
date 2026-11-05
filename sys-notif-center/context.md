@@ -14,6 +14,10 @@
 - Clear individual notifications or bulk clear history.
 - Unread notification count badge in header.
 - Keyboard navigation (<kbd>Esc</kbd> to dismiss).
+- Focus-out auto-dismiss (clicking outside or switching windows automatically dismisses modal).
+- Fast toggle via secure runtime PID file (`$XDG_RUNTIME_DIR/sys_notif_center.pid`) with clean signal handling.
+- Dynamic XDG path and binary resolution for `sys-control` and `sys-notif`.
+- Complete resource deallocation with zero memory leaks.
 
 ## Execution & Compilation
 ```bash

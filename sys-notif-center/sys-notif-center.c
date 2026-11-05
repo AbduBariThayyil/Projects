@@ -2,6 +2,7 @@
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 #include <glib.h>
+#include <glib-unix.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,9 +10,50 @@
 #include <sys/types.h>
 #include <regex.h>
 #include <math.h>
+#include <signal.h>
 
-#define HISTORY_FILE "/home/vibecoder/.cache/sys-notif/history.txt"
-#define AVATAR_DIR   "/home/vibecoder/.cache/sys-notif/avatars"
+static char *g_history_file = NULL;
+static char *g_avatar_dir = NULL;
+static char *g_lock_file = NULL;
+
+static const char *get_history_file(void) {
+    if (!g_history_file) {
+        g_history_file = g_build_filename(g_get_user_cache_dir(), "sys-notif", "history.txt", NULL);
+    }
+    return g_history_file;
+}
+
+static const char *get_avatar_dir(void) {
+    if (!g_avatar_dir) {
+        g_avatar_dir = g_build_filename(g_get_user_cache_dir(), "sys-notif", "avatars", NULL);
+    }
+    return g_avatar_dir;
+}
+
+#define HISTORY_FILE (get_history_file())
+#define AVATAR_DIR   (get_avatar_dir())
+
+static char *get_pid_file_path(void) {
+    const char *runtime_dir = g_getenv("XDG_RUNTIME_DIR");
+    if (runtime_dir && runtime_dir[0] != '\0' && access(runtime_dir, W_OK | X_OK) == 0) {
+        return g_build_filename(runtime_dir, "sys_notif_center.pid", NULL);
+    }
+    return g_strdup_printf("/tmp/sys_notif_center-%u.pid", (unsigned int)getuid());
+}
+
+static void cleanup_lock_file(void) {
+    if (g_lock_file) {
+        unlink(g_lock_file);
+    }
+}
+
+static char *resolve_binary(const char *name) {
+    char *path = g_find_program_in_path(name);
+    if (path) {
+        return path;
+    }
+    return g_build_filename(g_get_home_dir(), ".local", "bin", name, NULL);
+}
 
 typedef struct {
     char *time;
@@ -35,6 +77,54 @@ static GList *group_list = NULL;
 static GtkWidget *main_window = NULL;
 static GtkWidget *cards_box = NULL;
 static GtkWidget *unread_badge = NULL;
+
+static void free_message_item(gpointer data) {
+    MessageItem *m = (MessageItem *)data;
+    if (!m) return;
+    if (m->time) free(m->time);
+    if (m->sender) free(m->sender);
+    if (m->body) free(m->body);
+    g_free(m);
+}
+
+static void free_conversation_group(ConversationGroup *cg) {
+    if (!cg) return;
+    if (cg->app) free(cg->app);
+    if (cg->base_name) free(cg->base_name);
+    if (cg->icon_str) free(cg->icon_str);
+    if (cg->messages) {
+        g_list_free_full(cg->messages, free_message_item);
+        cg->messages = NULL;
+    }
+    g_free(cg);
+}
+
+static void free_conversation_groups(void) {
+    if (group_list) {
+        g_list_free_full(group_list, (GDestroyNotify)free_conversation_group);
+        group_list = NULL;
+    }
+}
+
+static void safe_gtk_main_quit(void) {
+    if (gtk_main_level() > 0) {
+        gtk_main_quit();
+    }
+}
+
+static gboolean on_signal_quit(gpointer user_data) {
+    (void)user_data;
+    safe_gtk_main_quit();
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean on_focus_out(GtkWidget *widget, GdkEventFocus *event, gpointer user_data) {
+    (void)widget;
+    (void)event;
+    (void)user_data;
+    safe_gtk_main_quit();
+    return FALSE;
+}
 
 /* --------------------------------------------------------------------------
  * CSS Styling (Catppuccin Mocha)
@@ -682,12 +772,14 @@ static void activate_conversation(const char *app, const char *group, GList *mes
     /* Focus app window via sys-control */
     if (fork() == 0) {
         setsid();
-        execlp("/home/vibecoder/.local/bin/sys-control", "sys-control", "--activate", app, group, NULL);
-        _exit(0);
+        char *sys_ctrl = resolve_binary("sys-control");
+        execlp(sys_ctrl, "sys-control", "--activate", app, group, NULL);
+        g_free(sys_ctrl);
+        _exit(1);
     }
 
     remove_group_from_history(app, group);
-    gtk_main_quit();
+    safe_gtk_main_quit();
 }
 
 /* --------------------------------------------------------------------------
@@ -701,6 +793,8 @@ static void dismiss_card(ConversationGroup *cg) {
         gtk_widget_destroy(cg->card_widget);
         cg->card_widget = NULL;
     }
+
+    free_conversation_group(cg);
 
     /* Update unread badge */
     int total_unread = g_list_length(group_list);
@@ -779,16 +873,18 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     if (fork() == 0) {
         setsid();
-        execlp("/home/vibecoder/.local/bin/sys-notif", "sys-notif", "--clear", NULL);
-        _exit(0);
+        char *sys_ntf = resolve_binary("sys-notif");
+        execlp(sys_ntf, "sys-notif", "--clear", NULL);
+        g_free(sys_ntf);
+        _exit(1);
     }
-    gtk_main_quit();
+    safe_gtk_main_quit();
 }
 
 static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer user_data) {
     (void)widget; (void)user_data;
     if (event->keyval == GDK_KEY_Escape) {
-        gtk_main_quit();
+        safe_gtk_main_quit();
         return TRUE;
     }
     return FALSE;
@@ -1089,29 +1185,37 @@ static GtkWidget *create_conversation_card(ConversationGroup *cg) {
  * Main Window Creation
  * -------------------------------------------------------------------------- */
 int main(int argc, char *argv[]) {
+    g_lock_file = get_pid_file_path();
+
     /* Fast toggle check: if an instance is already running, toggle close */
-    const char *lock_file = "/tmp/sys_notif_center.pid";
-    FILE *pf = fopen(lock_file, "r");
+    FILE *pf = fopen(g_lock_file, "r");
     if (pf) {
         pid_t existing_pid = 0;
         if (fscanf(pf, "%d", &existing_pid) == 1 && existing_pid > 0) {
             if (kill(existing_pid, 0) == 0 && existing_pid != getpid()) {
                 kill(existing_pid, SIGTERM);
                 fclose(pf);
-                unlink(lock_file);
+                cleanup_lock_file();
+                g_free(g_lock_file);
+                g_lock_file = NULL;
                 return 0;
             }
         }
         fclose(pf);
     }
 
-    pf = fopen(lock_file, "w");
+    pf = fopen(g_lock_file, "w");
     if (pf) {
         fprintf(pf, "%d\n", getpid());
         fclose(pf);
     }
+    atexit(cleanup_lock_file);
 
     gtk_init(&argc, &argv);
+
+    /* Signal handlers for clean termination */
+    g_unix_signal_add(SIGINT, on_signal_quit, NULL);
+    g_unix_signal_add(SIGTERM, on_signal_quit, NULL);
 
     /* Load CSS */
     GtkCssProvider *provider = gtk_css_provider_new();
@@ -1121,6 +1225,7 @@ int main(int argc, char *argv[]) {
         GTK_STYLE_PROVIDER(provider),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
     );
+    g_object_unref(provider);
 
     /* Create Centered Modal Window */
     main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -1134,6 +1239,10 @@ int main(int argc, char *argv[]) {
     gtk_window_set_skip_taskbar_hint(GTK_WINDOW(main_window), TRUE);
     gtk_window_set_skip_pager_hint(GTK_WINDOW(main_window), TRUE);
     gtk_window_set_keep_above(GTK_WINDOW(main_window), TRUE);
+
+    /* Focus-Out Auto-Dismiss */
+    gtk_widget_add_events(main_window, GDK_FOCUS_CHANGE_MASK);
+    g_signal_connect(main_window, "focus-out-event", G_CALLBACK(on_focus_out), NULL);
 
     GtkStyleContext *win_ctx = gtk_widget_get_style_context(main_window);
     gtk_style_context_add_class(win_ctx, "center-modal");
@@ -1162,7 +1271,7 @@ int main(int argc, char *argv[]) {
     /* Close button ✕ */
     GtkWidget *btn_close = gtk_button_new_with_label("✕");
     gtk_style_context_add_class(gtk_widget_get_style_context(btn_close), "btn-close");
-    g_signal_connect_swapped(btn_close, "clicked", G_CALLBACK(gtk_main_quit), NULL);
+    g_signal_connect_swapped(btn_close, "clicked", G_CALLBACK(safe_gtk_main_quit), NULL);
     gtk_box_pack_end(GTK_BOX(header_bar), btn_close, FALSE, FALSE, 4);
 
     gtk_box_pack_start(GTK_BOX(root_box), header_bar, FALSE, FALSE, 0);
@@ -1220,11 +1329,31 @@ int main(int argc, char *argv[]) {
     }
 
     g_signal_connect(main_window, "key-press-event", G_CALLBACK(on_key_press), NULL);
-    g_signal_connect(main_window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    g_signal_connect(main_window, "destroy", G_CALLBACK(safe_gtk_main_quit), NULL);
 
     gtk_widget_show_all(main_window);
     gtk_main();
 
-    unlink(lock_file);
+    if (main_window && GTK_IS_WIDGET(main_window)) {
+        gtk_widget_destroy(main_window);
+        main_window = NULL;
+    }
+
+    free_conversation_groups();
+
+    cleanup_lock_file();
+    if (g_lock_file) {
+        g_free(g_lock_file);
+        g_lock_file = NULL;
+    }
+    if (g_history_file) {
+        g_free(g_history_file);
+        g_history_file = NULL;
+    }
+    if (g_avatar_dir) {
+        g_free(g_avatar_dir);
+        g_avatar_dir = NULL;
+    }
+
     return 0;
 }
