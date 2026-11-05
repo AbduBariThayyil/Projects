@@ -842,7 +842,9 @@ class QtEngine(QObject):
 
     def load(self, path): self.p.setSource(QUrl.fromLocalFile(path))
     def load_url(self, url, length=0.0): self.p.setSource(QUrl(url))
-    def play(self): self.p.play()
+    def play(self):
+        ensure_polybar_music()
+        self.p.play()
     def pause(self): self.p.pause()
     def position(self): return self.p.position() / 1000.0
     def seek(self, sec): self.p.setPosition(int(max(0, sec) * 1000))
@@ -913,6 +915,50 @@ MPRIS_XML = """<node>
 MPRIS_PATH, MPRIS_NAME = "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.lyricview"
 
 
+def is_polybar_music_running() -> bool:
+    """Check if an active (non-zombie) PolybarMusic process is running."""
+    try:
+        for entry in os.scandir("/proc"):
+            if entry.name.isdigit():
+                try:
+                    with open(os.path.join(entry.path, "stat"), "rb") as f:
+                        parts = f.read().split()
+                        if len(parts) >= 3 and parts[1] == b"(PolybarMusic)" and parts[2] != b"Z":
+                            return True
+                except (FileNotFoundError, ProcessLookupError, PermissionError, IndexError):
+                    continue
+    except Exception:
+        pass
+    return False
+
+
+def ensure_polybar_music():
+    """Ensure PolybarMusic daemon is running for Polybar streaming widget."""
+    try:
+        if is_polybar_music_running():
+            return
+        poly_bin = shutil.which("PolybarMusic")
+        if not poly_bin:
+            for candidate in (
+                os.path.expanduser("~/.config/bspwm/bin/PolybarMusic"),
+                os.path.expanduser("~/.local/bin/PolybarMusic"),
+            ):
+                if os.path.exists(candidate) and os.access(candidate, os.X_OK):
+                    poly_bin = candidate
+                    break
+        if poly_bin and os.path.exists(poly_bin):
+            subprocess.Popen(
+                [poly_bin, "--fifo"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except Exception:
+        pass
+
+
 class Mpris:
     def __init__(self, on_cmd, name="lyricview"):
         self.on_cmd = on_cmd  # called from the GLib thread: on_cmd(name, arg)
@@ -947,27 +993,17 @@ class Mpris:
             self.loop, self.conn = None, None
 
     def _ensure_polybar_music(self):
-        try:
-            poly_bin = shutil.which("PolybarMusic")
-            if not poly_bin:
-                for candidate in (
-                    os.path.expanduser("~/.config/bspwm/bin/PolybarMusic"),
-                    os.path.expanduser("~/.local/bin/PolybarMusic"),
-                ):
-                    if os.path.exists(candidate) and os.access(candidate, os.X_OK):
-                        poly_bin = candidate
-                        break
-            if poly_bin and os.path.exists(poly_bin):
-                subprocess.Popen(
-                    [poly_bin, "--fifo"],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                    close_fds=True,
-                )
-        except Exception:
-            pass
+        ensure_polybar_music()
+
+    def ensure_polybar_music(self):
+        ensure_polybar_music()
+
+    def _set_playback_status(self, status):
+        """Update playback status and ensure Polybar daemon is alive if playing."""
+        if status != self.status:
+            self.status = status
+            if status == "Playing":
+                ensure_polybar_music()
 
     def _acquired(self, conn, name):
         self.conn = conn
@@ -976,7 +1012,7 @@ class Mpris:
             warnings.simplefilter("ignore")  # Gio.DBusConnection.register_object is deprecated but still the portable call
             for iface in self.info.interfaces:
                 conn.register_object(MPRIS_PATH, iface, self._call, self._get, None)
-        self._ensure_polybar_music()
+        ensure_polybar_music()
 
     def _call(self, conn, sender, path, iface, method, params, inv):
         a = params.unpack()
@@ -1079,6 +1115,21 @@ class OwnPlayer(QObject):
         self._repaired, self._fail_gen = False, -1
         self.radioReady.connect(self._on_radio)
 
+    def ensure_polybar_music(self):
+        ensure_polybar_music()
+
+    def _set_playback_status(self, status):
+        """Update playback status and ensure Polybar daemon is alive if playing."""
+        self.status = status
+        if status == "Playing":
+            ensure_polybar_music()
+        self.mpris.update(status=status, pos=self.eng.position())
+        self.b.ownStatus(status == "Playing")
+
+    def on_track_loaded(self):
+        """Hook called when a new track is loaded into the engine and ready for playback."""
+        ensure_polybar_music()
+
     # ---- library rescans re-number tracks, so remember them by path
     def _enc(self, x):
         if isinstance(x, dict) and x.get("group"):
@@ -1121,6 +1172,8 @@ class OwnPlayer(QObject):
                 self.b.a.seek = None
         else:  # coming back from "follow": put the UI back on this track, then resume the sound
             self.b.ownResume()
+            ensure_polybar_music()
+            self._set_playback_status("Playing")
             self.mpris.update(status="Playing", meta=self.meta, pos=self.eng.position(), seeked=True)
             self.eng.play()
         self._push()
@@ -1153,10 +1206,12 @@ class OwnPlayer(QObject):
         self.eng.load(t["path"])
         if isinstance(self.eng, NullEngine):
             self.eng.dur = t["len"] or 240.0
+        self.on_track_loaded()
         self.eng.play()
+        ensure_polybar_music()
         self.meta = {"key": hashlib.md5(t["path"].encode()).hexdigest()[:16], "artist": t["artist"], "title": t["title"],
                      "album": t["album"], "length": t["len"], "url": QUrl.fromLocalFile(t["path"]).toString(), "art": ""}
-        self.status = "Playing"
+        self._set_playback_status("Playing")
         self.b.ownTrack(self.meta)
         self.b.sync.emit(0.0, True)
         self.mpris.update(status="Playing", meta=self.meta, pos=0.0, seeked=True)
@@ -1216,7 +1271,10 @@ class OwnPlayer(QObject):
             self.b.toast.emit("couldn't stream this one - skipping")
             return QTimer.singleShot(300, self.next)
         self.eng.load_url(url, self.cur.get("len", 0) if isinstance(self.cur, dict) else 0)
+        self.on_track_loaded()
         self.eng.play()
+        ensure_polybar_music()
+        self._set_playback_status("Playing")
 
     def _radio_job(self, vid):
         try:
@@ -1244,6 +1302,7 @@ class OwnPlayer(QObject):
         if self.status == "Playing":
             self.eng.pause()
         else:
+            ensure_polybar_music()
             self.eng.play()
 
     def seek(self, sec):
@@ -1344,9 +1403,7 @@ class OwnPlayer(QObject):
     def _state(self, st):
         if st == "Stopped" and self.status == "Playing":
             return  # transient: end of media is followed by next()
-        self.status = st
-        self.mpris.update(status=st, pos=self.eng.position())
-        self.b.ownStatus(st == "Playing")
+        self._set_playback_status(st)
 
     def _failed(self, msg):
         if self._fail_gen == self._gen:

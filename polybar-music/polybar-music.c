@@ -467,10 +467,102 @@ static gboolean on_signal_quit(gpointer user_data) {
     return G_SOURCE_CONTINUE;
 }
 
+/* Helper to check if a specific D-Bus well-known name has an active owner */
+static gboolean is_name_owned_on_dbus(GDBusConnection *conn, const char *name) {
+    if (!conn || !name || !*name) return FALSE;
+    GError *err = NULL;
+    GVariant *res = g_dbus_connection_call_sync(
+        conn,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "NameHasOwner",
+        g_variant_new("(s)", name),
+        G_VARIANT_TYPE("(b)"),
+        G_DBUS_CALL_FLAGS_NONE,
+        500,
+        NULL,
+        &err
+    );
+    if (!res) {
+        if (err) g_error_free(err);
+        return FALSE;
+    }
+    gboolean has_owner = FALSE;
+    g_variant_get(res, "(b)", &has_owner);
+    g_variant_unref(res);
+    return has_owner;
+}
+
+/* Helper to discover any active MPRIS player currently owned on session D-Bus */
+static char *find_running_mpris_player(GDBusConnection *conn) {
+    if (!conn) return NULL;
+    static const char *known_players[] = {
+        "org.mpris.MediaPlayer2.qt-music",
+        "org.mpris.MediaPlayer2.lyricview",
+        "org.mpris.MediaPlayer2.lollypop"
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(known_players); i++) {
+        if (is_name_owned_on_dbus(conn, known_players[i])) {
+            return g_strdup(known_players[i]);
+        }
+    }
+
+    GError *err = NULL;
+    GVariant *res = g_dbus_connection_call_sync(
+        conn,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "ListNames",
+        NULL,
+        G_VARIANT_TYPE("(as)"),
+        G_DBUS_CALL_FLAGS_NONE,
+        500,
+        NULL,
+        &err
+    );
+    if (!res) {
+        if (err) g_error_free(err);
+        return NULL;
+    }
+
+    GVariantIter *iter = NULL;
+    g_variant_get(res, "(as)", &iter);
+    char *name = NULL;
+    char *found = NULL;
+    while (g_variant_iter_loop(iter, "s", &name)) {
+        if (g_str_has_prefix(name, "org.mpris.MediaPlayer2.") &&
+            strcmp(name, "org.mpris.MediaPlayer2.playerctld") != 0) {
+            found = g_strdup(name);
+            break;
+        }
+    }
+    g_variant_iter_free(iter);
+    g_variant_unref(res);
+    return found;
+}
+
+static void on_player_appeared(GDBusConnection *conn,
+                               const gchar *name,
+                               const gchar *name_owner,
+                               gpointer user_data);
+
 /* Startup grace period timeout: if no player appeared, exit cleanly */
 static gboolean on_startup_timeout(gpointer user_data) {
     (void)user_data;
     startup_timer_id = 0;
+
+    /* Verify directly with D-Bus: If player exists on D-Bus, do not exit */
+    char *running_player = find_running_mpris_player(dbus_conn);
+    if (running_player != NULL) {
+        if (!is_player_active || strcmp(active_bus_name, running_player) != 0) {
+            on_player_appeared(dbus_conn, running_player, NULL, NULL);
+        }
+        g_free(running_player);
+        return G_SOURCE_REMOVE;
+    }
+
     if (!is_player_active) {
         if (main_loop && g_main_loop_is_running(main_loop)) {
             g_main_loop_quit(main_loop);
@@ -489,6 +581,18 @@ static void on_player_appeared(GDBusConnection *conn,
     if (startup_timer_id > 0) {
         g_source_remove(startup_timer_id);
         startup_timer_id = 0;
+    }
+
+    /* Unsubscribe from previous player signals if name changed */
+    if (active_bus_name[0] != '\0' && strcmp(active_bus_name, name) != 0) {
+        if (prop_sub_id > 0) {
+            g_dbus_connection_signal_unsubscribe(dbus_conn, prop_sub_id);
+            prop_sub_id = 0;
+        }
+        if (seeked_sub_id > 0) {
+            g_dbus_connection_signal_unsubscribe(dbus_conn, seeked_sub_id);
+            seeked_sub_id = 0;
+        }
     }
 
     g_strlcpy(active_bus_name, name, sizeof(active_bus_name));
@@ -534,6 +638,19 @@ static void on_player_vanished(GDBusConnection *conn,
                                gpointer user_data) {
     (void)conn; (void)user_data;
     if (is_player_active && strcmp(active_bus_name, name) == 0) {
+        /* Check if the active name is still owned (e.g. transient glitch or another owner) */
+        if (is_name_owned_on_dbus(dbus_conn, active_bus_name)) {
+            return;
+        }
+
+        /* Check if another MPRIS player is active before tearing down */
+        char *other_player = find_running_mpris_player(dbus_conn);
+        if (other_player != NULL) {
+            on_player_appeared(dbus_conn, other_player, NULL, NULL);
+            g_free(other_player);
+            return;
+        }
+
         is_player_active = FALSE;
         active_bus_name[0] = '\0';
         g_strlcpy(current_status, "Stopped", sizeof(current_status));
@@ -746,8 +863,16 @@ int main(int argc, char **argv) {
     sigint_source = g_unix_signal_add(SIGINT, on_signal_quit, NULL);
     sigterm_source = g_unix_signal_add(SIGTERM, on_signal_quit, NULL);
 
-    /* Set 1.5s startup timeout: if player is not currently running, exit */
-    startup_timer_id = g_timeout_add(1500, on_startup_timeout, NULL);
+    /* Check if an MPRIS player already exists on D-Bus */
+    char *initial_player = find_running_mpris_player(dbus_conn);
+    if (initial_player != NULL) {
+        /* Player is actively running; attach immediately without 1.5s startup timeout */
+        on_player_appeared(dbus_conn, initial_player, NULL, NULL);
+        g_free(initial_player);
+    } else {
+        /* Set 1.5s startup timeout: if no player appeared, exit */
+        startup_timer_id = g_timeout_add(1500, on_startup_timeout, NULL);
+    }
 
     /* Monitor target players */
     watcher_qtmusic = g_bus_watch_name(
