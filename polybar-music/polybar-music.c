@@ -110,14 +110,6 @@ static void ensure_fifo_and_symlink(void) {
     }
 }
 
-static void notify_polybar(const char *action) {
-    if (!action || !*action) return;
-    char *argv[] = { "polybar-msg", "action", (char *)action, NULL };
-    g_spawn_async(NULL, argv, NULL,
-                  G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
-                  NULL, NULL, NULL, NULL);
-}
-
 /* Non-blocking atomic write to stdout (FIFO or pipe).
  * Discards frame on EAGAIN/EWOULDBLOCK to keep event loop 100% non-blocking. */
 static void safe_write_output(const char *data) {
@@ -628,7 +620,6 @@ static void on_player_appeared(GDBusConnection *conn,
         );
     }
 
-    notify_polybar("#music_center.module_show");
     fetch_player_state();
 }
 
@@ -667,7 +658,7 @@ static void on_player_vanished(GDBusConnection *conn,
         }
 
         render_clear();
-        notify_polybar("#music_center.module_hide");
+        usleep(20000);
 
         /* Zero-RAM lifecycle: Player is gone, exit PolybarMusic immediately */
         if (main_loop && g_main_loop_is_running(main_loop)) {
@@ -945,6 +936,7 @@ int main(int argc, char **argv) {
     }
 
     render_clear();
+    usleep(20000);
 
     if (lock_fd >= 0) {
         flock(lock_fd, LOCK_UN);

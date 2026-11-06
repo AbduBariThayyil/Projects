@@ -2266,6 +2266,20 @@ class Bridge(QObject):
     @Slot()
     def quitApp(self):
         self.hideWindow()
+        if hasattr(self, "_tray") and self._tray:
+            try:
+                self._tray.hide()
+            except Exception:
+                pass
+        QCoreApplication.processEvents()
+        try:
+            fifo_path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "polybar_music.fifo")
+            if os.path.exists(fifo_path):
+                fd = os.open(fifo_path, os.O_WRONLY | os.O_NONBLOCK)
+                os.write(fd, b"\n")
+                os.close(fd)
+        except Exception:
+            pass
         for s_name in getattr(self, "_ipc_names", [f"qt-music-ipc-{os.getuid()}", f"lyricview-ipc-{os.getuid()}"]):
             try:
                 QLocalServer.removeServer(s_name)
@@ -2277,6 +2291,7 @@ class Bridge(QObject):
         except Exception:
             pass
         self._restore_prev_desktop()
+        QCoreApplication.processEvents()
         QApplication.quit()
 
     @Slot(float)
@@ -4370,6 +4385,7 @@ def main_daemon(a, ipc_names):
 
     # Tray Icon
     tray = QSystemTrayIcon(make_tray_icon(), app)
+    bridge._tray = tray
     tray.setToolTip("qt-music")
     menu = QMenu()
     menu.addAction("Show / Hide", bridge.toggleWindow)
@@ -4387,7 +4403,15 @@ def main_daemon(a, ipc_names):
     if not a.tray:
         bridge.showWindow()
 
-    app.aboutToQuit.connect(bridge._restore_prev_desktop)
+    def _clean_exit():
+        try:
+            if hasattr(bridge, "_tray") and bridge._tray:
+                bridge._tray.hide()
+        except Exception:
+            pass
+        bridge._restore_prev_desktop()
+
+    app.aboutToQuit.connect(_clean_exit)
     sys.exit(app.exec())
 
 
