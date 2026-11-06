@@ -22,7 +22,7 @@
 - [ ] **New Notification System**
 - [x] **Low battery warning** (Natively integrated into sys-notif via UPower D-Bus & direct sysfs, eliminated polling Bash daemon)
 - [x] **Make Keyholder ignore sxhkd binds**
-- [ ] **Blueman sxhkd integration / keybindings**
+- [x] **Blueman sxhkd integration / keybindings** (Added Win + Alt + Shift + B scratchpad hotkey & sys-control --blueman integration)
 - [ ] **Add mod keys to mouse**
 - [ ] **Upgrade zsh**
 

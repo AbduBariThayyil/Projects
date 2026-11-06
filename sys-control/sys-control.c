@@ -577,9 +577,13 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "--bluetooth") == 0) {
         if (argc >= 3 && strcmp(argv[2], "toggle") == 0) {
             spawn_async("sys-bt toggle");
+        } else if (argc >= 3 && (strcmp(argv[2], "gui") == 0 || strcmp(argv[2], "blueman") == 0)) {
+            spawn_async("/home/vibecoder/.config/bspwm/bin/Scratchpad center blueman-manager");
         } else {
             spawn_async("sys-bt menu");
         }
+    } else if (strcmp(arg, "--blueman") == 0) {
+        spawn_async("/home/vibecoder/.config/bspwm/bin/Scratchpad center blueman-manager");
     }
     /* Touchpad & Screenshots */
     else if (strcmp(arg, "--touchpad") == 0 || strcmp(arg, "touchpad") == 0) {

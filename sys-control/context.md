@@ -35,6 +35,11 @@ sys-control screenshot select
 sys-control screenshot window
 ```
 
+# Bluetooth & Blueman Integration
+sys-control --bluetooth           # Opens interactive sys-bt Rofi menu (Win + Alt + B)
+sys-control --bluetooth toggle    # Toggles Bluetooth power immediately
+sys-control --blueman             # Opens centered Blueman Manager scratchpad (Win + Alt + Shift + B)
+
 ## Compilation
 ```bash
 cd /home/vibecoder/Projects/sys-control
