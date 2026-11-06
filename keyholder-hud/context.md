@@ -29,6 +29,13 @@ To prevent window manager chords, sxhkd binds, and modifier triggers from being 
 ### Chord & Pre-Hold Latch Immunity
 `wait_for_latch(sel, devices)` captures `initially_down = set()` across all devices before listening. Any keys already physically held during sxhkd chord invocation (e.g. `mod5 + button1`) are ignored until fully released (`event.value == 0`), preventing false latching onto trigger keys.
 
+### X11 & sxhkd Core Grab Isolation
+To guarantee that virtual keys held or spammed by `KeyHolder` do NOT count towards or trigger `sxhkd` hotkeys, `KeyHolder` automatically detaches its virtual uinput device (`Virtual-KeyHolder-Spam` / `Virtual-KeyHolder-Hold`) from the X11 Virtual Core Keyboard (`xinput float <id>`).
+- **No Modifier Tainting**: Held keys/modifiers do not contaminate the master core keyboard modifier mask, allowing desktop chords (`super + 1`, `super + Return`, etc.) to continue functioning without conflicts.
+- **Zero sxhkd Grab Firing**: Spammed or held keys (such as `space` or `button1`) bypass root-window `XGrabKey` core grabs completely.
+- **Full Evdev Game Delivery**: Games and raw input handlers (Steam, Wine/Proton, Minecraft, SDL2) receive 100% of the inputs directly via kernel `/dev/input/event*` devices at native zero latency.
+- Pass `--no-float` if core X11 master keyboard attachment is ever explicitly needed.
+
 ## IPC Protocol
 Send simple newline-terminated strings to `/tmp/keyholder-hud.fifo`:
 ```bash

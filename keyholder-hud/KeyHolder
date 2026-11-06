@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import evdev, os, sys, signal, selectors, time, argparse, subprocess, fcntl, struct, ctypes
+import evdev, os, sys, signal, selectors, time, argparse, subprocess, fcntl, struct, ctypes, threading
 from evdev import UInput, InputDevice, ecodes as e
 
 STATE_DIR = os.path.expanduser("~/.cache/keyholder")
@@ -85,6 +85,31 @@ def notify_hud(mode: str, title: str, subtitle: str):
         os.close(fd)
     except Exception:
         pass
+
+def float_virtual_device(name: str):
+    """Detaches the virtual UInput device from the X11 Virtual Core Keyboard/Pointer.
+    This guarantees that keys emitted or held by KeyHolder DO NOT count towards or trigger
+    sxhkd hotkeys, nor do they contaminate the X11 master modifier mask."""
+    if os.environ.get("KEYHOLDER_NO_FLOAT") == "1":
+        return False
+    try:
+        # Xorg registers new uinput devices asynchronously via udev
+        for _ in range(40):
+            out = subprocess.check_output(["xinput", "list"], stderr=subprocess.DEVNULL).decode("utf-8", "ignore")
+            matched = False
+            for line in out.splitlines():
+                if name in line and "floating slave" not in line:
+                    parts = line.split("id=")
+                    if len(parts) > 1:
+                        dev_id = parts[1].split()[0]
+                        subprocess.run(["xinput", "float", dev_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        matched = True
+            if matched:
+                return True
+            time.sleep(0.015)
+    except Exception:
+        pass
+    return False
 
 def get_code_name(code: int) -> str:
     """Resolves an evdev code into a human-readable key or button name."""
@@ -358,6 +383,7 @@ def run_spam(delay_ms=None):
         f.write(str(os.getpid()))
 
     ui = UInput({e.EV_KEY: list(range(0, 512))}, name="Virtual-KeyHolder-Spam", vendor=0x4b48, product=0x0001)
+    threading.Thread(target=float_virtual_device, args=("Virtual-KeyHolder-Spam",), daemon=True).start()
 
     def cleanup(signum=None, frame=None):
         nonlocal held_code
@@ -444,6 +470,7 @@ def run_hold():
         f.write(str(os.getpid()))
 
     ui = UInput({e.EV_KEY: list(range(0, 512))}, name="Virtual-KeyHolder-Hold", vendor=0x4b48, product=0x0001)
+    threading.Thread(target=float_virtual_device, args=("Virtual-KeyHolder-Hold",), daemon=True).start()
     held_code = None
 
     def cleanup(signum=None, frame=None):
@@ -534,10 +561,14 @@ def main():
     parser.add_argument("--delay", "-d", type=int, default=None, metavar="MS",
                         help=f"Spam mode: ms per click cycle ({MIN_DELAY_MS}-{MAX_DELAY_MS})")
 
+    parser.add_argument("--no-float", action="store_true", help="Do not float/isolate virtual device from X11 Virtual Core Keyboard")
     parser.add_argument("pos_delay", nargs="?", default=None,
                         help=f"Optional delay in ms or delta (e.g. 50, +10, -5) to configure offline or live")
 
     args = parser.parse_args()
+
+    if args.no_float:
+        os.environ["KEYHOLDER_NO_FLOAT"] = "1"
 
     d_val = None
     if args.delay is not None:

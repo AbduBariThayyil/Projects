@@ -1,12 +1,5 @@
 {
-  "active_agents": {
-    "d179a2c2-8510-40ee-8433-d19884ee32ca": {
-      "role": "KeyHolder Input Automation Engineer",
-      "project": "keyholder-hud",
-      "registered_at": 1793954322.855236,
-      "status": "active"
-    }
-  },
+  "active_agents": {},
   "file_locks": {},
   "session_tasks": []
 }
