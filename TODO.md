@@ -19,12 +19,12 @@
   - Stream and control audio wirelessly across devices
 
 ## System & Window Manager Configs
-- [ ] **New Notification System**
+- [x] **New Notification System** (sys-notif native C/Cairo/D-Bus daemon & sys-notif-center GTK3 history GUI replacing Dunst/Mako)
 - [x] **Low battery warning** (Natively integrated into sys-notif via UPower D-Bus & direct sysfs, eliminated polling Bash daemon)
 - [x] **Make Keyholder ignore sxhkd binds**
 - [x] **Blueman sxhkd integration / keybindings** (Added Win + Alt + Shift + B scratchpad hotkey & sys-control --blueman integration)
-- [ ] **Add mod keys to mouse**
-- [ ] **Upgrade zsh**
+- [x] **Add mod keys to mouse** (Mapped via ant-gm320, keyd, and ~/.Xmodmap: BTN_SIDE -> mod3/Hyper_L, BTN_EXTRA -> mod5/ISO_Level5_Shift, Button 6 -> Meta layer)
+- [x] **Upgrade zsh** (Verified zsh 5.9.2 latest upstream Arch extra package, compdump cached & fast-compiled, plugins up-to-date)
 
 ## Fixes & Gaming
 - [ ] **Fix tModLoader 4.5.6**
