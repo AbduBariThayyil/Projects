@@ -1,0 +1,582 @@
+#!/usr/bin/env python3
+import evdev, os, sys, signal, selectors, time, argparse, subprocess, fcntl, struct, ctypes
+from evdev import UInput, InputDevice, ecodes as e
+
+STATE_DIR = os.path.expanduser("~/.cache/keyholder")
+PID_SPAM = os.path.join(STATE_DIR, "pid_spam")
+PID_HOLD = os.path.join(STATE_DIR, "pid_hold")
+DELAY_FILE = os.path.join(STATE_DIR, "delay_ms")
+FIFO_HUD = "/tmp/keyholder-hud.fifo"
+os.makedirs(STATE_DIR, exist_ok=True)
+
+# Keys and buttons to ignore during latching and hold tracking (modifiers, sxhkd binds, mouse function buttons)
+IGNORED_NAMES = [
+    # Modifier keys
+    'KEY_LEFTMETA', 'KEY_RIGHTMETA', 'KEY_LEFTALT', 'KEY_RIGHTALT',
+    'KEY_LEFTCTRL', 'KEY_RIGHTCTRL', 'KEY_LEFTSHIFT', 'KEY_RIGHTSHIFT',
+    'KEY_CAPSLOCK', 'KEY_COMPOSE',
+    # Mouse modifiers & function buttons
+    'BTN_SIDE', 'BTN_EXTRA', 'BTN_FORWARD', 'BTN_BACK', 'BTN_TASK',
+    # Keyd / X11 extra function layers (F13 - F24)
+    *[f'KEY_F{i}' for i in range(13, 25)],
+    # Multimedia & system hotkeys from sxhkd
+    'KEY_CALC', 'KEY_CALCULATOR', 'KEY_HOMEPAGE', 'KEY_MAIL', 'KEY_POWER', 'KEY_SLEEP', 'KEY_WAKEUP',
+    'KEY_MUTE', 'KEY_VOLUMEDOWN', 'KEY_VOLUMEUP', 'KEY_PLAYPAUSE', 'KEY_PAUSE', 'KEY_PLAY',
+    'KEY_PREVIOUSSONG', 'KEY_NEXTSONG', 'KEY_BRIGHTNESSDOWN', 'KEY_BRIGHTNESSUP', 'KEY_SYSRQ', 'KEY_PRINT',
+]
+
+IGNORED_CODES = {
+    # Explicit numeric fallbacks
+    140,  # KEY_CALC / KEY_CALCULATOR
+    275,  # BTN_SIDE / Hyper_L (mod3)
+    276,  # BTN_EXTRA / ISO_Level5_Shift (mod5)
+    277,  # BTN_FORWARD
+    278,  # BTN_BACK
+    279,  # BTN_TASK
+}
+for _name in IGNORED_NAMES:
+    _val = getattr(e, _name, None)
+    if _val is not None:
+        IGNORED_CODES.add(_val)
+
+# Touchpad/tablet pseudo-buttons:
+IGNORED_CODES.update(range(0x140, 0x150))
+
+DEFAULT_DELAY_MS = 40  # full press+release cycle of spam mode, in ms
+MIN_DELAY_MS = 2
+MAX_DELAY_MS = 2000
+
+def get_saved_delay() -> int:
+    """Retrieves persisted delay in ms, or DEFAULT_DELAY_MS if not set."""
+    if os.path.exists(DELAY_FILE):
+        try:
+            with open(DELAY_FILE, "r") as f:
+                val = int(f.read().strip())
+                return max(MIN_DELAY_MS, min(MAX_DELAY_MS, val))
+        except (ValueError, OSError):
+            pass
+    return DEFAULT_DELAY_MS
+
+def save_delay(val: int) -> int:
+    """Clamps and saves delay in ms to persistent state."""
+    val = max(MIN_DELAY_MS, min(MAX_DELAY_MS, int(val)))
+    try:
+        with open(DELAY_FILE, "w") as f:
+            f.write(str(val))
+    except OSError:
+        pass
+    return val
+
+def notify_hud(mode: str, title: str, subtitle: str):
+    """Sends status updates directly to keyholder-hud without spamming desktop notifications."""
+    if not os.path.exists(FIFO_HUD):
+        try:
+            subprocess.Popen(["/home/vibecoder/.local/bin/keyholder-hud"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(25):
+                if os.path.exists(FIFO_HUD):
+                    break
+                time.sleep(0.01)
+        except Exception:
+            pass
+    try:
+        fd = os.open(FIFO_HUD, os.O_WRONLY | os.O_NONBLOCK)
+        msg = f"{mode}|{title}|{subtitle}\n".encode("utf-8")
+        os.write(fd, msg)
+        os.close(fd)
+    except Exception:
+        pass
+
+def get_code_name(code: int) -> str:
+    """Resolves an evdev code into a human-readable key or button name."""
+    for table in (e.KEY, e.BTN):
+        if code in table:
+            name = table[code]
+            if isinstance(name, list):
+                return str(name[0])
+            return str(name)
+    return f"Code {code}"
+
+def is_pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+def signal_spam(sig: int) -> bool:
+    """Sends a signal to the running spam process to adjust live delay."""
+    if os.path.exists(PID_SPAM):
+        try:
+            with open(PID_SPAM, "r") as f:
+                content = f.read().strip()
+                pid = int(content) if content else None
+            if pid and is_pid_alive(pid):
+                os.kill(pid, sig)
+                return True
+            elif pid:
+                try:
+                    os.remove(PID_SPAM)
+                except OSError:
+                    pass
+        except (ProcessLookupError, ValueError, PermissionError):
+            pass
+    return False
+
+def adjust_delay(factor: float):
+    """Adjusts spam delay multiplier live if running, or persists offline."""
+    sig = signal.SIGUSR1 if factor > 1.0 else signal.SIGUSR2
+    if signal_spam(sig):
+        return
+    d = get_saved_delay()
+    new = round(d * factor)
+    if new == d:
+        new = d + (1 if factor > 1.0 else -1)
+    saved = save_delay(new)
+    notify_hud("spam", "KeyHolder [Spam]", f"Delay: {saved} ms • {1000 / saved:.0f} clicks/s")
+
+def set_explicit_delay(val: int):
+    """Sets an explicit delay, persisting to disk and notifying immediately."""
+    saved = save_delay(val)
+    signal_spam(signal.SIGHUP)
+    notify_hud("spam", "KeyHolder [Spam]", f"Delay: {saved} ms • {1000 / saved:.0f} clicks/s")
+
+def stop_instance(pid_file: str) -> bool:
+    """Stops an active instance associated with a specific PID file."""
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r") as f:
+                content = f.read().strip()
+                pid = int(content) if content else None
+
+            if pid and pid != os.getpid() and is_pid_alive(pid):
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(80):
+                    if not is_pid_alive(pid):
+                        break
+                    time.sleep(0.005)
+
+                if is_pid_alive(pid):
+                    os.kill(pid, signal.SIGKILL)
+
+                if os.path.exists(pid_file):
+                    try:
+                        os.remove(pid_file)
+                    except OSError:
+                        pass
+                return True
+            elif pid:
+                try:
+                    os.remove(pid_file)
+                except OSError:
+                    pass
+        except (ProcessLookupError, ValueError, PermissionError):
+            pass
+
+        try:
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+        except OSError:
+            pass
+    return False
+
+def terminate_all():
+    """Kills both spam and hold instances and releases all virtual inputs."""
+    stop_instance(PID_SPAM)
+    stop_instance(PID_HOLD)
+    try:
+        cap_events = {e.EV_KEY: list(range(0, 512))}
+        ui = UInput(cap_events, name="Virtual-KeyHolder-Cleaner", vendor=0x4b48, product=0x0001)
+        for code in range(0, 512):
+            ui.write(e.EV_KEY, code, 0)
+        ui.syn()
+        ui.close()
+    except Exception:
+        pass
+    notify_hud("stop", "KeyHolder Stopped", "All automations released")
+    sys.exit(0)
+
+EVIOCSMASK = 0x40104593
+
+def keys_only(dev):
+    try:
+        allowed = ctypes.create_string_buffer(bytes([1 << e.EV_KEY]).ljust(8, b"\0"), 8)
+        arg = struct.pack("=IIQ", 0, 8, ctypes.addressof(allowed))
+        fcntl.ioctl(dev.fd, EVIOCSMASK, arg)
+    except (OSError, ValueError):
+        pass
+
+def get_devices():
+    devices = []
+    all_devs = []
+    for path in evdev.list_devices():
+        try:
+            all_devs.append(InputDevice(path))
+        except (PermissionError, OSError):
+            continue
+
+    # Detect if keyd is managing the keyboard
+    has_keyd = any("keyd virtual keyboard" in d.name.lower() for d in all_devs)
+
+    for dev in all_devs:
+        try:
+            if dev.name and dev.name.startswith("Virtual-KeyHolder"):
+                continue
+            # When keyd is running, ignore grabbed raw keyboard to avoid desync
+            if has_keyd and "AT Translated Set 2 keyboard" in dev.name:
+                continue
+            caps = dev.capabilities()
+            if e.EV_KEY in caps:
+                keys = caps[e.EV_KEY]
+                if e.KEY_A in keys or e.BTN_LEFT in keys or e.BTN_MOUSE in keys or e.BTN_TOUCH in keys:
+                    os.set_blocking(dev.fd, False)
+                    keys_only(dev)
+                    devices.append(dev)
+        except (PermissionError, OSError):
+            continue
+    return devices
+
+def drop_device(sel, dev):
+    try:
+        sel.unregister(dev)
+    except (KeyError, ValueError):
+        pass
+    try:
+        dev.close()
+    except Exception:
+        pass
+
+def read_events(sel, dev):
+    try:
+        for event in dev.read():
+            yield event
+    except BlockingIOError:
+        return
+    except OSError:
+        drop_device(sel, dev)
+
+def wait_for_latch(sel, devices):
+    for key in list(sel.get_map().values()):
+        dev = key.fileobj
+        try:
+            while dev.read_one() is not None:
+                pass
+        except (BlockingIOError, OSError):
+            pass
+
+    initially_down = set()
+    for dev in devices:
+        try:
+            initially_down.update(dev.active_keys())
+        except (OSError, ValueError):
+            pass
+
+    held_code = None
+    while held_code is None:
+        if not sel.get_map():
+            return None
+        for key, _ in sel.select():
+            for event in read_events(sel, key.fileobj):
+                if event.type == e.EV_KEY:
+                    if event.value == 0:
+                        initially_down.discard(event.code)
+                    elif event.value == 1:
+                        if event.code in IGNORED_CODES or event.code in initially_down:
+                            continue
+                        held_code = event.code
+                        break
+            if held_code is not None:
+                break
+    return held_code
+
+def is_key_physically_down(devices, code: int) -> bool:
+    for dev in devices:
+        try:
+            if code in dev.active_keys():
+                return True
+        except (OSError, ValueError):
+            pass
+    return False
+
+def wait_for_release(sel, devices, code: int, timeout: float = 1.5):
+    """Waits until the latched key/button is physically released (or timeout)."""
+    end = time.monotonic() + timeout
+    while is_key_physically_down(devices, code):
+        if not sel.get_map() or time.monotonic() >= end:
+            break
+        for key, _ in sel.select(timeout=0.02):
+            for event in read_events(sel, key.fileobj):
+                if event.type == e.EV_KEY and event.code == code and event.value == 0:
+                    break
+    # Drain any remaining queued events from the devices
+    for key in list(sel.get_map().values()):
+        dev = key.fileobj
+        try:
+            while dev.read_one() is not None:
+                pass
+        except (BlockingIOError, OSError):
+            pass
+
+def run_spam(delay_ms=None):
+    if stop_instance(PID_SPAM):
+        notify_hud("stop", "Spam Stopped", "Spam mode deactivated")
+        sys.exit(0)
+
+    devices = get_devices()
+    if not devices:
+        notify_hud("stop", "KeyHolder Error", "No input devices found")
+        sys.exit(1)
+
+    if delay_ms is None:
+        delay_ms = get_saved_delay()
+    else:
+        save_delay(delay_ms)
+
+    rate = [delay_ms]
+    held_code = None
+
+    def nudge(factor):
+        def handler(signum, frame):
+            d = rate[0]
+            new = round(d * factor)
+            if new == d:
+                new = d + (1 if factor > 1 else -1)
+            rate[0] = save_delay(new)
+            lbl = f"[{get_code_name(held_code)}]" if held_code is not None else ""
+            notify_hud("spam", f"SPAMMING {lbl}".strip(), f"{rate[0]} ms • {1000 / rate[0]:.0f} clicks/s")
+        return handler
+
+    def reload_delay_handler(signum, frame):
+        rate[0] = get_saved_delay()
+        lbl = f"[{get_code_name(held_code)}]" if held_code is not None else ""
+        notify_hud("spam", f"SPAMMING {lbl}".strip(), f"{rate[0]} ms • {1000 / rate[0]:.0f} clicks/s")
+
+    signal.signal(signal.SIGUSR1, nudge(1.25))
+    signal.signal(signal.SIGUSR2, nudge(0.8))
+    signal.signal(signal.SIGHUP, reload_delay_handler)
+
+    with open(PID_SPAM, "w") as f:
+        f.write(str(os.getpid()))
+
+    ui = UInput({e.EV_KEY: list(range(0, 512))}, name="Virtual-KeyHolder-Spam", vendor=0x4b48, product=0x0001)
+
+    def cleanup(signum=None, frame=None):
+        nonlocal held_code
+        if held_code is not None:
+            try:
+                ui.write(e.EV_KEY, held_code, 0)
+                ui.syn()
+            except OSError:
+                pass
+        try:
+            ui.close()
+        except Exception:
+            pass
+        if os.path.exists(PID_SPAM):
+            try:
+                os.remove(PID_SPAM)
+            except OSError:
+                pass
+        if held_code is not None:
+            notify_hud("stop", "Spam Stopped", f"Released {get_code_name(held_code)}")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, cleanup)
+    signal.signal(signal.SIGINT, cleanup)
+
+    sel = selectors.DefaultSelector()
+    for dev in devices:
+        try:
+            sel.register(dev, selectors.EVENT_READ)
+        except (ValueError, KeyError):
+            pass
+
+    notify_hud("listen", "KeyHolder: Listening...", "Press any key/button to spam")
+    held_code = wait_for_latch(sel, devices)
+    if held_code is None:
+        notify_hud("stop", "KeyHolder Error", "No input devices available")
+        cleanup()
+
+    wait_for_release(sel, devices, held_code)
+    notify_hud("spam", f"SPAMMING: [{get_code_name(held_code)}]", f"{rate[0]} ms • {1000 / rate[0]:.0f} clicks/s")
+
+    # Grace period prevents keyd / physical release lag from triggering immediate stop
+    start_time = time.monotonic()
+    grace_period = 0.35  # seconds
+
+    def nap(seconds):
+        end = time.monotonic() + seconds
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            if not sel.get_map():
+                notify_hud("stop", "KeyHolder Error", "All input devices lost")
+                cleanup()
+            for key, _ in sel.select(timeout=left):
+                for event in read_events(sel, key.fileobj):
+                    if event.type == e.EV_KEY and event.code == held_code and event.value == 1:
+                        if time.monotonic() - start_time >= grace_period:
+                            cleanup()
+
+    try:
+        while True:
+            ui.write(e.EV_KEY, held_code, 1)
+            ui.syn()
+            nap(rate[0] / 2000.0)
+
+            ui.write(e.EV_KEY, held_code, 0)
+            ui.syn()
+            nap(rate[0] / 2000.0)
+    except Exception:
+        cleanup()
+
+def run_hold():
+    if stop_instance(PID_HOLD):
+        notify_hud("stop", "Hold Released", "Hold mode deactivated")
+        sys.exit(0)
+
+    devices = get_devices()
+    if not devices:
+        notify_hud("stop", "KeyHolder Error", "No input devices found")
+        sys.exit(1)
+
+    with open(PID_HOLD, "w") as f:
+        f.write(str(os.getpid()))
+
+    ui = UInput({e.EV_KEY: list(range(0, 512))}, name="Virtual-KeyHolder-Hold", vendor=0x4b48, product=0x0001)
+    held_code = None
+
+    def cleanup(signum=None, frame=None):
+        nonlocal held_code
+        if held_code is not None:
+            try:
+                ui.write(e.EV_KEY, held_code, 0)
+                ui.syn()
+            except OSError:
+                pass
+        try:
+            ui.close()
+        except Exception:
+            pass
+        if os.path.exists(PID_HOLD):
+            try:
+                os.remove(PID_HOLD)
+            except OSError:
+                pass
+        if held_code is not None:
+            notify_hud("stop", "Hold Released", f"Released {get_code_name(held_code)}")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, cleanup)
+    signal.signal(signal.SIGINT, cleanup)
+
+    sel = selectors.DefaultSelector()
+    for dev in devices:
+        try:
+            sel.register(dev, selectors.EVENT_READ)
+        except (ValueError, KeyError):
+            pass
+
+    notify_hud("listen", "KeyHolder: Listening...", "Press any key/button to hold")
+    held_code = wait_for_latch(sel, devices)
+    if held_code is None:
+        notify_hud("stop", "KeyHolder Error", "No input devices available")
+        cleanup()
+
+    wait_for_release(sel, devices, held_code)
+    notify_hud("hold", f"HOLDING: [{get_code_name(held_code)}]", "Key locked down active")
+
+    ui.write(e.EV_KEY, held_code, 1)
+    ui.syn()
+
+    start_time = time.monotonic()
+    grace_period = 0.35
+
+    try:
+        while True:
+            events = sel.select(timeout=0.05)
+            other_input_detected = False
+
+            for key, _ in events:
+                dev = key.fileobj
+                try:
+                    for event in dev.read():
+                        if event.type == e.EV_KEY:
+                            if event.code in IGNORED_CODES:
+                                continue
+                            if event.code == held_code and event.value == 1:
+                                if time.monotonic() - start_time >= grace_period:
+                                    cleanup()
+                            elif event.code != held_code:
+                                other_input_detected = True
+                except (BlockingIOError, OSError):
+                    continue
+
+            # If any other key is pressed/released, force-pulse the held key back down
+            if other_input_detected:
+                ui.write(e.EV_KEY, held_code, 0)
+                ui.syn()
+                ui.write(e.EV_KEY, held_code, 1)
+                ui.syn()
+
+    except Exception:
+        cleanup()
+
+def main():
+    parser = argparse.ArgumentParser(description="High-Speed Key/Mouse Latching Automation")
+    parser.add_argument("--spam", "-s", action="store_true", help="Rapidly spam latched key/mouse button")
+    parser.add_argument("--hold", "-H", action="store_true", help="Continuously hold latched key/mouse button")
+    parser.add_argument("--terminate", "-k", action="store_true", help="Kill all instances and release keys")
+    parser.add_argument("--inc", action="store_true", help="Increase spam delay (slower clicks)")
+    parser.add_argument("--dec", action="store_true", help="Decrease spam delay (faster clicks)")
+    parser.add_argument("--set-delay", type=int, default=None, metavar="MS",
+                        help=f"Save spam delay in ms ({MIN_DELAY_MS}-{MAX_DELAY_MS}) without running")
+    parser.add_argument("--delay", "-d", type=int, default=None, metavar="MS",
+                        help=f"Spam mode: ms per click cycle ({MIN_DELAY_MS}-{MAX_DELAY_MS})")
+
+    parser.add_argument("pos_delay", nargs="?", default=None,
+                        help=f"Optional delay in ms or delta (e.g. 50, +10, -5) to configure offline or live")
+
+    args = parser.parse_args()
+
+    d_val = None
+    if args.delay is not None:
+        d_val = args.delay
+    elif args.pos_delay is not None:
+        val_str = args.pos_delay.strip()
+        if val_str.startswith("+") or val_str.startswith("-"):
+            try:
+                delta = int(val_str)
+                d = get_saved_delay()
+                d_val = d + delta
+            except ValueError:
+                pass
+        else:
+            try:
+                d_val = int(val_str)
+            except ValueError:
+                pass
+
+    if args.inc:
+        adjust_delay(1.25)
+        sys.exit(0)
+    elif args.dec:
+        adjust_delay(0.8)
+        sys.exit(0)
+    elif args.set_delay is not None:
+        set_explicit_delay(args.set_delay)
+        sys.exit(0)
+    elif args.terminate:
+        terminate_all()
+    elif args.hold:
+        run_hold()
+    elif args.spam:
+        run_spam(d_val)
+    elif d_val is not None:
+        set_explicit_delay(d_val)
+        sys.exit(0)
+    else:
+        run_spam(None)
+
+if __name__ == "__main__":
+    main()

@@ -21,7 +21,7 @@
 ## System & Window Manager Configs
 - [ ] **New Notification System**
 - [x] **Low battery warning** (Natively integrated into sys-notif via UPower D-Bus & direct sysfs, eliminated polling Bash daemon)
-- [ ] **Make Keyholder ignore sxhkd binds**
+- [x] **Make Keyholder ignore sxhkd binds**
 - [ ] **Blueman sxhkd integration / keybindings**
 - [ ] **Add mod keys to mouse**
 - [ ] **Upgrade zsh**

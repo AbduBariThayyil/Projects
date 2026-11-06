@@ -12,6 +12,9 @@ $(TARGET): keyholder-hud.c
 install: $(TARGET)
 	install -d $(PREFIX)/bin
 	install -m 755 $(TARGET) $(PREFIX)/bin/$(TARGET)
+	install -m 755 KeyHolder $(PREFIX)/bin/KeyHolder
+	install -d $(HOME)/.config/bspwm/bin
+	install -m 755 KeyHolder $(HOME)/.config/bspwm/bin/KeyHolder
 
 clean:
 	rm -f $(TARGET)

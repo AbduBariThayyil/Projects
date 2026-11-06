@@ -1,21 +1,9 @@
 {
   "active_agents": {
-    "sddm-greeter-architect": {
-      "role": "Display Manager & Greeter Architect",
-      "project": "wishlist",
-      "registered_at": 1793880937.1796083,
-      "status": "active"
-    },
-    "polybar-music-architect": {
-      "role": "Polybar Media Widget Engineer",
-      "project": "polybar-music",
-      "registered_at": 1793908173.8429697,
-      "status": "active"
-    },
-    "sys-polkit-architect": {
-      "role": "Security & Privilege Escalation Engineer",
-      "project": "sys-polkit",
-      "registered_at": 1793908251.8476117,
+    "d179a2c2-8510-40ee-8433-d19884ee32ca": {
+      "role": "KeyHolder Input Automation Engineer",
+      "project": "keyholder-hud",
+      "registered_at": 1793954322.855236,
       "status": "active"
     }
   },
