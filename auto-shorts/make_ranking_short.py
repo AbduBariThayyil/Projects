@@ -144,16 +144,18 @@ def extract_and_composite(src_file, timestamps, header_title):
             "-i", chime_path,
             "-filter_complex",
             f"[0:v]scale=108:192:force_original_aspect_ratio=increase,crop=108:192,boxblur=5:1,scale=1080:1920:flags=bilinear,eq=brightness=-0.2[bg];"
-            f"[0:v]scale=1080:1080:force_original_aspect_ratio=decrease[fg];"
+            f"[0:v]crop=in_w*0.92:in_h*0.92:(in_w-out_w)/2:(in_h-out_h)/2,scale=1080:1080:force_original_aspect_ratio=decrease,setsar=1[fg];"
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2[base];"
             f"[base]drawtext=fontfile='{FONT}':text='{header_clean}':fontsize=54:fontcolor=white:box=1:boxcolor=red@0.9:boxborderw=18:x=(w-text_w)/2:y=180,"
-            f"drawtext=fontfile='{FONT}':text='NUMBER {rank_num}':fontsize=76:fontcolor=yellow:borderw=6:bordercolor=black:box=1:boxcolor=black@0.65:boxborderw=14:x=(w-text_w)/2:y=290[v];"
-            f"[2:a]volume=0.8[a_chime];"
-            f"[1:a]adelay=150|150,volume=1.4[a_voice];"
+            f"drawtext=fontfile='{FONT}':text='NUMBER {rank_num}':fontsize=76:fontcolor=yellow:borderw=6:bordercolor=black:box=1:boxcolor=black@0.65:boxborderw=14:x=(w-text_w)/2:y=290,setsar=1[v];"
+            f"[2:a]volume=0.8,aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a_chime];"
+            f"[1:a]adelay=150|150,volume=1.4,aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a_voice];"
             f"[a_chime][a_voice]amix=inputs=2:duration=first:dropout_transition=0[sfx];"
-            f"[0:a][sfx]amix=inputs=2:duration=first:dropout_transition=0[aout]",
+            f"[0:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[clip_a];"
+            f"[clip_a][sfx]amix=inputs=2:duration=first:dropout_transition=0[aout]",
             "-map", "[v]", "-map", "[aout]",
-            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "128k",
+            "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.1", "-preset", "veryfast",
+            "-c:a", "aac", "-ar", "44100", "-b:a", "128k",
             "-shortest", "-pix_fmt", "yuv420p", seg_out
         ]
         run_nice(cmd, allow_101=True)
@@ -170,8 +172,10 @@ def concatenate_segments(segments, final_path):
 
     print(f"Assembling final Short into: {final_path}...")
     cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "ffmpeg", "-y", "-fflags", "+genpts",
+        "-f", "concat", "-safe", "0",
         "-i", concat_txt,
+        "-avoid_negative_ts", "make_zero",
         "-c", "copy", final_path
     ]
     run_nice(cmd, allow_101=True)
