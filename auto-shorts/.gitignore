@@ -1,3 +1,6 @@
+.venv/
 temp/
+output/
 *.mp4
 *.png
+*.webm
