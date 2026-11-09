@@ -1,0 +1,48 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'gba-crossplay/**'
+      - '.github/workflows/build-ios.yml'
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Build Xcode Project
+        run: |
+          cd gba-crossplay/ios
+          xcodebuild clean build \
+            -project GBACrossplay.xcodeproj \
+            -scheme GBACrossplay \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        run: |
+          cd gba-crossplay/ios
+          mkdir -p build/Payload
+          cp -r build/Build/Products/Release-iphoneos/GBACrossplay.app build/Payload/
+          cd build
+          zip -r GBACrossplay.ipa Payload
+          mv GBACrossplay.ipa ../GBACrossplay.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GBACrossplay-iOS-IPA
+          path: gba-crossplay/ios/GBACrossplay.ipa
+          retention-days: 14

@@ -1,0 +1,16 @@
+# Build outputs
+*.o
+*.a
+*.so
+*.dylib
+gba-crossplay
+test_protocol
+test_turbo
+
+# Xcode / iOS
+build/
+DerivedData/
+*.ipa
+.DS_Store
+xcuserdata/
+*.xcworkspace

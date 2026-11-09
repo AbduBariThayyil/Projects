@@ -179,6 +179,20 @@
         "Cairo"
       ],
       "description": "Ultra-lightweight native Polkit authentication agent (<2MB RSS) with Catppuccin dialog"
+    },
+    "gba-crossplay": {
+      "path": "gba-crossplay",
+      "context": "gba-crossplay/context.md",
+      "type": "emulation-network",
+      "stack": [
+        "C",
+        "libmgba",
+        "SDL2",
+        "Swift",
+        "Metal",
+        "Bonjour"
+      ],
+      "description": "Native crossplay GBA Link Cable emulator connecting Arch Linux and iOS with synchronized fast-forward and LAN auto-discovery"
     }
   }
 }
