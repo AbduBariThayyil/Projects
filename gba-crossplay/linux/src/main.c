@@ -2,6 +2,7 @@
 #include "audio.h"
 #include "discovery.h"
 #include "hud.h"
+#include "config.h"
 #include "../../core/link_protocol.h"
 
 #include <SDL2/SDL.h>
@@ -36,12 +37,16 @@ int main(int argc, char** argv) {
     const char* rom_path = NULL;
     int arg_start = 2;
 
+    /* Load user configuration from ~/.config/gba-crossplay/config.ini */
+    GBAConfig config;
+    gba_config_load_file(&config, gba_config_get_default_path());
+
     if (argc >= 2 && argv[1][0] != '-') {
         rom_path = argv[1];
         arg_start = 2;
     } else {
-        /* Open native GUI file dialog if launched without ROM argument */
-        FILE* fp = popen("zenity --file-selection --title='Select GBA ROM' --file-filter='GBA ROMs (*.gba *.bin)|*.gba *.bin' --file-filter='All Files|*' 2>/dev/null", "r");
+        /* Open native GUI file dialog in Dark Mode if launched without ROM argument */
+        FILE* fp = popen("GTK_THEME=Adwaita:dark zenity --file-selection --title='Select GBA ROM' --file-filter='GBA ROMs (*.gba *.bin)|*.gba *.bin' --file-filter='All Files|*' 2>/dev/null", "r");
         if (fp) {
             if (fgets(picked_rom, sizeof(picked_rom), fp)) {
                 size_t len = strlen(picked_rom);
@@ -60,7 +65,7 @@ int main(int argc, char** argv) {
             printf("Options:\n");
             printf("  --host [port]      Host multiplayer server (default port %d)\n", GBA_LINK_DEFAULT_PORT);
             printf("  --join <ip> [port] Join remote host (default port %d)\n", GBA_LINK_DEFAULT_PORT);
-            printf("  --turbo <2|3>      Set fast-forward multiplier (default 2)\n");
+            printf("  --turbo <2|3>      Set fast-forward multiplier (default %u)\n", config.turbo_multiplier);
             printf("  --headless         Run without window/audio (for testing/automation)\n");
             return 1;
         }
@@ -71,7 +76,7 @@ int main(int argc, char** argv) {
     bool is_host = true;
     char remote_ip[64] = "127.0.0.1";
     uint16_t port = GBA_LINK_DEFAULT_PORT;
-    uint8_t turbo_mult = 2;
+    uint8_t turbo_mult = config.turbo_multiplier;
     bool headless = false;
 
     for (int i = arg_start; i < argc; i++) {
@@ -201,9 +206,15 @@ int main(int argc, char** argv) {
     hud.total_players = 2;
     snprintf(hud.remote_ip, sizeof(hud.remote_ip), "%s", remote_ip);
     hud.turbo_multiplier = turbo_mult;
+    hud.turbo_is_toggle = false;
     hud.show_hud = true;
 
     uint32_t keys = 0;
+    bool turbo_hold = false;
+    bool turbo_toggle = false;
+    bool spam_a_active = false;
+    bool spam_b_active = false;
+
     uint64_t last_frame_time = get_time_us();
     uint64_t fps_timer = last_frame_time;
     int frame_count = 0;
@@ -233,43 +244,82 @@ int main(int argc, char** argv) {
                     g_running = false;
                 } else if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
                     bool down = (ev.type == SDL_KEYDOWN);
-                    switch (ev.key.keysym.sym) {
-                        case SDLK_x:         down ? (keys |= (1 << GBA_KEY_A)) : (keys &= ~(1 << GBA_KEY_A)); break;
-                        case SDLK_z:         down ? (keys |= (1 << GBA_KEY_B)) : (keys &= ~(1 << GBA_KEY_B)); break;
-                        case SDLK_a:         down ? (keys |= (1 << GBA_KEY_L)) : (keys &= ~(1 << GBA_KEY_L)); break;
-                        case SDLK_s:         down ? (keys |= (1 << GBA_KEY_R)) : (keys &= ~(1 << GBA_KEY_R)); break;
-                        case SDLK_RETURN:    down ? (keys |= (1 << GBA_KEY_START)) : (keys &= ~(1 << GBA_KEY_START)); break;
-                        case SDLK_BACKSPACE: down ? (keys |= (1 << GBA_KEY_SELECT)) : (keys &= ~(1 << GBA_KEY_SELECT)); break;
-                        case SDLK_UP:        down ? (keys |= (1 << GBA_KEY_UP)) : (keys &= ~(1 << GBA_KEY_UP)); break;
-                        case SDLK_DOWN:      down ? (keys |= (1 << GBA_KEY_DOWN)) : (keys &= ~(1 << GBA_KEY_DOWN)); break;
-                        case SDLK_LEFT:      down ? (keys |= (1 << GBA_KEY_LEFT)) : (keys &= ~(1 << GBA_KEY_LEFT)); break;
-                        case SDLK_RIGHT:     down ? (keys |= (1 << GBA_KEY_RIGHT)) : (keys &= ~(1 << GBA_KEY_RIGHT)); break;
-                        case SDLK_TAB:       gba_turbo_set_local(turbo, down); break;
-                        case SDLK_F1:        if (down) hud.show_hud = !hud.show_hud; break;
-                        case SDLK_ESCAPE:    g_running = false; break;
-                        default: break;
+                    SDL_Keycode k = ev.key.keysym.sym;
+
+                    if (k == config.key_a) { down ? (keys |= (1 << GBA_KEY_A)) : (keys &= ~(1 << GBA_KEY_A)); }
+                    else if (k == config.key_b) { down ? (keys |= (1 << GBA_KEY_B)) : (keys &= ~(1 << GBA_KEY_B)); }
+                    else if (k == config.key_l) { down ? (keys |= (1 << GBA_KEY_L)) : (keys &= ~(1 << GBA_KEY_L)); }
+                    else if (k == config.key_r) { down ? (keys |= (1 << GBA_KEY_R)) : (keys &= ~(1 << GBA_KEY_R)); }
+                    else if (k == config.key_start) { down ? (keys |= (1 << GBA_KEY_START)) : (keys &= ~(1 << GBA_KEY_START)); }
+                    else if (k == config.key_select) { down ? (keys |= (1 << GBA_KEY_SELECT)) : (keys &= ~(1 << GBA_KEY_SELECT)); }
+                    else if (k == config.key_up) { down ? (keys |= (1 << GBA_KEY_UP)) : (keys &= ~(1 << GBA_KEY_UP)); }
+                    else if (k == config.key_down) { down ? (keys |= (1 << GBA_KEY_DOWN)) : (keys &= ~(1 << GBA_KEY_DOWN)); }
+                    else if (k == config.key_left) { down ? (keys |= (1 << GBA_KEY_LEFT)) : (keys &= ~(1 << GBA_KEY_LEFT)); }
+                    else if (k == config.key_right) { down ? (keys |= (1 << GBA_KEY_RIGHT)) : (keys &= ~(1 << GBA_KEY_RIGHT)); }
+                    else if (k == config.key_turbo_hold) {
+                        turbo_hold = down;
+                        gba_turbo_set_local(turbo, turbo_hold || turbo_toggle);
+                    } else if (k == config.key_turbo_toggle && down) {
+                        turbo_toggle = !turbo_toggle;
+                        hud.turbo_is_toggle = turbo_toggle;
+                        gba_turbo_set_local(turbo, turbo_hold || turbo_toggle);
+                    } else if (k == config.key_spam_a) {
+                        spam_a_active = down;
+                    } else if (k == config.key_spam_b) {
+                        spam_b_active = down;
+                    } else if (k == config.key_hud && down) {
+                        hud.show_hud = !hud.show_hud;
+                    } else if (k == SDLK_ESCAPE) {
+                        g_running = false;
                     }
                 } else if (ev.type == SDL_CONTROLLERBUTTONDOWN || ev.type == SDL_CONTROLLERBUTTONUP) {
                     bool down = (ev.type == SDL_CONTROLLERBUTTONDOWN);
-                    switch (ev.cbutton.button) {
-                        case SDL_CONTROLLER_BUTTON_A:             down ? (keys |= (1 << GBA_KEY_A)) : (keys &= ~(1 << GBA_KEY_A)); break;
-                        case SDL_CONTROLLER_BUTTON_B:             down ? (keys |= (1 << GBA_KEY_B)) : (keys &= ~(1 << GBA_KEY_B)); break;
-                        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  down ? (keys |= (1 << GBA_KEY_L)) : (keys &= ~(1 << GBA_KEY_L)); break;
-                        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: down ? (keys |= (1 << GBA_KEY_R)) : (keys &= ~(1 << GBA_KEY_R)); break;
-                        case SDL_CONTROLLER_BUTTON_START:         down ? (keys |= (1 << GBA_KEY_START)) : (keys &= ~(1 << GBA_KEY_START)); break;
-                        case SDL_CONTROLLER_BUTTON_BACK:          down ? (keys |= (1 << GBA_KEY_SELECT)) : (keys &= ~(1 << GBA_KEY_SELECT)); break;
-                        case SDL_CONTROLLER_BUTTON_DPAD_UP:       down ? (keys |= (1 << GBA_KEY_UP)) : (keys &= ~(1 << GBA_KEY_UP)); break;
-                        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     down ? (keys |= (1 << GBA_KEY_DOWN)) : (keys &= ~(1 << GBA_KEY_DOWN)); break;
-                        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:     down ? (keys |= (1 << GBA_KEY_LEFT)) : (keys &= ~(1 << GBA_KEY_LEFT)); break;
-                        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:    down ? (keys |= (1 << GBA_KEY_RIGHT)) : (keys &= ~(1 << GBA_KEY_RIGHT)); break;
-                        case SDL_CONTROLLER_BUTTON_MISC1:         gba_turbo_set_local(turbo, down); break;
-                        default: break;
+                    SDL_GameControllerButton b = ev.cbutton.button;
+
+                    if (b == config.pad_a) { down ? (keys |= (1 << GBA_KEY_A)) : (keys &= ~(1 << GBA_KEY_A)); }
+                    else if (b == config.pad_b) { down ? (keys |= (1 << GBA_KEY_B)) : (keys &= ~(1 << GBA_KEY_B)); }
+                    else if (b == config.pad_l) { down ? (keys |= (1 << GBA_KEY_L)) : (keys &= ~(1 << GBA_KEY_L)); }
+                    else if (b == config.pad_r) { down ? (keys |= (1 << GBA_KEY_R)) : (keys &= ~(1 << GBA_KEY_R)); }
+                    else if (b == config.pad_start) { down ? (keys |= (1 << GBA_KEY_START)) : (keys &= ~(1 << GBA_KEY_START)); }
+                    else if (b == config.pad_select) { down ? (keys |= (1 << GBA_KEY_SELECT)) : (keys &= ~(1 << GBA_KEY_SELECT)); }
+                    else if (b == SDL_CONTROLLER_BUTTON_DPAD_UP) { down ? (keys |= (1 << GBA_KEY_UP)) : (keys &= ~(1 << GBA_KEY_UP)); }
+                    else if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN) { down ? (keys |= (1 << GBA_KEY_DOWN)) : (keys &= ~(1 << GBA_KEY_DOWN)); }
+                    else if (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT) { down ? (keys |= (1 << GBA_KEY_LEFT)) : (keys &= ~(1 << GBA_KEY_LEFT)); }
+                    else if (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) { down ? (keys |= (1 << GBA_KEY_RIGHT)) : (keys &= ~(1 << GBA_KEY_RIGHT)); }
+                    else if (b == config.pad_turbo_hold) {
+                        turbo_hold = down;
+                        gba_turbo_set_local(turbo, turbo_hold || turbo_toggle);
+                    } else if (b == config.pad_turbo_toggle && down) {
+                        turbo_toggle = !turbo_toggle;
+                        hud.turbo_is_toggle = turbo_toggle;
+                        gba_turbo_set_local(turbo, turbo_hold || turbo_toggle);
+                    } else if (b == config.pad_spam_a) {
+                        spam_a_active = down;
+                    } else if (b == config.pad_spam_b) {
+                        spam_b_active = down;
                     }
                 }
             }
         }
 
-        gba_emulator_set_keys(emu, keys);
+        /* Apply Auto-fire / Spam A & B alternating every 2 frames */
+        uint32_t active_keys = keys;
+        if (spam_a_active) {
+            if ((frame_count % 4) < 2) {
+                active_keys |= (1 << GBA_KEY_A);
+            } else {
+                active_keys &= ~(1 << GBA_KEY_A);
+            }
+        }
+        if (spam_b_active) {
+            if ((frame_count % 4) < 2) {
+                active_keys |= (1 << GBA_KEY_B);
+            } else {
+                active_keys &= ~(1 << GBA_KEY_B);
+            }
+        }
+
+        gba_emulator_set_keys(emu, active_keys);
         gba_emulator_step_frame(emu);
 
         hud.is_turbo = gba_turbo_is_active(turbo);

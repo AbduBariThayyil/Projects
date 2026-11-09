@@ -11,6 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface EmulatorBridge : NSObject
 
+@property (class, readonly, strong) EmulatorBridge* shared;
 @property (nonatomic, weak) id<EmulatorBridgeDelegate> delegate;
 @property (nonatomic, readonly) BOOL isRunning;
 @property (nonatomic, readonly) BOOL isConnected;

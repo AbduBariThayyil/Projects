@@ -125,7 +125,7 @@ struct ContentView: View {
     }
 
     private func connect(to ip: String, port: UInt16, name: String) {
-        if EmulatorBridge.shared.connect(toHost: ip, port: port) {
+        if EmulatorBridge.shared().connect(toHost: ip, port: port) {
             isConnected = true
             connectedHostName = name
             isShowingLobby = false

@@ -16,6 +16,7 @@ typedef struct {
     char remote_ip[64];
     uint32_t ping_ms;
     bool is_turbo;
+    bool turbo_is_toggle;
     uint8_t turbo_multiplier;
     float current_fps;
     bool show_hud;

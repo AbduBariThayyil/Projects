@@ -171,17 +171,22 @@ void gba_hud_draw(SDL_Renderer* renderer, int window_w, int window_h, const GBAH
 
     /* Turbo Badge (Bottom-Right) */
     if (state->is_turbo) {
-        SDL_Rect turbo_box = { window_w - 180, window_h - 44, 168, 32 };
+        int box_w = state->turbo_is_toggle ? 240 : 180;
+        SDL_Rect turbo_box = { window_w - box_w - 12, window_h - 44, box_w, 32 };
         SDL_SetRenderDrawColor(renderer, 230, 80, 0, 220); /* Neon Orange */
         SDL_RenderFillRect(renderer, &turbo_box);
 
         SDL_SetRenderDrawColor(renderer, 255, 200, 0, 255);
         SDL_RenderDrawRect(renderer, &turbo_box);
 
-        snprintf(buf, sizeof(buf), "TURBO %dx", state->turbo_multiplier);
-        draw_string(renderer, buf, window_w - 165, window_h - 36, 2, (SDL_Color){ 255, 255, 255, 255 });
+        if (state->turbo_is_toggle) {
+            snprintf(buf, sizeof(buf), "TURBO %dx [TOGGLE]", state->turbo_multiplier);
+        } else {
+            snprintf(buf, sizeof(buf), "TURBO %dx [HOLD]", state->turbo_multiplier);
+        }
+        draw_string(renderer, buf, window_w - box_w + 4, window_h - 36, 2, (SDL_Color){ 255, 255, 255, 255 });
     }
 
     /* Bottom Hints (Left) */
-    draw_string(renderer, "[TAB] Turbo  [F1] HUD", 14, window_h - 22, 1, (SDL_Color){ 150, 150, 160, 200 });
+    draw_string(renderer, "[T] Toggle Turbo  [TAB] Hold  [C/V] Spam A/B  [F1] HUD", 14, window_h - 22, 1, (SDL_Color){ 150, 150, 160, 200 });
 }

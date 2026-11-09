@@ -18,10 +18,15 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 
+struct CustomSIODriver {
+    struct GBASIODriver d;
+    struct GBAEmulator* emu;
+};
+
 struct GBAEmulator {
     struct mCore* core;
     struct GBA* gba;
-    struct GBASIODriver sio_driver;
+    struct CustomSIODriver sio_driver;
     struct mAVStream av_stream;
 
     uint32_t video_buffer[GBA_VIDEO_WIDTH * GBA_VIDEO_HEIGHT];
@@ -43,7 +48,9 @@ static void av_post_audio_frame(struct mAVStream* stream, int16_t left, int16_t 
 }
 
 static uint16_t sio_write_register(struct GBASIODriver* driver, uint32_t address, uint16_t value) {
-    GBAEmulator* emu = (GBAEmulator*)driver->p;
+    struct CustomSIODriver* custom = (struct CustomSIODriver*)driver;
+    if (!custom || !custom->emu) return value;
+    GBAEmulator* emu = custom->emu;
     if (!emu || !emu->gba) return value;
 
     if (address == REG_SIOMLT_SEND) {
@@ -155,9 +162,9 @@ GBAEmulator* gba_emulator_create(const char* rom_path, uint8_t player_id, int so
     emu->gba = (struct GBA*)emu->core->board;
     if (emu->gba) {
         memset(&emu->sio_driver, 0, sizeof(emu->sio_driver));
-        emu->sio_driver.p = (struct GBASIO*)emu;
-        emu->sio_driver.writeRegister = sio_write_register;
-        GBASIOSetDriver(&emu->gba->sio, &emu->sio_driver, SIO_MULTI);
+        emu->sio_driver.emu = emu;
+        emu->sio_driver.d.writeRegister = sio_write_register;
+        GBASIOSetDriver(&emu->gba->sio, &emu->sio_driver.d, SIO_MULTI);
     }
 
     /* Extract Title */
@@ -168,6 +175,10 @@ GBAEmulator* gba_emulator_create(const char* rom_path, uint8_t player_id, int so
 
 void gba_emulator_destroy(GBAEmulator* emu) {
     if (!emu) return;
+
+    if (emu->gba) {
+        GBASIOSetDriver(&emu->gba->sio, NULL, SIO_MULTI);
+    }
 
     if (emu->core) {
         mCoreSaveState(emu->core, 0, 0);

@@ -46,12 +46,12 @@ struct VirtualGamepad: View {
                             if !isTurboActive {
                                 isTurboActive = true
                                 haptic.impactOccurred()
-                                EmulatorBridge.shared.setTurboActive(true)
+                                EmulatorBridge.shared().setTurboActive(true)
                             }
                         }
                         .onEnded { _ in
                             isTurboActive = false
-                            EmulatorBridge.shared.setTurboActive(false)
+                            EmulatorBridge.shared().setTurboActive(false)
                         }
                 )
 
@@ -130,7 +130,7 @@ struct VirtualGamepad: View {
         } else {
             keysBitmask &= ~(1 << bit)
         }
-        EmulatorBridge.shared.setKeys(keysBitmask)
+        EmulatorBridge.shared().setKeys(keysBitmask)
     }
 
     private func dpadDirection(icon: String, bit: Int) -> some View {
