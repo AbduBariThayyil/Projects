@@ -46,7 +46,7 @@ struct MetalView: UIViewRepresentable {
             }
 
             // Update texture from EmulatorBridge video buffer
-            if let pixels = EmulatorBridge.shared().getVideoBuffer(), let texture = self.texture {
+            if let pixels = EmulatorBridge.shared.getVideoBuffer(), let texture = self.texture {
                 let region = MTLRegionMake2D(0, 0, 240, 160)
                 texture.replace(region: region, mipmapLevel: 0, withBytes: pixels, bytesPerRow: 240 * 4)
             }

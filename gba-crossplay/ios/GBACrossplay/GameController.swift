@@ -77,7 +77,7 @@ class GameControllerManager: ObservableObject {
 
         // Right Trigger = Fast-Forward / Turbo
         gamepad.rightTrigger.valueChangedHandler = { _, _, pressed in
-            EmulatorBridge.shared().setTurboActive(pressed)
+            EmulatorBridge.shared.setTurboActive(pressed)
         }
     }
 
@@ -88,6 +88,6 @@ class GameControllerManager: ObservableObject {
         } else {
             mask &= ~(1 << bit)
         }
-        EmulatorBridge.shared().setKeys(mask)
+        EmulatorBridge.shared.setKeys(mask)
     }
 }
