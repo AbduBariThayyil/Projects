@@ -1,6 +1,6 @@
 #import "EmulatorBridge.h"
-#include "../../core/link_protocol.h"
-#include "../../core/turbo_sync.h"
+#include "link_protocol.h"
+#include "turbo_sync.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
