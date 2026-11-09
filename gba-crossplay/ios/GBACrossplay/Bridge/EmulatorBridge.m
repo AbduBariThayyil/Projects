@@ -30,6 +30,15 @@
     return s_instance;
 }
 
+static void s_turbo_callback(bool is_active, uint8_t multiplier, void* userdata) {
+    EmulatorBridge* emuBridge = (__bridge EmulatorBridge*)userdata;
+    if (emuBridge && emuBridge.delegate) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [emuBridge.delegate emulatorDidUpdateTurboState:is_active multiplier:multiplier];
+        });
+    }
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {
@@ -40,13 +49,7 @@
         _emuQueue = dispatch_queue_create("cc.daudau.gba.crossplay.emu", DISPATCH_QUEUE_SERIAL);
 
         gba_turbo_init(&_turbo, 1, 2); /* Player 1 = Slave/Client */
-        __weak typeof(self) weakSelf = self;
-        gba_turbo_set_callback(&_turbo, [](bool is_active, uint8_t multiplier, void* userdata) {
-            EmulatorBridge* strongSelf = (__bridge EmulatorBridge*)userdata;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [strongSelf.delegate emulatorDidUpdateTurboState:is_active multiplier:multiplier];
-            });
-        }, (__bridge void*)self);
+        gba_turbo_set_callback(&_turbo, s_turbo_callback, (__bridge void*)self);
     }
     return self;
 }
