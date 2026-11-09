@@ -3,6 +3,7 @@
 #include "discovery.h"
 #include "hud.h"
 #include "config.h"
+#include "browser.h"
 #include "../../core/link_protocol.h"
 
 #include <SDL2/SDL.h>
@@ -13,11 +14,14 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/time.h>
 
 #include <mgba/internal/gba/input.h>
+
+static const char* DEFAULT_GBA_DIR = "/home/vibecoder/Games/Console Games/GBA";
 
 static volatile bool g_running = true;
 
@@ -34,55 +38,25 @@ static uint64_t get_time_us(void) {
 
 int main(int argc, char** argv) {
     char picked_rom[1024] = {0};
+    char* dynamic_rom = NULL;
     const char* rom_path = NULL;
-    int arg_start = 2;
 
     /* Load user configuration from ~/.config/gba-crossplay/config.ini */
     GBAConfig config;
     gba_config_load_file(&config, gba_config_get_default_path());
 
-    if (argc >= 2 && argv[1][0] != '-') {
-        rom_path = argv[1];
-        arg_start = 2;
-    } else {
-        /* Open native GUI file dialog in Catppuccin Dark Mode if launched without ROM argument */
-        FILE* fp = popen("GTK_THEME=catppuccin-mocha-teal-standard+default ADW_DEBUG_COLOR_SCHEME=prefer-dark zenity --file-selection --title='Select GBA ROM' --file-filter='GBA ROMs (*.gba *.bin)|*.gba *.bin' --file-filter='All Files|*' 2>/dev/null", "r");
-        if (fp) {
-            if (fgets(picked_rom, sizeof(picked_rom), fp)) {
-                size_t len = strlen(picked_rom);
-                if (len > 0 && picked_rom[len - 1] == '\n') {
-                    picked_rom[len - 1] = '\0';
-                }
-            }
-            pclose(fp);
-        }
-
-        if (picked_rom[0] != '\0') {
-            rom_path = picked_rom;
-            arg_start = 1;
-        } else {
-            printf("Usage: %s <rom.gba> [options]\n", argv[0]);
-            printf("Options:\n");
-            printf("  --host [port]      Host multiplayer server (default port %d)\n", GBA_LINK_DEFAULT_PORT);
-            printf("  --join <ip> [port] Join remote host (default port %d)\n", GBA_LINK_DEFAULT_PORT);
-            printf("  --turbo <2|3|4>    Set fast-forward multiplier (default %u)\n", config.turbo_multiplier);
-            printf("  --headless         Run without window/audio (for testing/automation)\n");
-            return 1;
-        }
-    }
-
-    signal(SIGINT, sigint_handler);
-
-    /* Default to Single Player unless explicitly requested via CLI */
+    bool headless = false;
     bool is_multiplayer = false;
     bool is_host = false;
     char remote_ip[64] = "127.0.0.1";
     uint16_t port = GBA_LINK_DEFAULT_PORT;
     uint8_t turbo_mult = config.turbo_multiplier;
-    bool headless = false;
 
-    for (int i = arg_start; i < argc; i++) {
-        if (strcmp(argv[i], "--host") == 0) {
+    /* Parse CLI options first */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--headless") == 0) {
+            headless = true;
+        } else if (strcmp(argv[i], "--host") == 0) {
             is_multiplayer = true;
             is_host = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -99,11 +73,106 @@ int main(int argc, char** argv) {
             }
         } else if (strcmp(argv[i], "--turbo") == 0 && i + 1 < argc) {
             turbo_mult = (uint8_t)atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--headless") == 0) {
-            headless = true;
+        } else if (argv[i][0] != '-' && !rom_path) {
+            rom_path = argv[i];
         }
     }
 
+    signal(SIGINT, sigint_handler);
+
+    /* Initialize SDL early for Window & Renderer */
+    SDL_Window* window = NULL;
+    SDL_Renderer* renderer = NULL;
+    SDL_Texture* texture = NULL;
+    SDL_GameController* controller = NULL;
+
+    if (!headless) {
+        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
+            fprintf(stderr, "SDL Init failed: %s\n", SDL_GetError());
+            return 1;
+        }
+
+        /* Use nearest-neighbor scaling for tack-sharp GBA pixel art */
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+
+        window = SDL_CreateWindow("GBA Crossplay [Arch Linux]",
+                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                  720, 480, SDL_WINDOW_RESIZABLE);
+        if (!window) {
+            fprintf(stderr, "Window creation failed: %s\n", SDL_GetError());
+            return 1;
+        }
+
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+        if (!renderer) {
+            renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+        }
+
+        /* Open first available gamepad */
+        for (int i = 0; i < SDL_NumJoysticks(); i++) {
+            if (SDL_IsGameController(i)) {
+                controller = SDL_GameControllerOpen(i);
+                if (controller) {
+                    printf("[GBA-Crossplay] Gamepad connected: %s\n", SDL_GameControllerName(controller));
+                    break;
+                }
+            }
+        }
+    }
+
+    /* If no ROM path provided, open interactive Game Browser or File Picker */
+    if (!rom_path) {
+        if (!headless && renderer) {
+            GBABrowser browser;
+            if (gba_browser_scan(&browser, DEFAULT_GBA_DIR, renderer)) {
+                dynamic_rom = gba_browser_run(&browser, window, renderer);
+                gba_browser_free(&browser);
+                if (!dynamic_rom) {
+                    /* User exited browser with Escape */
+                    if (controller) SDL_GameControllerClose(controller);
+                    if (renderer) SDL_DestroyRenderer(renderer);
+                    if (window) SDL_DestroyWindow(window);
+                    SDL_Quit();
+                    return 0;
+                }
+                rom_path = dynamic_rom;
+            }
+        }
+
+        /* Fallback if browser didn't return a path */
+        if (!rom_path) {
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd),
+                     "GTK_THEME=catppuccin-mocha-teal-standard+default ADW_DEBUG_COLOR_SCHEME=prefer-dark zenity --file-selection --filename='%s/' --title='Select GBA ROM' --file-filter='GBA ROMs (*.gba *.bin)|*.gba *.bin' --file-filter='All Files|*' 2>/dev/null",
+                     DEFAULT_GBA_DIR);
+
+            FILE* fp = popen(cmd, "r");
+            if (fp) {
+                if (fgets(picked_rom, sizeof(picked_rom), fp)) {
+                    size_t len = strlen(picked_rom);
+                    if (len > 0 && picked_rom[len - 1] == '\n') {
+                        picked_rom[len - 1] = '\0';
+                    }
+                }
+                pclose(fp);
+            }
+
+            if (picked_rom[0] != '\0') {
+                rom_path = picked_rom;
+            } else {
+                printf("No ROM selected. Exiting.\n");
+                if (!headless) {
+                    if (controller) SDL_GameControllerClose(controller);
+                    if (renderer) SDL_DestroyRenderer(renderer);
+                    if (window) SDL_DestroyWindow(window);
+                    SDL_Quit();
+                }
+                return 0;
+            }
+        }
+    }
+
+    /* Initial Socket Setup (if CLI specified --host or --join) */
     int socket_fd = -1;
     int listen_fd = -1;
     uint8_t player_id = is_host ? 0 : 1;
@@ -133,6 +202,9 @@ int main(int argc, char** argv) {
             printf("[GBA-Crossplay] Connecting to %s:%d...\n", remote_ip, port);
             socket_fd = socket(AF_INET, SOCK_STREAM, 0);
             if (socket_fd >= 0) {
+                int one = 1;
+                setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
+
                 struct sockaddr_in addr;
                 memset(&addr, 0, sizeof(addr));
                 addr.sin_family = AF_INET;
@@ -151,54 +223,25 @@ int main(int argc, char** argv) {
         }
     }
 
-    /* Initialize SDL */
-    SDL_Window* window = NULL;
-    SDL_Renderer* renderer = NULL;
-    SDL_Texture* texture = NULL;
-    SDL_GameController* controller = NULL;
-
+    /* Initialize Emulator Texture & Audio */
     if (!headless) {
-        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
-            fprintf(stderr, "SDL Init failed: %s\n", SDL_GetError());
-            return 1;
-        }
-
-        window = SDL_CreateWindow("GBA Crossplay [Arch Linux]",
-                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                  720, 480, SDL_WINDOW_RESIZABLE);
-        if (!window) {
-            fprintf(stderr, "Window creation failed: %s\n", SDL_GetError());
-            return 1;
-        }
-
-        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-        if (!renderer) {
-            renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-        }
-
         texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
                                     SDL_TEXTUREACCESS_STREAMING,
                                     GBA_VIDEO_WIDTH, GBA_VIDEO_HEIGHT);
-
         gba_audio_init(44100, 2);
-
-        /* Open first available gamepad */
-        for (int i = 0; i < SDL_NumJoysticks(); i++) {
-            if (SDL_IsGameController(i)) {
-                controller = SDL_GameControllerOpen(i);
-                if (controller) {
-                    printf("[GBA-Crossplay] Gamepad connected: %s\n", SDL_GameControllerName(controller));
-                    break;
-                }
-            }
-        }
     }
 
     /* Initialize Emulator Core */
     GBAEmulator* emu = gba_emulator_create(rom_path, player_id, socket_fd);
     if (!emu) {
-        fprintf(stderr, "Failed to initialize GBA core.\n");
-        if (!headless) SDL_Quit();
+        fprintf(stderr, "Failed to initialize GBA core for %s.\n", rom_path);
+        if (dynamic_rom) free(dynamic_rom);
+        if (!headless) {
+            if (texture) SDL_DestroyTexture(texture);
+            if (renderer) SDL_DestroyRenderer(renderer);
+            if (window) SDL_DestroyWindow(window);
+            SDL_Quit();
+        }
         return 1;
     }
 
@@ -243,21 +286,24 @@ int main(int argc, char** argv) {
            (hud.net_mode == GBA_NET_SINGLE_PLAYER) ? "Single Player" : "Multiplayer");
 
     while (g_running) {
-        /* Check incoming connection for host */
-        if (is_host && socket_fd < 0 && listen_fd >= 0) {
+        /* Check incoming connection for host (supports Midgame Connection like MyBoy!) */
+        if (hud.net_mode == GBA_NET_HOSTING && socket_fd < 0 && listen_fd >= 0) {
             struct sockaddr_in client_addr;
             socklen_t client_len = sizeof(client_addr);
             int new_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
             if (new_fd >= 0) {
                 socket_fd = new_fd;
+                int one = 1;
+                setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
+
                 char client_ip[64];
                 inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
-                printf("[GBA-Crossplay] Peer connected from %s!\n", client_ip);
+                printf("[GBA-Crossplay] Midgame peer connected from %s!\n", client_ip);
                 snprintf(hud.remote_ip, sizeof(hud.remote_ip), "%s", client_ip);
                 hud.net_mode = GBA_NET_CONNECTED;
                 hud.connected = true;
                 gba_emulator_set_network(emu, socket_fd, 0);
-                gba_hud_show_toast(&hud, "[PEER CONNECTED!]", (SDL_Color){ 166, 227, 161, 255 }, 2500);
+                gba_hud_show_toast(&hud, "[PEER CONNECTED - LINK ACTIVE!]", (SDL_Color){ 166, 227, 161, 255 }, 2500);
             }
         }
 
@@ -316,7 +362,7 @@ int main(int argc, char** argv) {
                             } else if (hud.menu_selected == MENU_MULTIPLAYER) {
                                 if (hud.net_mode == GBA_NET_SINGLE_PLAYER) {
                                     if (hud.mp_action_mode == 0) {
-                                        /* Host Server */
+                                        /* MIDGAME HOST: Start listening on port 8765 */
                                         listen_fd = socket(AF_INET, SOCK_STREAM, 0);
                                         if (listen_fd >= 0) {
                                             int reuse = 1;
@@ -331,16 +377,15 @@ int main(int argc, char** argv) {
                                                 int flags = fcntl(listen_fd, F_GETFL, 0);
                                                 fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
                                                 gba_discovery_start_beacon(gba_emulator_get_title(emu), port);
-                                                is_host = true;
                                                 hud.net_mode = GBA_NET_HOSTING;
                                                 hud.player_id = 0;
                                                 gba_emulator_set_network(emu, -1, 0);
-                                                gba_hud_show_toast(&hud, "[HOSTING ON PORT 8765]", (SDL_Color){249, 226, 175, 255}, 2500);
+                                                gba_hud_show_toast(&hud, "[HOSTING ACTIVE - READY FOR PEER]", (SDL_Color){249, 226, 175, 255}, 2500);
                                             }
                                         }
                                         hud.menu_open = false;
                                     } else {
-                                        /* Connect to Remote IP */
+                                        /* MIDGAME JOIN: Connect to Remote IP */
                                         char target_ip[64] = "192.168.1.";
                                         FILE* p = popen("GTK_THEME=catppuccin-mocha-teal-standard+default ADW_DEBUG_COLOR_SCHEME=prefer-dark zenity --entry --title='Join Multiplayer' --text='Enter Host IP Address:' --entry-text='192.168.1.' 2>/dev/null", "r");
                                         if (p) {
@@ -353,6 +398,9 @@ int main(int argc, char** argv) {
                                         if (target_ip[0] != '\0' && strcmp(target_ip, "192.168.1.") != 0) {
                                             int sfd = socket(AF_INET, SOCK_STREAM, 0);
                                             if (sfd >= 0) {
+                                                int one = 1;
+                                                setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
+
                                                 struct sockaddr_in saddr;
                                                 memset(&saddr, 0, sizeof(saddr));
                                                 saddr.sin_family = AF_INET;
@@ -360,13 +408,12 @@ int main(int argc, char** argv) {
                                                 inet_pton(AF_INET, target_ip, &saddr.sin_addr);
                                                 if (connect(sfd, (struct sockaddr*)&saddr, sizeof(saddr)) == 0) {
                                                     socket_fd = sfd;
-                                                    is_host = false;
                                                     hud.net_mode = GBA_NET_CONNECTED;
                                                     hud.connected = true;
                                                     hud.player_id = 1;
                                                     snprintf(hud.remote_ip, sizeof(hud.remote_ip), "%s", target_ip);
                                                     gba_emulator_set_network(emu, socket_fd, 1);
-                                                    gba_hud_show_toast(&hud, "[CONNECTED TO HOST!]", (SDL_Color){166, 227, 161, 255}, 2500);
+                                                    gba_hud_show_toast(&hud, "[CONNECTED TO HOST - LINK ACTIVE!]", (SDL_Color){166, 227, 161, 255}, 2500);
                                                 } else {
                                                     close(sfd);
                                                     gba_hud_show_toast(&hud, "[FAILED TO CONNECT]", (SDL_Color){243, 139, 168, 255}, 2500);
@@ -376,7 +423,7 @@ int main(int argc, char** argv) {
                                         hud.menu_open = false;
                                     }
                                 } else {
-                                    /* Disconnect session */
+                                    /* MIDGAME DISCONNECT */
                                     gba_discovery_stop_beacon();
                                     if (listen_fd >= 0) { close(listen_fd); listen_fd = -1; }
                                     if (socket_fd >= 0) { close(socket_fd); socket_fd = -1; }
@@ -631,6 +678,8 @@ int main(int argc, char** argv) {
     if (listen_fd >= 0) close(listen_fd);
 
     gba_emulator_destroy(emu);
+    if (dynamic_rom) free(dynamic_rom);
+
     if (!headless) {
         gba_audio_deinit();
         if (controller) SDL_GameControllerClose(controller);

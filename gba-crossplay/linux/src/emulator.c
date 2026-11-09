@@ -18,6 +18,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <fcntl.h>
 
 struct CustomSIODriver {
@@ -80,41 +83,57 @@ static uint16_t sio_write_register(struct GBASIODriver* driver, uint32_t address
 
     if (address == REG_SIOCNT) {
         /* Check Start bit (Bit 7 = 0x80) */
-        if ((value & 0x80) && emu->socket_fd >= 0) {
-            if (emu->player_id == 0) {
-                /* Master: Send multi packet to Client */
-                GBAPacketSIOMulti pkt;
-                memset(&pkt, 0, sizeof(pkt));
-                pkt.transfer_id = ++emu->transfer_counter;
-                pkt.data[0] = emu->local_send_data;
-                pkt.siocnt = value;
+        if (value & 0x80) {
+            if (emu->socket_fd >= 0) {
+                if (emu->player_id == 0) {
+                    /* Master: Send multi packet to Client */
+                    GBAPacketSIOMulti pkt;
+                    memset(&pkt, 0, sizeof(pkt));
+                    pkt.transfer_id = ++emu->transfer_counter;
+                    pkt.data[0] = emu->local_send_data;
+                    pkt.siocnt = value;
 
-                gba_link_send_packet(emu->socket_fd, PKT_SIO_MULTI, 0, &pkt, sizeof(pkt));
+                    gba_link_send_packet(emu->socket_fd, PKT_SIO_MULTI, 0, &pkt, sizeof(pkt));
 
-                /* Receive Client's reply */
-                GBALinkHeader reply_hdr;
-                if (gba_link_recv_header(emu->socket_fd, &reply_hdr) > 0) {
-                    if (reply_hdr.type == PKT_SIO_MULTI) {
-                        GBAPacketSIOMulti client_pkt;
-                        if (gba_link_recv_payload(emu->socket_fd, &reply_hdr, &client_pkt, sizeof(client_pkt)) > 0) {
-                            pkt.data[1] = client_pkt.data[1];
+                    /* Wait for Client's reply with 15ms timeout */
+                    fd_set rfds;
+                    FD_ZERO(&rfds);
+                    FD_SET(emu->socket_fd, &rfds);
+                    struct timeval tv = { 0, 15000 };
+                    int sel = select(emu->socket_fd + 1, &rfds, NULL, NULL, &tv);
+
+                    if (sel > 0) {
+                        GBALinkHeader reply_hdr;
+                        if (gba_link_recv_header(emu->socket_fd, &reply_hdr) > 0) {
+                            if (reply_hdr.type == PKT_SIO_MULTI) {
+                                GBAPacketSIOMulti client_pkt;
+                                if (gba_link_recv_payload(emu->socket_fd, &reply_hdr, &client_pkt, sizeof(client_pkt)) > 0) {
+                                    pkt.data[1] = client_pkt.data[1];
+                                }
+                            }
                         }
+
+                        /* Populate received data in GBA IO memory */
+                        emu->gba->memory.io[REG_SIOMULTI0 >> 1] = pkt.data[0];
+                        emu->gba->memory.io[REG_SIOMULTI1 >> 1] = pkt.data[1];
+                        emu->gba->memory.io[REG_SIOMULTI2 >> 1] = 0xFFFF;
+                        emu->gba->memory.io[REG_SIOMULTI3 >> 1] = 0xFFFF;
+
+                        /* Clear Start bit, Clear Error bit */
+                        value &= ~0x00C0;
+
+                        /* Raise SIO IRQ if enabled */
+                        if (value & 0x4000) {
+                            GBARaiseIRQ(emu->gba, GBA_IRQ_SIO, 0);
+                        }
+                    } else {
+                        /* Link timeout: set Error bit (0x40), clear Start bit (0x80) */
+                        value = (value & ~0x0080) | 0x0040;
                     }
                 }
-
-                /* Populate received data in GBA IO memory */
-                emu->gba->memory.io[REG_SIOMULTI0 >> 1] = pkt.data[0];
-                emu->gba->memory.io[REG_SIOMULTI1 >> 1] = pkt.data[1];
-                emu->gba->memory.io[REG_SIOMULTI2 >> 1] = 0xFFFF;
-                emu->gba->memory.io[REG_SIOMULTI3 >> 1] = 0xFFFF;
-
-                /* Clear Start bit, Clear Error bit */
-                value &= ~0x00C0;
-
-                /* Raise SIO IRQ if enabled */
-                if (value & 0x4000) {
-                    GBARaiseIRQ(emu->gba, GBA_IRQ_SIO, 0);
-                }
+            } else {
+                /* No cable connected in single player: clear Start bit, set Error bit */
+                value = (value & ~0x0080) | 0x0040;
             }
         }
         return value;
@@ -186,6 +205,12 @@ GBAEmulator* gba_emulator_create(const char* rom_path, uint8_t player_id, int so
         emu->sio_driver.emu = emu;
         emu->sio_driver.d.writeRegister = sio_write_register;
         GBASIOSetDriver(&emu->gba->sio, &emu->sio_driver.d, SIO_MULTI);
+
+        /* Initialize SIO multi registers */
+        emu->gba->memory.io[REG_SIOMULTI0 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI1 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI2 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI3 >> 1] = 0xFFFF;
     }
 
     /* Extract Title */
@@ -271,6 +296,10 @@ void gba_emulator_process_network(GBAEmulator* emu) {
                     }
                 }
             }
+        } else if (hdr.type == PKT_DISCONNECT) {
+            /* Peer disconnected: drop back to single player cleanly */
+            gba_emulator_disconnect_network(emu);
+            break;
         } else {
             /* Drain unhandled packet */
             char sink[256];
@@ -326,7 +355,29 @@ void gba_emulator_set_network(GBAEmulator* emu, int socket_fd, uint8_t player_id
     }
     emu->socket_fd = socket_fd;
     emu->player_id = player_id;
+    emu->transfer_counter = 0;
     emu->turbo.local_player_id = player_id;
+
+    if (socket_fd >= 0) {
+        /* Enable TCP_NODELAY for sub-millisecond packet transmission */
+        int one = 1;
+        setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
+    }
+
+    if (emu->gba) {
+        /* Set player ID in REG_SIOCNT:
+           Bits 4-5: 00 = Master (Player 1), 01 = Slave 1 (Player 2) */
+        uint16_t siocnt = emu->gba->memory.io[REG_SIOCNT >> 1];
+        siocnt = (siocnt & ~0x0030) | ((player_id & 0x03) << 4);
+        siocnt &= ~0x00C0; /* Clear error and start bits */
+        emu->gba->memory.io[REG_SIOCNT >> 1] = siocnt;
+
+        /* Reset Multi-play data registers */
+        emu->gba->memory.io[REG_SIOMULTI0 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI1 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI2 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI3 >> 1] = 0xFFFF;
+    }
 }
 
 void gba_emulator_disconnect_network(GBAEmulator* emu) {
@@ -338,7 +389,17 @@ void gba_emulator_disconnect_network(GBAEmulator* emu) {
     }
     emu->player_id = 0;
     emu->turbo.local_player_id = 0;
+    emu->transfer_counter = 0;
     gba_turbo_init(&emu->turbo, 0, emu->turbo.multiplier);
+
+    if (emu->gba) {
+        /* Reset back to Single Player / Master ID 0 */
+        emu->gba->memory.io[REG_SIOCNT >> 1] &= ~0x0030;
+        emu->gba->memory.io[REG_SIOMULTI0 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI1 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI2 >> 1] = 0xFFFF;
+        emu->gba->memory.io[REG_SIOMULTI3 >> 1] = 0xFFFF;
+    }
 }
 
 int gba_emulator_get_socket(const GBAEmulator* emu) {
