@@ -32,26 +32,49 @@ static uint64_t get_time_us(void) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        printf("Usage: %s <rom.gba> [options]\n", argv[0]);
-        printf("Options:\n");
-        printf("  --host [port]      Host multiplayer server (default port %d)\n", GBA_LINK_DEFAULT_PORT);
-        printf("  --join <ip> [port] Join remote host (default port %d)\n", GBA_LINK_DEFAULT_PORT);
-        printf("  --turbo <2|3>      Set fast-forward multiplier (default 2)\n");
-        printf("  --headless         Run without window/audio (for testing/automation)\n");
-        return 1;
+    char picked_rom[1024] = {0};
+    const char* rom_path = NULL;
+    int arg_start = 2;
+
+    if (argc >= 2 && argv[1][0] != '-') {
+        rom_path = argv[1];
+        arg_start = 2;
+    } else {
+        /* Open native GUI file dialog if launched without ROM argument */
+        FILE* fp = popen("zenity --file-selection --title='Select GBA ROM' --file-filter='GBA ROMs (*.gba *.bin)|*.gba *.bin' --file-filter='All Files|*' 2>/dev/null", "r");
+        if (fp) {
+            if (fgets(picked_rom, sizeof(picked_rom), fp)) {
+                size_t len = strlen(picked_rom);
+                if (len > 0 && picked_rom[len - 1] == '\n') {
+                    picked_rom[len - 1] = '\0';
+                }
+            }
+            pclose(fp);
+        }
+
+        if (picked_rom[0] != '\0') {
+            rom_path = picked_rom;
+            arg_start = 1;
+        } else {
+            printf("Usage: %s <rom.gba> [options]\n", argv[0]);
+            printf("Options:\n");
+            printf("  --host [port]      Host multiplayer server (default port %d)\n", GBA_LINK_DEFAULT_PORT);
+            printf("  --join <ip> [port] Join remote host (default port %d)\n", GBA_LINK_DEFAULT_PORT);
+            printf("  --turbo <2|3>      Set fast-forward multiplier (default 2)\n");
+            printf("  --headless         Run without window/audio (for testing/automation)\n");
+            return 1;
+        }
     }
 
     signal(SIGINT, sigint_handler);
 
-    const char* rom_path = argv[1];
     bool is_host = true;
     char remote_ip[64] = "127.0.0.1";
     uint16_t port = GBA_LINK_DEFAULT_PORT;
     uint8_t turbo_mult = 2;
     bool headless = false;
 
-    for (int i = 2; i < argc; i++) {
+    for (int i = arg_start; i < argc; i++) {
         if (strcmp(argv[i], "--host") == 0) {
             is_host = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
