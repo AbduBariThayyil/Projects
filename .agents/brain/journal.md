@@ -22,3 +22,4 @@
 - **2026-11-04 21:28:52** `[keyholder-hud]`: Repositioned HUD to bottom-center with 2s delay change timeout
 - **2026-11-04 21:40:59** `[sys-notif]`: Added 500 history limit, 5-card flood throttling, and Touchpad OSD pill
 - **2026-11-04 21:41:45** `[ani-cast]`: Defaulted to local MPV playback and optimized responsive scaling for 1366x768
+- **2026-11-09 11:41:13** `[gba-crossplay]`: Implemented native Linux & iOS GBA crossplay suite with symmetrical fast-forward, Bonjour discovery, and CI/CD workflow.
