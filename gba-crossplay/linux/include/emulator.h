@@ -41,6 +41,16 @@ const char* gba_emulator_get_title(const GBAEmulator* emu);
 /* ROM CRC32 */
 uint32_t gba_emulator_get_crc32(const GBAEmulator* emu);
 
+/* Savestates (Slot 1-9) */
+bool gba_emulator_save_state(GBAEmulator* emu, int slot);
+bool gba_emulator_load_state(GBAEmulator* emu, int slot);
+bool gba_emulator_has_state(GBAEmulator* emu, int slot);
+
+/* Dynamic Network attach / detach */
+void gba_emulator_set_network(GBAEmulator* emu, int socket_fd, uint8_t player_id);
+void gba_emulator_disconnect_network(GBAEmulator* emu);
+int  gba_emulator_get_socket(const GBAEmulator* emu);
+
 #ifdef __cplusplus
 }
 #endif

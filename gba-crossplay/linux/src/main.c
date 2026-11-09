@@ -45,8 +45,8 @@ int main(int argc, char** argv) {
         rom_path = argv[1];
         arg_start = 2;
     } else {
-        /* Open native GUI file dialog in Dark Mode if launched without ROM argument */
-        FILE* fp = popen("GTK_THEME=Adwaita:dark zenity --file-selection --title='Select GBA ROM' --file-filter='GBA ROMs (*.gba *.bin)|*.gba *.bin' --file-filter='All Files|*' 2>/dev/null", "r");
+        /* Open native GUI file dialog in Catppuccin Dark Mode if launched without ROM argument */
+        FILE* fp = popen("GTK_THEME=catppuccin-mocha-teal-standard+default ADW_DEBUG_COLOR_SCHEME=prefer-dark zenity --file-selection --title='Select GBA ROM' --file-filter='GBA ROMs (*.gba *.bin)|*.gba *.bin' --file-filter='All Files|*' 2>/dev/null", "r");
         if (fp) {
             if (fgets(picked_rom, sizeof(picked_rom), fp)) {
                 size_t len = strlen(picked_rom);
@@ -65,7 +65,7 @@ int main(int argc, char** argv) {
             printf("Options:\n");
             printf("  --host [port]      Host multiplayer server (default port %d)\n", GBA_LINK_DEFAULT_PORT);
             printf("  --join <ip> [port] Join remote host (default port %d)\n", GBA_LINK_DEFAULT_PORT);
-            printf("  --turbo <2|3>      Set fast-forward multiplier (default %u)\n", config.turbo_multiplier);
+            printf("  --turbo <2|3|4>    Set fast-forward multiplier (default %u)\n", config.turbo_multiplier);
             printf("  --headless         Run without window/audio (for testing/automation)\n");
             return 1;
         }
@@ -73,7 +73,9 @@ int main(int argc, char** argv) {
 
     signal(SIGINT, sigint_handler);
 
-    bool is_host = true;
+    /* Default to Single Player unless explicitly requested via CLI */
+    bool is_multiplayer = false;
+    bool is_host = false;
     char remote_ip[64] = "127.0.0.1";
     uint16_t port = GBA_LINK_DEFAULT_PORT;
     uint8_t turbo_mult = config.turbo_multiplier;
@@ -81,11 +83,13 @@ int main(int argc, char** argv) {
 
     for (int i = arg_start; i < argc; i++) {
         if (strcmp(argv[i], "--host") == 0) {
+            is_multiplayer = true;
             is_host = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 port = (uint16_t)atoi(argv[++i]);
             }
         } else if (strcmp(argv[i], "--join") == 0) {
+            is_multiplayer = true;
             is_host = false;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 strncpy(remote_ip, argv[++i], sizeof(remote_ip) - 1);
@@ -104,41 +108,45 @@ int main(int argc, char** argv) {
     int listen_fd = -1;
     uint8_t player_id = is_host ? 0 : 1;
 
-    if (is_host) {
-        listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (listen_fd >= 0) {
-            int reuse = 1;
-            setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    if (is_multiplayer) {
+        if (is_host) {
+            listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+            if (listen_fd >= 0) {
+                int reuse = 1;
+                setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-            struct sockaddr_in addr;
-            memset(&addr, 0, sizeof(addr));
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(port);
-            addr.sin_addr.s_addr = htonl(INADDR_ANY);
+                struct sockaddr_in addr;
+                memset(&addr, 0, sizeof(addr));
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(port);
+                addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-            if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
-                listen(listen_fd, 1);
-                /* Non-blocking listen */
-                int flags = fcntl(listen_fd, F_GETFL, 0);
-                fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
-                printf("[GBA-Crossplay] Hosting on port %d... Beacon active.\n", port);
-                gba_discovery_start_beacon("GBA Game", port);
+                if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+                    listen(listen_fd, 1);
+                    int flags = fcntl(listen_fd, F_GETFL, 0);
+                    fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
+                    printf("[GBA-Crossplay] Hosting on port %d... Beacon active.\n", port);
+                    gba_discovery_start_beacon("GBA Game", port);
+                }
             }
-        }
-    } else {
-        printf("[GBA-Crossplay] Connecting to %s:%d...\n", remote_ip, port);
-        socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (socket_fd >= 0) {
-            struct sockaddr_in addr;
-            memset(&addr, 0, sizeof(addr));
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(port);
-            inet_pton(AF_INET, remote_ip, &addr.sin_addr);
+        } else {
+            printf("[GBA-Crossplay] Connecting to %s:%d...\n", remote_ip, port);
+            socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+            if (socket_fd >= 0) {
+                struct sockaddr_in addr;
+                memset(&addr, 0, sizeof(addr));
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(port);
+                inet_pton(AF_INET, remote_ip, &addr.sin_addr);
 
-            if (connect(socket_fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
-                printf("[GBA-Crossplay] Connected to host successfully!\n");
-            } else {
-                printf("[GBA-Crossplay] Waiting for host or offline mode...\n");
+                if (connect(socket_fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+                    printf("[GBA-Crossplay] Connected to host successfully!\n");
+                } else {
+                    printf("[GBA-Crossplay] Host unreachable, continuing in single-player...\n");
+                    close(socket_fd);
+                    socket_fd = -1;
+                    is_multiplayer = false;
+                }
             }
         }
     }
@@ -200,14 +208,25 @@ int main(int argc, char** argv) {
     }
 
     GBAHUDState hud;
-    memset(&hud, 0, sizeof(hud));
-    hud.connected = (socket_fd >= 0);
+    gba_hud_init(&hud);
+
+    if (is_multiplayer) {
+        if (is_host) {
+            hud.net_mode = GBA_NET_HOSTING;
+            hud.connected = false;
+        } else {
+            hud.net_mode = (socket_fd >= 0) ? GBA_NET_CONNECTED : GBA_NET_SINGLE_PLAYER;
+            hud.connected = (socket_fd >= 0);
+        }
+    } else {
+        hud.net_mode = GBA_NET_SINGLE_PLAYER;
+        hud.connected = false;
+    }
+
     hud.player_id = player_id;
     hud.total_players = 2;
     snprintf(hud.remote_ip, sizeof(hud.remote_ip), "%s", remote_ip);
     hud.turbo_multiplier = turbo_mult;
-    hud.turbo_is_toggle = false;
-    hud.show_hud = true;
 
     uint32_t keys = 0;
     bool turbo_hold = false;
@@ -219,7 +238,9 @@ int main(int argc, char** argv) {
     uint64_t fps_timer = last_frame_time;
     int frame_count = 0;
 
-    printf("[GBA-Crossplay] Running game: %s\n", gba_emulator_get_title(emu));
+    printf("[GBA-Crossplay] Running game: %s (Mode: %s)\n",
+           gba_emulator_get_title(emu),
+           (hud.net_mode == GBA_NET_SINGLE_PLAYER) ? "Single Player" : "Multiplayer");
 
     while (g_running) {
         /* Check incoming connection for host */
@@ -233,7 +254,10 @@ int main(int argc, char** argv) {
                 inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
                 printf("[GBA-Crossplay] Peer connected from %s!\n", client_ip);
                 snprintf(hud.remote_ip, sizeof(hud.remote_ip), "%s", client_ip);
+                hud.net_mode = GBA_NET_CONNECTED;
                 hud.connected = true;
+                gba_emulator_set_network(emu, socket_fd, 0);
+                gba_hud_show_toast(&hud, "[PEER CONNECTED!]", (SDL_Color){ 166, 227, 161, 255 }, 2500);
             }
         }
 
@@ -242,11 +266,209 @@ int main(int argc, char** argv) {
             while (SDL_PollEvent(&ev)) {
                 if (ev.type == SDL_QUIT) {
                     g_running = false;
-                } else if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
+                }
+
+                /* ========================================================
+                 *  MENU NAVIGATION (When Pause Menu is Active)
+                 * ======================================================== */
+                else if (hud.menu_open) {
+                    if (ev.type == SDL_KEYDOWN) {
+                        SDL_Keycode k = ev.key.keysym.sym;
+                        if (k == SDLK_ESCAPE) {
+                            hud.menu_open = false;
+                        } else if (k == SDLK_UP) {
+                            hud.menu_selected = (hud.menu_selected - 1 + MENU_COUNT) % MENU_COUNT;
+                        } else if (k == SDLK_DOWN) {
+                            hud.menu_selected = (hud.menu_selected + 1) % MENU_COUNT;
+                        } else if (k == SDLK_LEFT) {
+                            if (hud.menu_selected == MENU_SAVE_STATE || hud.menu_selected == MENU_LOAD_STATE) {
+                                hud.selected_slot = (hud.selected_slot > 1) ? hud.selected_slot - 1 : 9;
+                            } else if (hud.menu_selected == MENU_MULTIPLAYER && hud.net_mode == GBA_NET_SINGLE_PLAYER) {
+                                hud.mp_action_mode = (hud.mp_action_mode == 0) ? 1 : 0;
+                            } else if (hud.menu_selected == MENU_TURBO_SPEED) {
+                                hud.turbo_multiplier = (hud.turbo_multiplier <= 2) ? 4 : hud.turbo_multiplier - 1;
+                                if (turbo) turbo->multiplier = hud.turbo_multiplier;
+                            }
+                        } else if (k == SDLK_RIGHT) {
+                            if (hud.menu_selected == MENU_SAVE_STATE || hud.menu_selected == MENU_LOAD_STATE) {
+                                hud.selected_slot = (hud.selected_slot < 9) ? hud.selected_slot + 1 : 1;
+                            } else if (hud.menu_selected == MENU_MULTIPLAYER && hud.net_mode == GBA_NET_SINGLE_PLAYER) {
+                                hud.mp_action_mode = (hud.mp_action_mode == 0) ? 1 : 0;
+                            } else if (hud.menu_selected == MENU_TURBO_SPEED) {
+                                hud.turbo_multiplier = (hud.turbo_multiplier >= 4) ? 2 : hud.turbo_multiplier + 1;
+                                if (turbo) turbo->multiplier = hud.turbo_multiplier;
+                            }
+                        } else if (k == SDLK_RETURN || k == SDLK_SPACE) {
+                            if (hud.menu_selected == MENU_RESUME) {
+                                hud.menu_open = false;
+                            } else if (hud.menu_selected == MENU_SAVE_STATE) {
+                                bool ok = gba_emulator_save_state(emu, hud.selected_slot);
+                                char msg[64];
+                                snprintf(msg, sizeof(msg), ok ? "[SAVED STATE SLOT %d]" : "[SAVE FAILED SLOT %d]", hud.selected_slot);
+                                gba_hud_show_toast(&hud, msg, ok ? (SDL_Color){166,227,161,255} : (SDL_Color){243,139,168,255}, 2000);
+                                hud.menu_open = false;
+                            } else if (hud.menu_selected == MENU_LOAD_STATE) {
+                                bool ok = gba_emulator_load_state(emu, hud.selected_slot);
+                                char msg[64];
+                                snprintf(msg, sizeof(msg), ok ? "[LOADED STATE SLOT %d]" : "[SLOT %d EMPTY]", hud.selected_slot);
+                                gba_hud_show_toast(&hud, msg, ok ? (SDL_Color){148,226,213,255} : (SDL_Color){243,139,168,255}, 2000);
+                                hud.menu_open = false;
+                            } else if (hud.menu_selected == MENU_MULTIPLAYER) {
+                                if (hud.net_mode == GBA_NET_SINGLE_PLAYER) {
+                                    if (hud.mp_action_mode == 0) {
+                                        /* Host Server */
+                                        listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+                                        if (listen_fd >= 0) {
+                                            int reuse = 1;
+                                            setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+                                            struct sockaddr_in addr;
+                                            memset(&addr, 0, sizeof(addr));
+                                            addr.sin_family = AF_INET;
+                                            addr.sin_port = htons(port);
+                                            addr.sin_addr.s_addr = htonl(INADDR_ANY);
+                                            if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+                                                listen(listen_fd, 1);
+                                                int flags = fcntl(listen_fd, F_GETFL, 0);
+                                                fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
+                                                gba_discovery_start_beacon(gba_emulator_get_title(emu), port);
+                                                is_host = true;
+                                                hud.net_mode = GBA_NET_HOSTING;
+                                                hud.player_id = 0;
+                                                gba_emulator_set_network(emu, -1, 0);
+                                                gba_hud_show_toast(&hud, "[HOSTING ON PORT 8765]", (SDL_Color){249, 226, 175, 255}, 2500);
+                                            }
+                                        }
+                                        hud.menu_open = false;
+                                    } else {
+                                        /* Connect to Remote IP */
+                                        char target_ip[64] = "192.168.1.";
+                                        FILE* p = popen("GTK_THEME=catppuccin-mocha-teal-standard+default ADW_DEBUG_COLOR_SCHEME=prefer-dark zenity --entry --title='Join Multiplayer' --text='Enter Host IP Address:' --entry-text='192.168.1.' 2>/dev/null", "r");
+                                        if (p) {
+                                            if (fgets(target_ip, sizeof(target_ip), p)) {
+                                                size_t len = strlen(target_ip);
+                                                if (len > 0 && target_ip[len - 1] == '\n') target_ip[len - 1] = '\0';
+                                            }
+                                            pclose(p);
+                                        }
+                                        if (target_ip[0] != '\0' && strcmp(target_ip, "192.168.1.") != 0) {
+                                            int sfd = socket(AF_INET, SOCK_STREAM, 0);
+                                            if (sfd >= 0) {
+                                                struct sockaddr_in saddr;
+                                                memset(&saddr, 0, sizeof(saddr));
+                                                saddr.sin_family = AF_INET;
+                                                saddr.sin_port = htons(port);
+                                                inet_pton(AF_INET, target_ip, &saddr.sin_addr);
+                                                if (connect(sfd, (struct sockaddr*)&saddr, sizeof(saddr)) == 0) {
+                                                    socket_fd = sfd;
+                                                    is_host = false;
+                                                    hud.net_mode = GBA_NET_CONNECTED;
+                                                    hud.connected = true;
+                                                    hud.player_id = 1;
+                                                    snprintf(hud.remote_ip, sizeof(hud.remote_ip), "%s", target_ip);
+                                                    gba_emulator_set_network(emu, socket_fd, 1);
+                                                    gba_hud_show_toast(&hud, "[CONNECTED TO HOST!]", (SDL_Color){166, 227, 161, 255}, 2500);
+                                                } else {
+                                                    close(sfd);
+                                                    gba_hud_show_toast(&hud, "[FAILED TO CONNECT]", (SDL_Color){243, 139, 168, 255}, 2500);
+                                                }
+                                            }
+                                        }
+                                        hud.menu_open = false;
+                                    }
+                                } else {
+                                    /* Disconnect session */
+                                    gba_discovery_stop_beacon();
+                                    if (listen_fd >= 0) { close(listen_fd); listen_fd = -1; }
+                                    if (socket_fd >= 0) { close(socket_fd); socket_fd = -1; }
+                                    gba_emulator_disconnect_network(emu);
+                                    hud.net_mode = GBA_NET_SINGLE_PLAYER;
+                                    hud.connected = false;
+                                    hud.player_id = 0;
+                                    gba_hud_show_toast(&hud, "[RETURNED TO SINGLE PLAYER]", (SDL_Color){137, 180, 250, 255}, 2500);
+                                    hud.menu_open = false;
+                                }
+                            } else if (hud.menu_selected == MENU_TURBO_SPEED) {
+                                hud.turbo_multiplier = (hud.turbo_multiplier >= 4) ? 2 : hud.turbo_multiplier + 1;
+                                if (turbo) turbo->multiplier = hud.turbo_multiplier;
+                            } else if (hud.menu_selected == MENU_TOGGLE_HUD) {
+                                hud.show_hud = !hud.show_hud;
+                            } else if (hud.menu_selected == MENU_QUIT) {
+                                g_running = false;
+                            }
+                        }
+                    } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
+                        SDL_GameControllerButton b = ev.cbutton.button;
+                        if (b == SDL_CONTROLLER_BUTTON_B || b == SDL_CONTROLLER_BUTTON_START) {
+                            hud.menu_open = false;
+                        } else if (b == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+                            hud.menu_selected = (hud.menu_selected - 1 + MENU_COUNT) % MENU_COUNT;
+                        } else if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+                            hud.menu_selected = (hud.menu_selected + 1) % MENU_COUNT;
+                        } else if (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT) {
+                            if (hud.menu_selected == MENU_SAVE_STATE || hud.menu_selected == MENU_LOAD_STATE) {
+                                hud.selected_slot = (hud.selected_slot > 1) ? hud.selected_slot - 1 : 9;
+                            }
+                        } else if (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+                            if (hud.menu_selected == MENU_SAVE_STATE || hud.menu_selected == MENU_LOAD_STATE) {
+                                hud.selected_slot = (hud.selected_slot < 9) ? hud.selected_slot + 1 : 1;
+                            }
+                        } else if (b == SDL_CONTROLLER_BUTTON_A) {
+                            if (hud.menu_selected == MENU_RESUME) {
+                                hud.menu_open = false;
+                            } else if (hud.menu_selected == MENU_SAVE_STATE) {
+                                bool ok = gba_emulator_save_state(emu, hud.selected_slot);
+                                char msg[64];
+                                snprintf(msg, sizeof(msg), ok ? "[SAVED STATE SLOT %d]" : "[SAVE FAILED SLOT %d]", hud.selected_slot);
+                                gba_hud_show_toast(&hud, msg, ok ? (SDL_Color){166,227,161,255} : (SDL_Color){243,139,168,255}, 2000);
+                                hud.menu_open = false;
+                            } else if (hud.menu_selected == MENU_LOAD_STATE) {
+                                bool ok = gba_emulator_load_state(emu, hud.selected_slot);
+                                char msg[64];
+                                snprintf(msg, sizeof(msg), ok ? "[LOADED STATE SLOT %d]" : "[SLOT %d EMPTY]", hud.selected_slot);
+                                gba_hud_show_toast(&hud, msg, ok ? (SDL_Color){148,226,213,255} : (SDL_Color){243,139,168,255}, 2000);
+                                hud.menu_open = false;
+                            } else if (hud.menu_selected == MENU_QUIT) {
+                                g_running = false;
+                            }
+                        }
+                    }
+                }
+
+                /* ========================================================
+                 *  GAMEPLAY CONTROLS & DIRECT SHORTCUTS
+                 * ======================================================== */
+                else if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
                     bool down = (ev.type == SDL_KEYDOWN);
                     SDL_Keycode k = ev.key.keysym.sym;
 
-                    if (k == config.key_a) { down ? (keys |= (1 << GBA_KEY_A)) : (keys &= ~(1 << GBA_KEY_A)); }
+                    /* 1-9: Instant Save States */
+                    if (down && k >= SDLK_1 && k <= SDLK_9) {
+                        int slot = k - SDLK_1 + 1;
+                        bool ok = gba_emulator_save_state(emu, slot);
+                        char msg[64];
+                        if (ok) {
+                            snprintf(msg, sizeof(msg), "[SAVED STATE SLOT %d]", slot);
+                            gba_hud_show_toast(&hud, msg, (SDL_Color){ 166, 227, 161, 255 }, 2000);
+                        } else {
+                            snprintf(msg, sizeof(msg), "[SAVE FAILED SLOT %d]", slot);
+                            gba_hud_show_toast(&hud, msg, (SDL_Color){ 243, 139, 168, 255 }, 2000);
+                        }
+                    }
+                    /* F1-F9: Instant Load States */
+                    else if (down && k >= SDLK_F1 && k <= SDLK_F9) {
+                        int slot = k - SDLK_F1 + 1;
+                        bool ok = gba_emulator_load_state(emu, slot);
+                        char msg[64];
+                        if (ok) {
+                            snprintf(msg, sizeof(msg), "[LOADED STATE SLOT %d]", slot);
+                            gba_hud_show_toast(&hud, msg, (SDL_Color){ 148, 226, 213, 255 }, 2000);
+                        } else {
+                            snprintf(msg, sizeof(msg), "[SLOT %d EMPTY]", slot);
+                            gba_hud_show_toast(&hud, msg, (SDL_Color){ 243, 139, 168, 255 }, 2000);
+                        }
+                    }
+                    /* Standard Controls */
+                    else if (k == config.key_a) { down ? (keys |= (1 << GBA_KEY_A)) : (keys &= ~(1 << GBA_KEY_A)); }
                     else if (k == config.key_b) { down ? (keys |= (1 << GBA_KEY_B)) : (keys &= ~(1 << GBA_KEY_B)); }
                     else if (k == config.key_l) { down ? (keys |= (1 << GBA_KEY_L)) : (keys &= ~(1 << GBA_KEY_L)); }
                     else if (k == config.key_r) { down ? (keys |= (1 << GBA_KEY_R)) : (keys &= ~(1 << GBA_KEY_R)); }
@@ -269,8 +491,9 @@ int main(int argc, char** argv) {
                         spam_b_active = down;
                     } else if (k == config.key_hud && down) {
                         hud.show_hud = !hud.show_hud;
-                    } else if (k == SDLK_ESCAPE) {
-                        g_running = false;
+                    } else if (k == SDLK_ESCAPE && down) {
+                        hud.menu_open = true;
+                        hud.menu_selected = MENU_RESUME;
                     }
                 } else if (ev.type == SDL_CONTROLLERBUTTONDOWN || ev.type == SDL_CONTROLLERBUTTONUP) {
                     bool down = (ev.type == SDL_CONTROLLERBUTTONDOWN);
@@ -297,9 +520,38 @@ int main(int argc, char** argv) {
                         spam_a_active = down;
                     } else if (b == config.pad_spam_b) {
                         spam_b_active = down;
+                    } else if (b == SDL_CONTROLLER_BUTTON_BACK && down) {
+                        hud.menu_open = true;
+                        hud.menu_selected = MENU_RESUME;
                     }
                 }
             }
+        }
+
+        /* If Menu is Open: Pause Emulation and only Render Menu Frame */
+        if (hud.menu_open) {
+            if (!headless && renderer && texture) {
+                int win_w, win_h;
+                SDL_GetWindowSize(window, &win_w, &win_h);
+
+                SDL_SetRenderDrawColor(renderer, 10, 10, 12, 255);
+                SDL_RenderClear(renderer);
+
+                int scale_x = win_w / GBA_VIDEO_WIDTH;
+                int scale_y = win_h / GBA_VIDEO_HEIGHT;
+                int scale = (scale_x < scale_y) ? scale_x : scale_y;
+                if (scale < 1) scale = 1;
+
+                int dst_w = GBA_VIDEO_WIDTH * scale;
+                int dst_h = GBA_VIDEO_HEIGHT * scale;
+                SDL_Rect dst_rect = { (win_w - dst_w) / 2, (win_h - dst_h) / 2, dst_w, dst_h };
+
+                SDL_RenderCopy(renderer, texture, NULL, &dst_rect);
+                gba_hud_draw(renderer, win_w, win_h, &hud);
+                SDL_RenderPresent(renderer);
+            }
+            usleep(16000);
+            continue;
         }
 
         /* Apply Auto-fire / Spam A & B alternating every 2 frames */

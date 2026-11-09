@@ -126,67 +126,203 @@ static void draw_string(SDL_Renderer* ren, const char* str, int x, int y, int sc
     }
 }
 
+void gba_hud_init(GBAHUDState* state) {
+    if (!state) return;
+    memset(state, 0, sizeof(*state));
+    state->net_mode = GBA_NET_SINGLE_PLAYER;
+    state->show_hud = true;
+    state->selected_slot = 1;
+    state->turbo_multiplier = 2;
+}
+
+void gba_hud_show_toast(GBAHUDState* state, const char* msg, SDL_Color color, uint32_t duration_ms) {
+    if (!state || !msg) return;
+    strncpy(state->toast_msg, msg, sizeof(state->toast_msg) - 1);
+    state->toast_msg[sizeof(state->toast_msg) - 1] = '\0';
+    state->toast_color = color;
+    state->toast_until_ms = SDL_GetTicks() + duration_ms;
+}
+
 void gba_hud_draw(SDL_Renderer* renderer, int window_w, int window_h, const GBAHUDState* state) {
-    if (!state || !state->show_hud) return;
+    if (!state) return;
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-    /* Top Status Bar Background */
-    SDL_SetRenderDrawColor(renderer, 20, 20, 24, 210);
-    SDL_Rect bar = { 10, 10, window_w - 20, 28 };
-    SDL_RenderFillRect(renderer, &bar);
+    /* 1. Top Status Bar */
+    if (state->show_hud) {
+        SDL_SetRenderDrawColor(renderer, 24, 24, 37, 220); /* Catppuccin Mantle */
+        SDL_Rect bar = { 10, 10, window_w - 20, 28 };
+        SDL_RenderFillRect(renderer, &bar);
 
-    /* Border */
-    SDL_SetRenderDrawColor(renderer, 60, 60, 70, 255);
-    SDL_RenderDrawRect(renderer, &bar);
+        /* Border */
+        SDL_SetRenderDrawColor(renderer, 49, 50, 68, 255); /* Catppuccin Surface0 */
+        SDL_RenderDrawRect(renderer, &bar);
 
-    /* Connection Dot */
-    SDL_Rect dot = { 20, 18, 12, 12 };
-    if (state->connected) {
-        SDL_SetRenderDrawColor(renderer, 46, 204, 113, 255); /* Bright Green */
-    } else {
-        SDL_SetRenderDrawColor(renderer, 241, 196, 15, 255); /* Amber Yellow */
-    }
-    SDL_RenderFillRect(renderer, &dot);
+        /* Mode Dot */
+        SDL_Rect dot = { 20, 18, 12, 12 };
+        char buf[128] = {0};
 
-    /* Status Text */
-    char buf[128];
-    if (state->connected) {
-        snprintf(buf, sizeof(buf), "ONLINE P%d/%d (%s)", state->player_id + 1, state->total_players, state->remote_ip);
-    } else {
-        snprintf(buf, sizeof(buf), "SEARCHING FOR PEER (LAN)...");
-    }
-
-    SDL_Color text_col = { 240, 240, 245, 255 };
-    draw_string(renderer, buf, 38, 17, 2, text_col);
-
-    /* Ping & FPS on Top-Right */
-    if (state->connected) {
-        snprintf(buf, sizeof(buf), "%u ms | %.0f FPS", state->ping_ms, state->current_fps);
-    } else {
-        snprintf(buf, sizeof(buf), "%.0f FPS", state->current_fps);
-    }
-    int info_w = (int)strlen(buf) * 16;
-    draw_string(renderer, buf, window_w - 25 - info_w, 17, 2, (SDL_Color){ 180, 180, 190, 255 });
-
-    /* Turbo Badge (Bottom-Right) */
-    if (state->is_turbo) {
-        int box_w = state->turbo_is_toggle ? 240 : 180;
-        SDL_Rect turbo_box = { window_w - box_w - 12, window_h - 44, box_w, 32 };
-        SDL_SetRenderDrawColor(renderer, 230, 80, 0, 220); /* Neon Orange */
-        SDL_RenderFillRect(renderer, &turbo_box);
-
-        SDL_SetRenderDrawColor(renderer, 255, 200, 0, 255);
-        SDL_RenderDrawRect(renderer, &turbo_box);
-
-        if (state->turbo_is_toggle) {
-            snprintf(buf, sizeof(buf), "TURBO %dx [TOGGLE]", state->turbo_multiplier);
-        } else {
-            snprintf(buf, sizeof(buf), "TURBO %dx [HOLD]", state->turbo_multiplier);
+        if (state->net_mode == GBA_NET_SINGLE_PLAYER) {
+            SDL_SetRenderDrawColor(renderer, 137, 180, 250, 255); /* Sapphire Blue */
+            SDL_RenderFillRect(renderer, &dot);
+            snprintf(buf, sizeof(buf), "SINGLE PLAYER  [ESC: MENU]");
+        } else if (state->net_mode == GBA_NET_HOSTING) {
+            SDL_SetRenderDrawColor(renderer, 249, 226, 175, 255); /* Amber Yellow */
+            SDL_RenderFillRect(renderer, &dot);
+            snprintf(buf, sizeof(buf), "HOSTING (PORT 8765) - WAITING FOR PEER");
+        } else if (state->net_mode == GBA_NET_CONNECTED) {
+            SDL_SetRenderDrawColor(renderer, 166, 227, 161, 255); /* Bright Green */
+            SDL_RenderFillRect(renderer, &dot);
+            snprintf(buf, sizeof(buf), "ONLINE P%d/%d (%s)", state->player_id + 1, state->total_players, state->remote_ip);
         }
-        draw_string(renderer, buf, window_w - box_w + 4, window_h - 36, 2, (SDL_Color){ 255, 255, 255, 255 });
+
+        SDL_Color text_col = { 205, 214, 244, 255 }; /* Catppuccin Text */
+        draw_string(renderer, buf, 38, 17, 2, text_col);
+
+        /* FPS on Top-Right */
+        if (state->net_mode == GBA_NET_CONNECTED) {
+            snprintf(buf, sizeof(buf), "%u ms | %.0f FPS", state->ping_ms, state->current_fps);
+        } else {
+            snprintf(buf, sizeof(buf), "%.0f FPS", state->current_fps);
+        }
+        int info_w = (int)strlen(buf) * 16;
+        draw_string(renderer, buf, window_w - 25 - info_w, 17, 2, (SDL_Color){ 166, 173, 200, 255 });
+
+        /* Turbo Badge (Bottom-Right) */
+        if (state->is_turbo) {
+            int box_w = state->turbo_is_toggle ? 240 : 180;
+            SDL_Rect turbo_box = { window_w - box_w - 12, window_h - 44, box_w, 32 };
+            SDL_SetRenderDrawColor(renderer, 250, 179, 135, 230); /* Catppuccin Peach */
+            SDL_RenderFillRect(renderer, &turbo_box);
+
+            SDL_SetRenderDrawColor(renderer, 249, 226, 175, 255); /* Catppuccin Yellow */
+            SDL_RenderDrawRect(renderer, &turbo_box);
+
+            if (state->turbo_is_toggle) {
+                snprintf(buf, sizeof(buf), "TURBO %dx [TOGGLE]", state->turbo_multiplier);
+            } else {
+                snprintf(buf, sizeof(buf), "TURBO %dx [HOLD]", state->turbo_multiplier);
+            }
+            draw_string(renderer, buf, window_w - box_w + 4, window_h - 36, 2, (SDL_Color){ 17, 17, 27, 255 });
+        }
+
+        /* Bottom Hints (Left) */
+        draw_string(renderer, "[1-9] Save  [F1-F9] Load  [T] Turbo Toggle  [Tab] Hold  [C/V] Spam  [ESC] Menu",
+                    14, window_h - 22, 1, (SDL_Color){ 166, 173, 200, 220 });
     }
 
-    /* Bottom Hints (Left) */
-    draw_string(renderer, "[T] Toggle Turbo  [TAB] Hold  [C/V] Spam A/B  [F1] HUD", 14, window_h - 22, 1, (SDL_Color){ 150, 150, 160, 200 });
+    /* 2. Floating Toast Notification (Centered) */
+    uint32_t now = SDL_GetTicks();
+    if (now < state->toast_until_ms && state->toast_msg[0] != '\0') {
+        int toast_len = (int)strlen(state->toast_msg);
+        int toast_w = toast_len * 16 + 32;
+        int toast_h = 36;
+        int toast_x = (window_w - toast_w) / 2;
+        int toast_y = 48;
+
+        SDL_Rect toast_bg = { toast_x, toast_y, toast_w, toast_h };
+        SDL_SetRenderDrawColor(renderer, 17, 17, 27, 240); /* Catppuccin Crust */
+        SDL_RenderFillRect(renderer, &toast_bg);
+
+        SDL_SetRenderDrawColor(renderer, state->toast_color.r, state->toast_color.g, state->toast_color.b, 255);
+        SDL_RenderDrawRect(renderer, &toast_bg);
+
+        draw_string(renderer, state->toast_msg, toast_x + 16, toast_y + 10, 2, state->toast_color);
+    }
+
+    /* 3. In-Game Pause Menu Overlay */
+    if (state->menu_open) {
+        /* Fullscreen dim */
+        SDL_SetRenderDrawColor(renderer, 17, 17, 27, 195);
+        SDL_Rect dim = { 0, 0, window_w, window_h };
+        SDL_RenderFillRect(renderer, &dim);
+
+        /* Centered Menu Card */
+        int menu_w = 560;
+        int menu_h = 320;
+        int menu_x = (window_w - menu_w) / 2;
+        int menu_y = (window_h - menu_h) / 2;
+
+        SDL_Rect card = { menu_x, menu_y, menu_w, menu_h };
+        SDL_SetRenderDrawColor(renderer, 30, 30, 46, 250); /* Catppuccin Base */
+        SDL_RenderFillRect(renderer, &card);
+
+        SDL_SetRenderDrawColor(renderer, 148, 226, 213, 255); /* Catppuccin Teal border */
+        SDL_RenderDrawRect(renderer, &card);
+
+        /* Title */
+        const char* title = "=== GBA CROSSPLAY MENU ===";
+        int title_w = (int)strlen(title) * 16;
+        draw_string(renderer, title, menu_x + (menu_w - title_w) / 2, menu_y + 16, 2, (SDL_Color){ 203, 166, 247, 255 }); /* Mauve */
+
+        /* Divider */
+        SDL_SetRenderDrawColor(renderer, 49, 50, 68, 255);
+        SDL_RenderDrawLine(renderer, menu_x + 20, menu_y + 44, menu_x + menu_w - 20, menu_y + 44);
+
+        /* Menu Items */
+        const char* labels[MENU_COUNT];
+        char slot_save_buf[64];
+        char slot_load_buf[64];
+        char mp_buf[64];
+        char turbo_buf[64];
+        char hud_buf[64];
+
+        snprintf(slot_save_buf, sizeof(slot_save_buf), "Save State:   < Slot %d >  (Enter: Save)", state->selected_slot);
+        snprintf(slot_load_buf, sizeof(slot_load_buf), "Load State:   < Slot %d >  (Enter: Load)", state->selected_slot);
+
+        if (state->net_mode == GBA_NET_SINGLE_PLAYER) {
+            if (state->mp_action_mode == 0) {
+                snprintf(mp_buf, sizeof(mp_buf), "Multiplayer:  < Host Server (Port 8765) >");
+            } else {
+                snprintf(mp_buf, sizeof(mp_buf), "Multiplayer:  < Connect to Remote IP >");
+            }
+        } else if (state->net_mode == GBA_NET_HOSTING) {
+            snprintf(mp_buf, sizeof(mp_buf), "Multiplayer:  < Disconnect (Stop Hosting) >");
+        } else {
+            snprintf(mp_buf, sizeof(mp_buf), "Multiplayer:  < Disconnect (Leave Session) >");
+        }
+
+        snprintf(turbo_buf, sizeof(turbo_buf), "Turbo Speed:  < %dx >", state->turbo_multiplier);
+        snprintf(hud_buf, sizeof(hud_buf), "HUD Overlay:  < %s >", state->show_hud ? "ON" : "OFF");
+
+        labels[MENU_RESUME] = "Resume Game";
+        labels[MENU_SAVE_STATE] = slot_save_buf;
+        labels[MENU_LOAD_STATE] = slot_load_buf;
+        labels[MENU_MULTIPLAYER] = mp_buf;
+        labels[MENU_TURBO_SPEED] = turbo_buf;
+        labels[MENU_TOGGLE_HUD] = hud_buf;
+        labels[MENU_QUIT] = "Quit Emulator";
+
+        int start_y = menu_y + 60;
+        int line_h = 32;
+
+        for (int i = 0; i < MENU_COUNT; i++) {
+            bool is_sel = (i == state->menu_selected);
+            int item_y = start_y + i * line_h;
+
+            if (is_sel) {
+                SDL_Rect sel_bg = { menu_x + 16, item_y - 4, menu_w - 32, 26 };
+                SDL_SetRenderDrawColor(renderer, 49, 50, 68, 255); /* Surface0 */
+                SDL_RenderFillRect(renderer, &sel_bg);
+
+                SDL_SetRenderDrawColor(renderer, 148, 226, 213, 255); /* Teal indicator */
+                SDL_Rect ind = { menu_x + 18, item_y - 2, 4, 22 };
+                SDL_RenderFillRect(renderer, &ind);
+
+                char row[128];
+                snprintf(row, sizeof(row), "> %s", labels[i]);
+                draw_string(renderer, row, menu_x + 30, item_y, 2, (SDL_Color){ 148, 226, 213, 255 });
+            } else {
+                char row[128];
+                snprintf(row, sizeof(row), "  %s", labels[i]);
+                draw_string(renderer, row, menu_x + 30, item_y, 2, (SDL_Color){ 205, 214, 244, 200 });
+            }
+        }
+
+        /* Bottom Controls help */
+        SDL_RenderDrawLine(renderer, menu_x + 20, menu_y + menu_h - 36, menu_x + menu_w - 20, menu_y + menu_h - 36);
+        const char* hint = "[UP/DOWN] Select  [LEFT/RIGHT] Adjust  [ENTER] Apply  [ESC] Close";
+        int hint_w = (int)strlen(hint) * 8;
+        draw_string(renderer, hint, menu_x + (menu_w - hint_w) / 2, menu_y + menu_h - 24, 1, (SDL_Color){ 166, 173, 200, 255 });
+    }
 }

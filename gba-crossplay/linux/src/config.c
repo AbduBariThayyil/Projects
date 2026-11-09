@@ -35,7 +35,7 @@ void gba_config_load_defaults(GBAConfig* cfg) {
     cfg->key_turbo_toggle = SDLK_t;
     cfg->key_spam_a = SDLK_c;
     cfg->key_spam_b = SDLK_v;
-    cfg->key_hud = SDLK_F1;
+    cfg->key_hud = SDLK_F12;
 
     /* Gamepad Defaults */
     cfg->pad_a = SDL_CONTROLLER_BUTTON_A;

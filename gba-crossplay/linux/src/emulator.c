@@ -5,6 +5,8 @@
 
 #include <mgba/core/core.h>
 #include <mgba/core/interface.h>
+#include <mgba/core/serialize.h>
+#include <mgba-util/vfs.h>
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gba/input.h>
 #include <mgba/internal/gba/io.h>
@@ -23,11 +25,16 @@ struct CustomSIODriver {
     struct GBAEmulator* emu;
 };
 
+struct CustomAVStream {
+    struct mAVStream s;
+    struct GBAEmulator* emu;
+};
+
 struct GBAEmulator {
     struct mCore* core;
     struct GBA* gba;
     struct CustomSIODriver sio_driver;
-    struct mAVStream av_stream;
+    struct CustomAVStream av_stream;
 
     uint32_t video_buffer[GBA_VIDEO_WIDTH * GBA_VIDEO_HEIGHT];
     uint8_t player_id;
@@ -36,15 +43,28 @@ struct GBAEmulator {
     uint16_t local_send_data;
     uint32_t transfer_counter;
 
+    /* Batched Audio Buffer */
+    int16_t audio_buf[256 * 2];
+    size_t audio_buf_count;
+
     GBATurboCoordinator turbo;
     char title[16];
     uint32_t crc32;
 };
 
 static void av_post_audio_frame(struct mAVStream* stream, int16_t left, int16_t right) {
-    (void)stream;
-    int16_t samples[2] = { left, right };
-    gba_audio_feed(samples, 1, false);
+    struct CustomAVStream* custom = (struct CustomAVStream*)stream;
+    if (!custom || !custom->emu) return;
+    GBAEmulator* emu = custom->emu;
+
+    emu->audio_buf[emu->audio_buf_count * 2] = left;
+    emu->audio_buf[emu->audio_buf_count * 2 + 1] = right;
+    emu->audio_buf_count++;
+
+    if (emu->audio_buf_count >= 256) {
+        gba_audio_feed(emu->audio_buf, emu->audio_buf_count, gba_turbo_is_active(&emu->turbo));
+        emu->audio_buf_count = 0;
+    }
 }
 
 static uint16_t sio_write_register(struct GBASIODriver* driver, uint32_t address, uint16_t value) {
@@ -155,8 +175,9 @@ GBAEmulator* gba_emulator_create(const char* rom_path, uint8_t player_id, int so
 
     /* Setup Audio */
     memset(&emu->av_stream, 0, sizeof(emu->av_stream));
-    emu->av_stream.postAudioFrame = av_post_audio_frame;
-    emu->core->setAVStream(emu->core, &emu->av_stream);
+    emu->av_stream.emu = emu;
+    emu->av_stream.s.postAudioFrame = av_post_audio_frame;
+    emu->core->setAVStream(emu->core, &emu->av_stream.s);
 
     /* Attach SIO Driver to GBA board */
     emu->gba = (struct GBA*)emu->core->board;
@@ -193,6 +214,12 @@ void gba_emulator_step_frame(GBAEmulator* emu) {
 
     gba_emulator_process_network(emu);
     emu->core->runFrame(emu->core);
+
+    /* Flush any pending batched audio samples */
+    if (emu->audio_buf_count > 0) {
+        gba_audio_feed(emu->audio_buf, emu->audio_buf_count, gba_turbo_is_active(&emu->turbo));
+        emu->audio_buf_count = 0;
+    }
 }
 
 void gba_emulator_set_keys(GBAEmulator* emu, uint32_t keys_bitmask) {
@@ -264,4 +291,56 @@ const char* gba_emulator_get_title(const GBAEmulator* emu) {
 
 uint32_t gba_emulator_get_crc32(const GBAEmulator* emu) {
     return emu ? emu->crc32 : 0;
+}
+
+bool gba_emulator_save_state(GBAEmulator* emu, int slot) {
+    if (!emu || !emu->core || slot < 1 || slot > 9) return false;
+    return mCoreSaveState(emu->core, slot, 0);
+}
+
+bool gba_emulator_load_state(GBAEmulator* emu, int slot) {
+    if (!emu || !emu->core || slot < 1 || slot > 9) return false;
+    bool ok = mCoreLoadState(emu->core, slot, 0);
+    if (ok) {
+        gba_audio_clear();
+        emu->audio_buf_count = 0;
+    }
+    return ok;
+}
+
+bool gba_emulator_has_state(GBAEmulator* emu, int slot) {
+    if (!emu || !emu->core || slot < 1 || slot > 9) return false;
+    struct VFile* vf = mCoreGetState(emu->core, slot, false);
+    if (vf) {
+        size_t sz = vf->size(vf);
+        vf->close(vf);
+        return sz > 0;
+    }
+    return false;
+}
+
+void gba_emulator_set_network(GBAEmulator* emu, int socket_fd, uint8_t player_id) {
+    if (!emu) return;
+    if (emu->socket_fd >= 0 && emu->socket_fd != socket_fd) {
+        close(emu->socket_fd);
+    }
+    emu->socket_fd = socket_fd;
+    emu->player_id = player_id;
+    emu->turbo.local_player_id = player_id;
+}
+
+void gba_emulator_disconnect_network(GBAEmulator* emu) {
+    if (!emu) return;
+    if (emu->socket_fd >= 0) {
+        gba_link_send_packet(emu->socket_fd, PKT_DISCONNECT, emu->player_id, NULL, 0);
+        close(emu->socket_fd);
+        emu->socket_fd = -1;
+    }
+    emu->player_id = 0;
+    emu->turbo.local_player_id = 0;
+    gba_turbo_init(&emu->turbo, 0, emu->turbo.multiplier);
+}
+
+int gba_emulator_get_socket(const GBAEmulator* emu) {
+    return emu ? emu->socket_fd : -1;
 }
