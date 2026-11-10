@@ -1246,6 +1246,28 @@ class QuetzalDexApp(QMainWindow):
         # Refresh current route display to update badges and dimmed/highlighted cards
         self.load_current_route_dexnav()
 
+    def sync_save_file(self):
+        try:
+            import quetzal_save_reader
+            save_path = quetzal_save_reader.DEFAULT_SAVE_PATH
+            if not os.path.exists(save_path):
+                self.route_progress_badge.setText("Save file not found!")
+                return
+            c_count, s_count = quetzal_save_reader.update_database_user_pokedex(save_path, DB_PATH)
+            
+            # Reload caught species
+            self.cur.execute("SELECT species_id FROM caught_pokemon")
+            self.caught_species = set(row[0] for row in self.cur.fetchall())
+            
+            self.caught_status_lbl.setText(f"Pokédex Completion: {len(self.caught_species)} / 1,499 Caught ({len(self.caught_species)/1499*100:.1f}%)")
+            self.load_current_route_dexnav()
+            
+            # Refresh pokedex list if populated
+            if hasattr(self, 'all_pokemon') and self.all_pokemon:
+                self.filter_pokemon_list(self.mon_search.text())
+        except Exception as e:
+            print("Error syncing save file:", e)
+
     def on_dexnav_search_pulse(self, mon_data):
         # Simulated scan feedback
         pass
