@@ -2,14 +2,17 @@
 """
 Pokémon Quetzal Master Pokédex & DexNav Route Explorer (PySide6)
 Comprehensive retro gaming HUD for Pokémon Quetzal:
-- 1,499 Pokémon (All 9 Gens + Megas + Forms) with Base Stats, Types, Learnsets, Evolution Conditions
+- 1,499 Pokémon (All 9 Gens + Megas + Regional Forms) with Base Stats, Types, Learnsets, Evolution Conditions
 - Interactive In-Game DexNav Route HUD matching the GBA / ORAS aesthetic:
-  * Habitat Boxes: WATER (5 slots), LAND (12 slots), BEACH (3 slots), HIDDEN DETECTOR
-  * Right-Hand Information Card with tactile green SEARCH [A] button, Search Level, Hidden Ability, Held Items
+  * Habitat Boxes: WATER (5 slots with ✕ when empty), LAND (12 slots with 2D sprites & Pokéball stamps),
+    BEACH (3 slots with ✕ when empty), HIDDEN DETECTOR (black silhouette for uncaught hidden ability spawns)
+  * Red target reticle (◎) tracking the currently selected Pokémon
+  * Right-Hand Telemetry Card with tactile green SEARCH [A] button, red ribbon banners for
+    SEARCH LEVEL, HIDDEN ABILITY, and ITEMS
   * Caught / Uncaught Filter Toggles ("Show All", "Uncaught Only", "Caught Only")
 - 103 Clean Legendary & Mythical Encounters with Location, Level, Prerequisites, and Party Synergies
-- Interactive Catch Probability Calculator
-- Persistent SQLite Caught Pokémon Tracker
+- Interactive Catch Probability Calculator (Quick Ball Turn 1, False Swipe, Status Multipliers)
+- Persistent SQLite Caught Pokémon Tracker synced with Moemon Quetzal.sav
 """
 
 import sys
@@ -21,12 +24,15 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QTableWidget, QTableWidgetItem, QTabWidget,
     QLabel, QHeaderView, QSplitter, QProgressBar, QComboBox, QGroupBox,
     QFormLayout, QSpinBox, QPushButton, QFrame, QTextEdit, QScrollArea,
-    QGridLayout, QButtonGroup, QRadioButton, QSizePolicy
+    QGridLayout, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QColor, QPalette, QCursor
+from PySide6.QtCore import Qt, QTimer, Signal, QPoint
+from PySide6.QtGui import QFont, QColor, QCursor, QPixmap, QPainter, QPen, QBrush
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quetzal_database.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "quetzal_database.db")
+ASSETS_SPRITES_DIR = os.path.join(BASE_DIR, "assets", "sprites")
+ASSETS_SILHOUETTES_DIR = os.path.join(BASE_DIR, "assets", "silhouettes")
 
 # Authentic Pokémon Type Colors (Gen 3 / ORAS Palette)
 AUTHENTIC_TYPE_COLORS = {
@@ -196,16 +202,31 @@ def clean_wiki_text(s):
     """Strip raw markdown, HTML artifacts, and line breaks into clean text."""
     if not s:
         return ""
-    # Convert <br> or <br/> into clean bullet points
     s = re.sub(r'<br\s*/?>', '\n • ', s)
     s = re.sub(r'<[^>]+>', '', s)
-    # Remove markdown bold/italics and code fences
     s = re.sub(r'\*\*(.*?)\*\*', r'\1', s)
     s = re.sub(r'\*(.*?)\*', r'\1', s)
     s = re.sub(r'`(.*?)`', r'\1', s)
-    # Clean multiple spaces while preserving intentional newlines
     lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in s.split('\n')]
     return '\n'.join([line for line in lines if line]).strip()
+
+
+def get_species_pixmap(species_id, is_silhouette=False):
+    """Load cached 2D sprite or silhouette pixmap."""
+    target_dir = ASSETS_SILHOUETTES_DIR if is_silhouette else ASSETS_SPRITES_DIR
+    path = os.path.join(target_dir, f"{species_id}.png")
+    if os.path.exists(path):
+        pm = QPixmap(path)
+        if not pm.isNull():
+            return pm
+    # Fallback to standard sprite if silhouette missing
+    if is_silhouette:
+        fallback = os.path.join(ASSETS_SPRITES_DIR, f"{species_id}.png")
+        if os.path.exists(fallback):
+            pm = QPixmap(fallback)
+            if not pm.isNull():
+                return pm
+    return None
 
 
 class TypeBadge(QLabel):
@@ -228,147 +249,193 @@ class TypeBadge(QLabel):
         """)
 
 
+class EmptyRetroSlot(QFrame):
+    """
+    Empty encounter slot displaying large retro pixel ✕ matching the in-game DexNav.
+    Used for WATER (5 slots) and BEACH (3 slots) when routes lack encounters.
+    """
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(74)
+        self.setMinimumWidth(64)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setStyleSheet("""
+            EmptyRetroSlot {
+                background-color: #0b111a;
+                border: 1px dashed #223249;
+                border-radius: 8px;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.x_lbl = QLabel("✕")
+        self.x_lbl.setAlignment(Qt.AlignCenter)
+        self.x_lbl.setFont(QFont("Monospace", 26, QFont.Bold))
+        self.x_lbl.setStyleSheet("color: #475569;")
+        layout.addWidget(self.x_lbl)
+
+
 class DexNavSlotCard(QFrame):
     """
-    Individual Encounter Slot Card inside Habitat Boxes.
-    Clickable to select and update the right-hand information card.
-    Double-click or click Pokéball to toggle caught status.
+    Authentic In-Game DexNav Encounter Slot Card:
+    - 2D Pokémon mini-sprite icon centered
+    - Miniature Pokéball badge in top-left if caught
+    - Encounter rate % badge in top-right
+    - Species name and level range below sprite
+    - Red Circular Target Reticle (◎) drawn around the sprite when selected
+    - Filter dimming / highlighting for Uncaught / Caught views
     """
     clicked = Signal(dict)
     caught_toggled = Signal(int, str, bool)
 
-    def __init__(self, slot_data, is_selected=False, filter_mode="Show All"):
+    def __init__(self, slot_data, is_selected=False, filter_mode="Show All", is_silhouette=False):
         super().__init__()
         self.slot_data = slot_data
         self.is_selected = is_selected
         self.filter_mode = filter_mode
+        self.is_silhouette = is_silhouette
+
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(82)
+        self.setFixedHeight(84)
 
         self.init_ui()
         self.update_style()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(2)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(1)
 
-        # Header Row: Slot # & Chance %
+        # Header: Pokéball stamp + Chance %
         top_row = QHBoxLayout()
-        top_row.setSpacing(4)
-        slot_num = self.slot_data.get("slot", 1)
-        chance = self.slot_data.get("chance", 0)
+        top_row.setContentsMargins(2, 0, 2, 0)
+        top_row.setSpacing(2)
 
-        self.slot_lbl = QLabel(f"SLOT {slot_num}")
-        self.slot_lbl.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: bold;")
-        top_row.addWidget(self.slot_lbl)
+        is_caught = self.slot_data.get("is_caught", False)
+        self.ball_lbl = QLabel("🔴" if is_caught else "")
+        self.ball_lbl.setStyleSheet("font-size: 11px;")
+        self.ball_lbl.setToolTip("🔴 Caught in Pokédex" if is_caught else "⚪ Uncaught")
+        top_row.addWidget(self.ball_lbl)
 
         top_row.addStretch()
 
-        self.chance_badge = QLabel(f"{chance}%")
-        self.chance_badge.setStyleSheet("""
-            background-color: #1e293b;
-            color: #38ef7d;
-            border-radius: 3px;
-            font-size: 10px;
-            font-weight: bold;
-            padding: 1px 4px;
-        """)
-        top_row.addWidget(self.chance_badge)
+        chance = self.slot_data.get("chance", 0)
+        self.chance_lbl = QLabel(f"{chance}%")
+        self.chance_lbl.setStyleSheet("color: #64748b; font-size: 9px; font-weight: bold;")
+        top_row.addWidget(self.chance_lbl)
         layout.addLayout(top_row)
 
-        # Main Row: Pokéball caught badge + Pokémon Name
-        mid_row = QHBoxLayout()
-        mid_row.setSpacing(6)
+        # Center: Sprite Icon
+        self.sprite_lbl = QLabel()
+        self.sprite_lbl.setAlignment(Qt.AlignCenter)
+        self.sprite_lbl.setFixedHeight(40)
 
-        is_caught = self.slot_data.get("is_caught", False)
-        self.ball_btn = QPushButton("🔴" if is_caught else "⚪")
-        self.ball_btn.setFixedSize(22, 22)
-        self.ball_btn.setToolTip("Click to toggle Caught status")
-        self.ball_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: none;
-                font-size: 13px;
-                padding: 0px;
-            }
-            QPushButton:hover {
-                background: #334155;
-                border-radius: 11px;
-            }
-        """)
-        self.ball_btn.clicked.connect(self.on_ball_clicked)
-        mid_row.addWidget(self.ball_btn)
+        sp_id = self.slot_data.get("species_id", 0)
+        pm = get_species_pixmap(sp_id, is_silhouette=self.is_silhouette)
+        if pm:
+            scaled = pm.scaled(52, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.sprite_lbl.setPixmap(scaled)
+        else:
+            self.sprite_lbl.setText("❓" if self.is_silhouette else "🐾")
+            self.sprite_lbl.setStyleSheet("font-size: 18px;")
+
+        layout.addWidget(self.sprite_lbl)
+
+        # Bottom: Mon Name & Level
+        bot_row = QHBoxLayout()
+        bot_row.setContentsMargins(2, 0, 2, 0)
+        bot_row.setSpacing(2)
 
         mon_name = self.slot_data.get("species_name", "Unknown")
-        self.name_lbl = QLabel(mon_name)
-        self.name_lbl.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: bold;")
-        mid_row.addWidget(self.name_lbl)
-        mid_row.addStretch()
-
-        layout.addLayout(mid_row)
-
-        # Bottom Row: Dex # & Level Range
-        bot_row = QHBoxLayout()
-        bot_row.setSpacing(4)
-        dex_num = self.slot_data.get("species_id", 0)
-        min_lv = self.slot_data.get("min_level", 1)
-        max_lv = self.slot_data.get("max_level", 1)
-        lv_txt = f"Lv.{min_lv}" if min_lv == max_lv else f"Lv.{min_lv}–{max_lv}"
-
-        self.dex_lbl = QLabel(f"#{dex_num:03d}")
-        self.dex_lbl.setStyleSheet("color: #64748b; font-size: 10px;")
-        bot_row.addWidget(self.dex_lbl)
+        self.name_lbl = QLabel("???" if self.is_silhouette else mon_name)
+        self.name_lbl.setStyleSheet("color: #FFFFFF; font-size: 10px; font-weight: bold;")
+        bot_row.addWidget(self.name_lbl)
 
         bot_row.addStretch()
 
+        min_lv = self.slot_data.get("min_level", 1)
+        max_lv = self.slot_data.get("max_level", 1)
+        lv_txt = f"Lv.{min_lv}" if min_lv == max_lv else f"Lv.{min_lv}–{max_lv}"
         self.lv_lbl = QLabel(lv_txt)
-        self.lv_lbl.setStyleSheet("color: #cbd5e1; font-size: 10px; font-weight: bold;")
+        self.lv_lbl.setStyleSheet("color: #94a3b8; font-size: 9px;")
         bot_row.addWidget(self.lv_lbl)
 
         layout.addLayout(bot_row)
 
-    def on_ball_clicked(self):
-        new_state = not self.slot_data.get("is_caught", False)
-        self.slot_data["is_caught"] = new_state
-        self.ball_btn.setText("🔴" if new_state else "⚪")
-        self.caught_toggled.emit(self.slot_data.get("species_id", 0), self.slot_data.get("species_name", ""), new_state)
-        self.update_style()
+    def paintEvent(self, event):
+        """Paint custom retro red target reticle (◎) when slot is selected."""
+        super().paintEvent(event)
+        if self.is_selected:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+
+            # Red Reticle Colors matching user screenshot
+            pen = QPen(QColor("#ef4444"), 2)
+            painter.setPen(pen)
+
+            cx = self.width() // 2
+            cy = 35  # Center aligned on the sprite icon
+            r = 18   # Radius of reticle ring
+
+            # Outer target circle
+            painter.drawEllipse(QPoint(cx, cy), r, r)
+
+            # 4 Crosshair ticks
+            painter.drawLine(cx - r - 3, cy, cx - r + 3, cy)
+            painter.drawLine(cx + r - 3, cy, cx + r + 3, cy)
+            painter.drawLine(cx, cy - r - 3, cx, cy - r + 3)
+            painter.drawLine(cx, cy + r - 3, cx, cy + r + 3)
+
+            # Center target dot
+            painter.setBrush(QBrush(QColor("#ef4444")))
+            painter.drawEllipse(QPoint(cx, cy), 2, 2)
 
     def set_selected(self, selected):
         self.is_selected = selected
         self.update_style()
+        self.update()
 
     def set_filter_mode(self, mode):
         self.filter_mode = mode
         self.update_style()
 
+    def toggle_caught(self):
+        new_state = not self.slot_data.get("is_caught", False)
+        self.slot_data["is_caught"] = new_state
+        self.ball_lbl.setText("🔴" if new_state else "")
+        if self.is_silhouette and new_state:
+            self.is_silhouette = False
+            sp_id = self.slot_data.get("species_id", 0)
+            pm = get_species_pixmap(sp_id, is_silhouette=False)
+            if pm:
+                self.sprite_lbl.setPixmap(pm.scaled(44, 34, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.name_lbl.setText(self.slot_data.get("species_name", "Unknown"))
+        self.caught_toggled.emit(self.slot_data.get("species_id", 0), self.slot_data.get("species_name", ""), new_state)
+        self.update_style()
+
     def update_style(self):
         is_caught = self.slot_data.get("is_caught", False)
-        bg = "#162032"
+        bg = "#141d2e"
         border = "#25334a"
-        opacity = "1.0"
 
         if self.is_selected:
-            border = "#00d2ff"
-            bg = "#1e2f4a"
+            border = "#ef4444"
+            bg = "#1e293f"
         elif self.filter_mode == "Uncaught Only":
             if not is_caught:
                 border = "#f59e0b"
-                bg = "#292416"
+                bg = "#292214"
             else:
-                bg = "#101622"
-                border = "#1c2434"
-                opacity = "0.35"
+                bg = "#0e1522"
+                border = "#1a2334"
         elif self.filter_mode == "Caught Only":
             if is_caught:
                 border = "#10b981"
-                bg = "#132b22"
+                bg = "#12261e"
             else:
-                bg = "#101622"
-                border = "#1c2434"
-                opacity = "0.35"
+                bg = "#0e1522"
+                border = "#1a2334"
 
         self.setStyleSheet(f"""
             DexNavSlotCard {{
@@ -378,7 +445,7 @@ class DexNavSlotCard(QFrame):
             }}
             DexNavSlotCard:hover {{
                 border-color: #38ef7d;
-                background-color: #1c2a42;
+                background-color: #1a273e;
             }}
         """)
 
@@ -389,22 +456,22 @@ class DexNavSlotCard(QFrame):
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.on_ball_clicked()
+            self.toggle_caught()
         super().mouseDoubleClickEvent(event)
 
 
 class HabitatBox(QFrame):
     """
     Curved habitat container matching DexNav boxes:
-    - Box 1: WATER (Blue header with Pokéball completion badge)
-    - Box 2: LAND (Green header with grass texture & badge)
-    - Box 3: BEACH (Orange header with sand texture & badge)
-    - Box 4: HIDDEN (Red header with detector slot)
+    - Box 1: WATER (Blue banner, Pokéball completion badge)
+    - Box 2: LAND (Green banner with grass theme, 2x6 grid)
+    - Box 3: BEACH / FISHING / ROCKS (Orange banner)
+    - Box 4: HIDDEN DETECTOR (Red banner with silhouette)
     """
     def __init__(self, title, color_theme, max_slots=12, is_grid=False):
         super().__init__()
         self.title_text = title
-        self.color_theme = color_theme  # (header_bg, accent_color, border_color)
+        self.color_theme = color_theme
         self.max_slots = max_slots
         self.is_grid = is_grid
 
@@ -440,7 +507,7 @@ class HabitatBox(QFrame):
         h_layout.setContentsMargins(10, 0, 10, 0)
 
         self.title_lbl = QLabel(self.title_text)
-        self.title_lbl.setStyleSheet(f"color: #FFFFFF; font-weight: bold; font-size: 13px; letter-spacing: 1px;")
+        self.title_lbl.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 13px; letter-spacing: 1px;")
         h_layout.addWidget(self.title_lbl)
 
         h_layout.addStretch()
@@ -477,41 +544,35 @@ class HabitatBox(QFrame):
             accent = self.color_theme[1]
             self.badge_lbl.setStyleSheet(f"background-color: rgba(0,0,0,0.4); color: {accent}; font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px;")
 
-    def show_empty(self, message="NO ENCOUNTERS ON THIS ROUTE"):
-        # Clear content
+    def show_empty(self, empty_count=None):
+        """Display authentic in-game retro ✕ slots when habitat has no encounters."""
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        empty_frame = QFrame()
-        empty_frame.setFixedHeight(64)
-        empty_frame.setStyleSheet("""
-            background-color: #0d131f;
-            border: 1px dashed #243048;
-            border-radius: 6px;
-        """)
-        e_layout = QHBoxLayout(empty_frame)
-        msg_lbl = QLabel(f"✕  {message}")
-        msg_lbl.setStyleSheet("color: #475569; font-weight: bold; font-size: 12px;")
-        msg_lbl.setAlignment(Qt.AlignCenter)
-        e_layout.addWidget(msg_lbl)
+        count = empty_count if empty_count is not None else self.max_slots
+        if count <= 0:
+            count = 1
 
-        if self.is_grid:
-            self.content_layout.addWidget(empty_frame, 0, 0, 1, 6)
-        else:
-            self.content_layout.addWidget(empty_frame)
+        for i in range(count):
+            slot = EmptyRetroSlot()
+            if self.is_grid:
+                row = i // 6
+                col = i % 6
+                self.content_layout.addWidget(slot, row, col)
+            else:
+                self.content_layout.addWidget(slot)
 
 
 class DexNavInfoCard(QFrame):
     """
     Right-Hand Telemetry Information Card:
     - Big green tactile SEARCH [A] button
-    - Selected Pokémon Name & Dex #
-    - Authentic type badges
-    - Interactive Catch Status Toggle Button
-    - SEARCH LEVEL progress gauge
-    - HIDDEN ABILITY & HELD ITEMS display
+    - Selected Pokémon sprite icon + Dex # + Name
+    - Authentic Gen 3 type badges
+    - Interactive Catch Status Button
+    - Authentic Red Banners: SEARCH LEVEL, HIDDEN ABILITY, ITEMS
     - Quick shortcut to open Mon in Pokédex tab
     """
     search_requested = Signal(dict)
@@ -536,20 +597,20 @@ class DexNavInfoCard(QFrame):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        # Big Green SEARCH [A] Button
+        # Big Green SEARCH [A] Tactile Button
         self.search_btn = QPushButton("SEARCH  [A]")
-        self.search_btn.setFixedHeight(44)
+        self.search_btn.setFixedHeight(46)
         self.search_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.search_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22c55e, stop:1 #15803d);
-                border: 2px solid #4ade80;
-                border-radius: 8px;
+                border: 3px solid #4ade80;
+                border-radius: 23px;
                 color: #FFFFFF;
                 font-family: 'Segoe UI', 'Ubuntu', sans-serif;
-                font-size: 15px;
+                font-size: 16px;
                 font-weight: 900;
-                letter-spacing: 2px;
+                letter-spacing: 3px;
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4ade80, stop:1 #16a34a);
@@ -563,7 +624,15 @@ class DexNavInfoCard(QFrame):
         self.search_btn.clicked.connect(self.on_search_clicked)
         layout.addWidget(self.search_btn)
 
-        # Mon Header: Name & Dex #
+        # Mon Header: Sprite + Name & Dex #
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+
+        self.mon_sprite_lbl = QLabel()
+        self.mon_sprite_lbl.setFixedSize(48, 38)
+        self.mon_sprite_lbl.setAlignment(Qt.AlignCenter)
+        header_row.addWidget(self.mon_sprite_lbl)
+
         header_box = QVBoxLayout()
         header_box.setSpacing(2)
 
@@ -574,8 +643,10 @@ class DexNavInfoCard(QFrame):
         self.name_lbl = QLabel("Select a Pokémon")
         self.name_lbl.setStyleSheet("color: #FFFFFF; font-size: 20px; font-weight: 900;")
         header_box.addWidget(self.name_lbl)
+        header_row.addLayout(header_box)
+        header_row.addStretch()
 
-        layout.addLayout(header_box)
+        layout.addLayout(header_row)
 
         # Type Badges
         self.types_box = QHBoxLayout()
@@ -595,29 +666,38 @@ class DexNavInfoCard(QFrame):
                 font-weight: bold;
                 font-size: 12px;
             }
-            QPushButton:hover {
-                background-color: #334155;
-            }
+            QPushButton:hover { background-color: #334155; }
         """)
         self.catch_toggle_btn.clicked.connect(self.on_toggle_caught_clicked)
         layout.addWidget(self.catch_toggle_btn)
 
-        # Search Level Gauge
+        # Red Ribbon Banner 1: SEARCH LEVEL
         sl_box = QVBoxLayout()
         sl_box.setSpacing(4)
-        sl_top = QHBoxLayout()
-        self.sl_title = QLabel("SEARCH LEVEL:")
-        self.sl_title.setStyleSheet("color: #ef4444; font-size: 11px; font-weight: 900; letter-spacing: 1px;")
-        sl_top.addWidget(self.sl_title)
-        self.sl_val = QLabel("Lv. 10")
-        self.sl_val.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: bold;")
-        sl_top.addWidget(self.sl_val, alignment=Qt.AlignRight)
-        sl_box.addLayout(sl_top)
+
+        sl_banner = QLabel("SEARCH LEVEL")
+        sl_banner.setStyleSheet("""
+            background-color: #dc2626;
+            color: #FFFFFF;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 1.5px;
+            padding: 3px 8px;
+            border-radius: 3px;
+        """)
+        sl_box.addWidget(sl_banner)
+
+        sl_val_row = QHBoxLayout()
+        self.sl_val = QLabel("Lv. 0")
+        self.sl_val.setStyleSheet("color: #FFFFFF; font-size: 18px; font-weight: 900; padding-left: 4px;")
+        sl_val_row.addWidget(self.sl_val)
+        sl_val_row.addStretch()
+        sl_box.addLayout(sl_val_row)
 
         self.sl_bar = QProgressBar()
         self.sl_bar.setRange(0, 100)
         self.sl_bar.setValue(10)
-        self.sl_bar.setFixedHeight(12)
+        self.sl_bar.setFixedHeight(8)
         self.sl_bar.setStyleSheet("""
             QProgressBar {
                 background-color: #1e293b;
@@ -632,7 +712,57 @@ class DexNavInfoCard(QFrame):
         sl_box.addWidget(self.sl_bar)
         layout.addLayout(sl_box)
 
-        # Telemetry Card (Hidden Ability, Items, Rates)
+        # Red Ribbon Banner 2: HIDDEN ABILITY
+        ha_box = QVBoxLayout()
+        ha_box.setSpacing(4)
+        ha_banner = QLabel("HIDDEN ABILITY")
+        ha_banner.setStyleSheet("""
+            background-color: #dc2626;
+            color: #FFFFFF;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 1.5px;
+            padding: 3px 8px;
+            border-radius: 3px;
+        """)
+        ha_box.addWidget(ha_banner)
+
+        self.ha_lbl = QLabel("Frisk")
+        self.ha_lbl.setStyleSheet("""
+            color: #cbd5e1;
+            font-size: 15px;
+            font-weight: bold;
+            padding: 2px 4px;
+        """)
+        ha_box.addWidget(self.ha_lbl)
+        layout.addLayout(ha_box)
+
+        # Red Ribbon Banner 3: ITEMS
+        items_box = QVBoxLayout()
+        items_box.setSpacing(4)
+        items_banner = QLabel("ITEMS")
+        items_banner.setStyleSheet("""
+            background-color: #dc2626;
+            color: #FFFFFF;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 1.5px;
+            padding: 3px 8px;
+            border-radius: 3px;
+        """)
+        items_box.addWidget(items_banner)
+
+        self.items_lbl = QLabel("NONE")
+        self.items_lbl.setStyleSheet("""
+            color: #cbd5e1;
+            font-size: 15px;
+            font-weight: bold;
+            padding: 2px 4px;
+        """)
+        items_box.addWidget(self.items_lbl)
+        layout.addLayout(items_box)
+
+        # Telemetry & Standard Abilities
         telemetry_frame = QFrame()
         telemetry_frame.setStyleSheet("""
             background-color: #0c121d;
@@ -641,45 +771,15 @@ class DexNavInfoCard(QFrame):
             padding: 8px;
         """)
         t_layout = QVBoxLayout(telemetry_frame)
-        t_layout.setSpacing(6)
+        t_layout.setSpacing(4)
 
-        # Hidden Ability
-        t_layout.addWidget(QLabel("HIDDEN ABILITY:"))
-        self.ha_lbl = QLabel("Frisk")
-        self.ha_lbl.setStyleSheet("""
-            background-color: #2e1065;
-            color: #d8b4fe;
-            border: 1px solid #7c3aed;
-            border-radius: 4px;
-            padding: 4px 8px;
-            font-weight: bold;
-            font-size: 12px;
-        """)
-        t_layout.addWidget(self.ha_lbl)
-
-        # Abilities
         t_layout.addWidget(QLabel("STANDARD ABILITIES:"))
         self.std_ab_lbl = QLabel("Run Away / Keen Eye")
-        self.std_ab_lbl.setStyleSheet("color: #cbd5e1; font-size: 12px; padding-left: 2px;")
+        self.std_ab_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold; padding-left: 2px;")
         t_layout.addWidget(self.std_ab_lbl)
 
-        # Held Items
-        t_layout.addWidget(QLabel("HELD ITEMS:"))
-        self.items_lbl = QLabel("NONE")
-        self.items_lbl.setStyleSheet("""
-            background-color: #1e293b;
-            color: #fcd34d;
-            border: 1px solid #475569;
-            border-radius: 4px;
-            padding: 4px 8px;
-            font-weight: bold;
-            font-size: 12px;
-        """)
-        t_layout.addWidget(self.items_lbl)
-
-        # Method & Chance
         self.encounter_info_lbl = QLabel("Habitat: Tall Grass • Rate: 20%")
-        self.encounter_info_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self.encounter_info_lbl.setStyleSheet("color: #38ef7d; font-size: 11px; font-weight: bold;")
         t_layout.addWidget(self.encounter_info_lbl)
 
         layout.addWidget(telemetry_frame)
@@ -730,6 +830,13 @@ class DexNavInfoCard(QFrame):
         self.dex_lbl.setText(f"#{dex_id:04d}")
         self.name_lbl.setText(name.upper())
 
+        # Update sprite
+        pm = get_species_pixmap(dex_id, is_silhouette=False)
+        if pm:
+            self.mon_sprite_lbl.setPixmap(pm.scaled(48, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.mon_sprite_lbl.setText("🐾")
+
         # Update type badges
         while self.types_box.count():
             item = self.types_box.takeAt(0)
@@ -770,8 +877,8 @@ class DexNavInfoCard(QFrame):
             """)
 
         # Search level
-        self.search_level = 15 if is_caught else 5
-        self.sl_val.setText(f"Lv. {self.search_level}")
+        self.search_level = 15 if is_caught else 0
+        self.sl_val.setText(f"{self.search_level}")
         self.sl_bar.setValue(self.search_level)
 
         # Telemetry
@@ -788,7 +895,7 @@ class DexNavInfoCard(QFrame):
             return
         name = self.current_data.get("species_name", "")
         self.search_level = min(100, self.search_level + 1)
-        self.sl_val.setText(f"Lv. {self.search_level}")
+        self.sl_val.setText(f"{self.search_level}")
         self.sl_bar.setValue(self.search_level)
 
         self.status_feedback.setText(f"🔍 Rustling detected! {name} found! (Search Lv. {self.search_level})")
@@ -836,9 +943,10 @@ class QuetzalDexApp(QMainWindow):
         self.cur.execute("SELECT species_id FROM caught_pokemon")
         self.caught_species = set(row[0] for row in self.cur.fetchall())
 
-        self.filter_mode = "Show All"  # "Show All", "Uncaught Only", "Caught Only"
+        self.filter_mode = "Show All"
         self.current_route_name = "ROUTE 101"
         self.current_region = "Hoenn"
+        self.all_slot_cards = []
 
         self.init_ui()
 
@@ -1030,7 +1138,6 @@ class QuetzalDexApp(QMainWindow):
 
         self.tabs.addTab(tab, "📟 DexNav Route HUD")
 
-        # Populate route list
         self.populate_routes()
 
     def populate_routes(self):
@@ -1050,7 +1157,6 @@ class QuetzalDexApp(QMainWindow):
         for r in routes:
             self.route_combo.addItem(r)
 
-        # Default to ROUTE 101 if present
         idx = self.route_combo.findText("ROUTE 101")
         if idx >= 0:
             self.route_combo.setCurrentIndex(idx)
@@ -1132,7 +1238,6 @@ class QuetzalDexApp(QMainWindow):
         self.cur.execute(sql, params)
         rows = self.cur.fetchall()
 
-        # Categorize slots
         land_encs = []
         water_encs = []
         beach_encs = []
@@ -1162,12 +1267,14 @@ class QuetzalDexApp(QMainWindow):
             elif "Fishing" in meth or "Rock Smash" in meth:
                 beach_encs.append(data)
 
-        # Clear and populate boxes
-        self.populate_habitat_box(self.box_water, water_encs, is_grid=False, max_cols=5)
-        self.populate_habitat_box(self.box_land, land_encs, is_grid=True, max_cols=6)
-        self.populate_habitat_box(self.box_beach, beach_encs, is_grid=False, max_cols=3)
+        self.all_slot_cards.clear()
 
-        # Hidden slot: pick the rarest or first mon with hidden ability from land
+        # Populate Boxes
+        self.populate_habitat_box(self.box_water, water_encs, is_grid=False, max_cols=5, empty_count=5)
+        self.populate_habitat_box(self.box_land, land_encs, is_grid=True, max_cols=6, empty_count=12)
+        self.populate_habitat_box(self.box_beach, beach_encs, is_grid=False, max_cols=3, empty_count=3)
+
+        # Hidden slot: detector for rustling encounter
         hidden_candidate = None
         for enc in land_encs:
             if enc.get("hidden_ability") and enc.get("hidden_ability") != "None":
@@ -1180,9 +1287,14 @@ class QuetzalDexApp(QMainWindow):
             hidden_candidate["slot"] = "DETECTOR"
 
         if hidden_candidate:
-            self.populate_habitat_box(self.box_hidden, [hidden_candidate], is_grid=False, max_cols=1)
+            is_c = hidden_candidate["is_caught"]
+            self.populate_habitat_box(
+                self.box_hidden, [hidden_candidate],
+                is_grid=False, max_cols=1, empty_count=1,
+                is_silhouette=(not is_c)
+            )
         else:
-            self.box_hidden.show_empty("NO DETECTOR SIGNAL")
+            self.box_hidden.show_empty(1)
 
         # Total completion stats
         all_species_on_route = set([e["species_id"] for e in (land_encs + water_encs + beach_encs)])
@@ -1192,7 +1304,7 @@ class QuetzalDexApp(QMainWindow):
         pct = (caught_on_route / total_unique * 100) if total_unique > 0 else 0
         self.route_progress_badge.setText(f"{route_name}: {caught_on_route} / {total_unique} Caught ({pct:.0f}%)")
 
-        # Select first mon into Right Card
+        # Select initial mon into Right Card
         initial_mon = None
         if land_encs: initial_mon = land_encs[0]
         elif water_encs: initial_mon = water_encs[0]
@@ -1201,15 +1313,14 @@ class QuetzalDexApp(QMainWindow):
         if initial_mon:
             self.select_slot_in_card(initial_mon)
 
-    def populate_habitat_box(self, habitat_box, encounters, is_grid=False, max_cols=6):
-        # Clear layout
+    def populate_habitat_box(self, habitat_box, encounters, is_grid=False, max_cols=6, empty_count=None, is_silhouette=False):
         while habitat_box.content_layout.count():
             item = habitat_box.content_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         if not encounters:
-            habitat_box.show_empty()
+            habitat_box.show_empty(empty_count)
             habitat_box.set_completion(0, 0)
             return
 
@@ -1217,9 +1328,10 @@ class QuetzalDexApp(QMainWindow):
         habitat_box.set_completion(caught_count, len(encounters))
 
         for idx, enc in enumerate(encounters):
-            card = DexNavSlotCard(enc, is_selected=False, filter_mode=self.filter_mode)
+            card = DexNavSlotCard(enc, is_selected=False, filter_mode=self.filter_mode, is_silhouette=is_silhouette)
             card.clicked.connect(self.select_slot_in_card)
             card.caught_toggled.connect(self.on_catch_status_toggled)
+            self.all_slot_cards.append(card)
 
             if is_grid:
                 row = idx // max_cols
@@ -1230,6 +1342,11 @@ class QuetzalDexApp(QMainWindow):
 
     def select_slot_in_card(self, mon_data):
         self.info_card.set_data(mon_data)
+        target_pid = mon_data.get("species_id")
+        target_slot = mon_data.get("slot")
+        for card in self.all_slot_cards:
+            matched = (card.slot_data.get("species_id") == target_pid and card.slot_data.get("slot") == target_slot)
+            card.set_selected(matched)
 
     def on_catch_status_toggled(self, species_id, species_name, is_caught):
         if is_caught:
@@ -1240,10 +1357,7 @@ class QuetzalDexApp(QMainWindow):
             self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (species_id,))
         self.conn.commit()
 
-        # Update global counter
         self.caught_status_lbl.setText(f"Pokédex Completion: {len(self.caught_species)} / 1,499 Caught ({len(self.caught_species)/1499*100:.1f}%)")
-
-        # Refresh current route display to update badges and dimmed/highlighted cards
         self.load_current_route_dexnav()
 
     def sync_save_file(self):
@@ -1254,29 +1368,25 @@ class QuetzalDexApp(QMainWindow):
                 self.route_progress_badge.setText("Save file not found!")
                 return
             c_count, s_count = quetzal_save_reader.update_database_user_pokedex(save_path, DB_PATH)
-            
-            # Reload caught species
+
             self.cur.execute("SELECT species_id FROM caught_pokemon")
             self.caught_species = set(row[0] for row in self.cur.fetchall())
-            
+
             self.caught_status_lbl.setText(f"Pokédex Completion: {len(self.caught_species)} / 1,499 Caught ({len(self.caught_species)/1499*100:.1f}%)")
             self.load_current_route_dexnav()
-            
-            # Refresh pokedex list if populated
+
             if hasattr(self, 'all_pokemon') and self.all_pokemon:
                 self.filter_pokemon_list(self.mon_search.text())
         except Exception as e:
             print("Error syncing save file:", e)
 
     def on_dexnav_search_pulse(self, mon_data):
-        # Simulated scan feedback
         pass
 
     def on_quick_search_mon(self, query):
         q = query.strip().lower()
         if not q or len(q) < 2:
             return
-        # Find first location that has this pokemon
         self.cur.execute("""
             SELECT location_name FROM encounters
             WHERE LOWER(species_name) LIKE ? OR CAST(species_id AS TEXT) = ?
@@ -1291,7 +1401,6 @@ class QuetzalDexApp(QMainWindow):
 
     def jump_to_pokedex_mon(self, species_id):
         self.tabs.setCurrentIndex(1)
-        # Find row in mon_list
         for i in range(self.mon_list.count()):
             item = self.mon_list.item(i)
             if item.text().startswith(f"#{species_id:04d}"):
@@ -1323,109 +1432,122 @@ class QuetzalDexApp(QMainWindow):
         left_box.addWidget(self.mon_search)
         left_box.addWidget(self.mon_list)
 
-        left_container = QWidget()
-        left_container.setLayout(left_box)
-        left_container.setFixedWidth(280)
+        left_widget = QWidget()
+        left_widget.setLayout(left_box)
+        left_widget.setFixedWidth(280)
+        layout.addWidget(left_widget)
 
-        # Right Column: Details & Tabs (Stats, Learnset, Evolutions)
+        # Right Column: Details, Stats & Learnset
         right_box = QVBoxLayout()
-        right_box.setSpacing(12)
+        right_box.setSpacing(10)
 
-        # Mon Header Card
-        self.header_card = QFrame()
-        self.header_card.setStyleSheet("background-color: #121927; border: 1px solid #25334a; border-radius: 8px; padding: 14px;")
-        card_layout = QHBoxLayout(self.header_card)
+        # Top Header: Sprite + Name + Badges
+        header_frame = QFrame()
+        header_frame.setStyleSheet("""
+            background-color: #121927;
+            border: 1px solid #25334a;
+            border-radius: 8px;
+            padding: 8px 12px;
+        """)
+        h_layout = QHBoxLayout(header_frame)
 
-        self.mon_name_lbl = QLabel("Select a Pokémon")
-        self.mon_name_lbl.setFont(QFont("Arial", 18, QFont.Bold))
+        self.pokedex_sprite_lbl = QLabel()
+        self.pokedex_sprite_lbl.setFixedSize(54, 42)
+        self.pokedex_sprite_lbl.setAlignment(Qt.AlignCenter)
+        h_layout.addWidget(self.pokedex_sprite_lbl)
+
+        self.mon_name_lbl = QLabel("#0000 Unknown")
+        self.mon_name_lbl.setFont(QFont("Arial", 16, QFont.Bold))
         self.mon_name_lbl.setStyleSheet("color: #FFFFFF;")
-        card_layout.addWidget(self.mon_name_lbl)
+        h_layout.addWidget(self.mon_name_lbl)
 
         self.type_badges_box = QHBoxLayout()
-        card_layout.addLayout(self.type_badges_box)
-        card_layout.addStretch()
+        self.type_badges_box.setSpacing(6)
+        h_layout.addLayout(self.type_badges_box)
 
-        self.mon_caught_btn = QPushButton("⚪ Mark Caught")
+        h_layout.addStretch()
+
+        self.mon_caught_btn = QPushButton("⚪ Uncaught")
         self.mon_caught_btn.setCheckable(True)
         self.mon_caught_btn.setFixedHeight(30)
+        self.mon_caught_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.mon_caught_btn.clicked.connect(self.on_pokedex_caught_clicked)
-        card_layout.addWidget(self.mon_caught_btn)
+        h_layout.addWidget(self.mon_caught_btn)
 
-        self.catch_rate_lbl = QLabel("")
-        self.catch_rate_lbl.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: bold;")
-        card_layout.addWidget(self.catch_rate_lbl)
+        self.catch_rate_lbl = QLabel("Catch Rate: -- / 255")
+        self.catch_rate_lbl.setStyleSheet("color: #cbd5e1; font-weight: bold; background-color: #1a2538; padding: 4px 8px; border-radius: 4px;")
+        h_layout.addWidget(self.catch_rate_lbl)
 
-        right_box.addWidget(self.header_card)
+        right_box.addWidget(header_frame)
 
-        # Base Stats Panel
+        # Base Stats Group
         stats_group = QGroupBox("Base Stats")
-        stats_layout = QVBoxLayout(stats_group)
+        stats_layout = QGridLayout(stats_group)
+        stats_layout.setContentsMargins(12, 16, 12, 10)
+        stats_layout.setSpacing(6)
+
+        stat_names = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"]
         self.stat_bars = {}
-        for stat in ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"]:
-            row = QHBoxLayout()
-            lbl = QLabel(f"{stat:8}")
-            lbl.setFixedWidth(70)
-            lbl.setStyleSheet("color: #E1E1E6; font-weight: bold;")
+
+        for idx, s_name in enumerate(stat_names):
+            lbl = QLabel(s_name)
+            lbl.setFixedWidth(60)
+            lbl.setStyleSheet("font-weight: bold; color: #cbd5e1;")
             bar = QProgressBar()
             bar.setRange(0, 255)
-            bar.setValue(0)
-            bar.setFixedHeight(18)
-            row.addWidget(lbl)
-            row.addWidget(bar)
-            stats_layout.addLayout(row)
-            self.stat_bars[stat] = bar
+            bar.setFixedHeight(16)
+            bar.setTextVisible(True)
+            self.stat_bars[s_name] = bar
+            stats_layout.addWidget(lbl, idx, 0)
+            stats_layout.addWidget(bar, idx, 1)
 
         self.bst_lbl = QLabel("Base Stat Total (BST): 0")
-        self.bst_lbl.setStyleSheet("color: #38ef7d; font-weight: bold; margin-top: 4px;")
-        stats_layout.addWidget(self.bst_lbl, alignment=Qt.AlignRight)
+        self.bst_lbl.setStyleSheet("color: #38ef7d; font-weight: bold; font-size: 13px;")
+        self.bst_lbl.setAlignment(Qt.AlignRight)
+        stats_layout.addWidget(self.bst_lbl, 6, 0, 1, 2)
+
         right_box.addWidget(stats_group)
 
-        # Evolutions Card
-        self.evo_group = QGroupBox("Evolution Tree & Requirements")
-        evo_layout = QVBoxLayout(self.evo_group)
-        self.evo_text = QLabel("No evolution data.")
-        self.evo_text.setStyleSheet("color: #E1E1E6; font-size: 13px;")
+        # Evolution Tree Group
+        evo_group = QGroupBox("Evolution Tree & Requirements")
+        evo_layout = QHBoxLayout(evo_group)
+        evo_layout.setContentsMargins(12, 16, 12, 10)
+        self.evo_text = QLabel("Loading evolutions...")
+        self.evo_text.setWordWrap(True)
+        self.evo_text.setStyleSheet("color: #e2e8f0; font-size: 13px;")
         evo_layout.addWidget(self.evo_text)
-        right_box.addWidget(self.evo_group)
+        right_box.addWidget(evo_group)
 
-        # Learnset Table
+        # Learnsets Table Group
         learn_group = QGroupBox("Level-Up Moves")
-        learn_layout = QVBoxLayout(learn_group)
+        l_layout = QVBoxLayout(learn_group)
+        l_layout.setContentsMargins(12, 16, 12, 10)
+
         self.learn_table = QTableWidget()
         self.learn_table.setColumnCount(7)
         self.learn_table.setHorizontalHeaderLabels(["Level", "Move", "Type", "Power", "Acc", "PP", "Priority"])
-        self.learn_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        learn_layout.addWidget(self.learn_table)
+        self.learn_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.learn_table.verticalHeader().setDefaultSectionSize(32)
+        l_layout.addWidget(self.learn_table)
+
         right_box.addWidget(learn_group)
 
-        right_container = QWidget()
-        right_container.setLayout(right_box)
-
-        # Splitter
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_container)
-        splitter.addWidget(right_container)
-        splitter.setStretchFactor(1, 3)
-        layout.addWidget(splitter)
+        right_widget = QWidget()
+        right_widget.setLayout(right_box)
+        layout.addWidget(right_widget, 1)
 
         self.tabs.addTab(tab, "📖 Pokédex & Moves")
 
-        # Load all pokemon into list
+        # Load Pokédex List
         self.cur.execute("SELECT id, name FROM pokemon ORDER BY id ASC")
         self.all_pokemon = self.cur.fetchall()
-        for pid, name in self.all_pokemon:
-            is_c = pid in self.caught_species
-            ball = "🔴" if is_c else "⚪"
-            self.mon_list.addItem(f"#{pid:04d}  {ball} {name}")
-
-        if self.mon_list.count() > 0:
-            self.mon_list.setCurrentRow(284)
+        self.filter_pokemon_list("")
 
     def filter_pokemon_list(self, text):
-        query = text.strip().lower()
+        search = text.strip().lower()
         self.mon_list.clear()
         for pid, name in self.all_pokemon:
-            if query in name.lower() or query in str(pid):
+            if not search or search in name.lower() or search in str(pid):
                 is_c = pid in self.caught_species
                 ball = "🔴" if is_c else "⚪"
                 self.mon_list.addItem(f"#{pid:04d}  {ball} {name}")
@@ -1449,6 +1571,13 @@ class QuetzalDexApp(QMainWindow):
 
         self.mon_name_lbl.setText(f"#{pid:04d} {name}")
         self.catch_rate_lbl.setText(f"Catch Rate: {cr} / 255")
+
+        # Sprite in Pokédex header
+        pm = get_species_pixmap(pid, is_silhouette=False)
+        if pm:
+            self.pokedex_sprite_lbl.setPixmap(pm.scaled(52, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.pokedex_sprite_lbl.setText("🐾")
 
         # Catch button state
         is_c = pid in self.caught_species
@@ -1526,7 +1655,6 @@ class QuetzalDexApp(QMainWindow):
         new_state = not is_c
         self.on_catch_status_toggled(pid, pname, new_state)
 
-        # Update row label in list
         ball = "🔴" if new_state else "⚪"
         item.setText(f"#{pid:04d}  {ball} {pname}")
         self.on_pokemon_selected(row)
@@ -1563,7 +1691,7 @@ class QuetzalDexApp(QMainWindow):
 
         layout.addLayout(top_box)
 
-        # Main Table: Clean, well-spaced retro table with dedicated columns
+        # Main Table: Clean, well-spaced retro table
         self.leg_table = QTableWidget()
         self.leg_table.setColumnCount(6)
         self.leg_table.setHorizontalHeaderLabels([
@@ -1576,29 +1704,29 @@ class QuetzalDexApp(QMainWindow):
         self.leg_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.leg_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.leg_table.setWordWrap(True)
-        self.leg_table.verticalHeader().setDefaultSectionSize(48)
+        self.leg_table.verticalHeader().setDefaultSectionSize(44)
         self.leg_table.currentCellChanged.connect(lambda r, c, pr, pc: self.on_legendary_selected(r))
-        layout.addWidget(self.leg_table)
+        layout.addWidget(self.leg_table, 2)
 
-        # Bottom Details Card
+        # Bottom Details Card: Sleek walkthrough & synergy inspector
         self.leg_detail_card = QFrame()
         self.leg_detail_card.setStyleSheet("""
             background-color: #121927;
-            border: 1px solid #25334a;
+            border: 2px solid #25334a;
             border-radius: 8px;
             padding: 12px;
         """)
         d_layout = QVBoxLayout(self.leg_detail_card)
-        d_layout.setSpacing(6)
+        d_layout.setSpacing(8)
 
         d_top = QHBoxLayout()
         self.leg_detail_name = QLabel("Select a Legendary to view complete walkthrough")
-        self.leg_detail_name.setFont(QFont("Arial", 14, QFont.Bold))
+        self.leg_detail_name.setFont(QFont("Arial", 15, QFont.Bold))
         self.leg_detail_name.setStyleSheet("color: #38ef7d;")
         d_top.addWidget(self.leg_detail_name)
 
         self.leg_detail_loc = QLabel("")
-        self.leg_detail_loc.setStyleSheet("color: #fcd34d; font-weight: bold;")
+        self.leg_detail_loc.setStyleSheet("color: #fcd34d; font-weight: bold; font-size: 13px;")
         d_top.addWidget(self.leg_detail_loc, alignment=Qt.AlignRight)
         d_layout.addLayout(d_top)
 
@@ -1607,21 +1735,18 @@ class QuetzalDexApp(QMainWindow):
         self.leg_detail_req.setFixedHeight(75)
         self.leg_detail_req.setStyleSheet("""
             QTextEdit {
-                background-color: #0c121d;
+                background-color: #0b111a;
                 border: 1px solid #1e293b;
                 border-radius: 6px;
                 color: #e2e8f0;
                 font-size: 13px;
-                padding: 6px;
+                padding: 6px 10px;
+                line-height: 1.4;
             }
         """)
         d_layout.addWidget(self.leg_detail_req)
 
-        self.leg_detail_synergy = QLabel("")
-        self.leg_detail_synergy.setStyleSheet("color: #93c5fd; font-weight: bold; font-size: 12px;")
-        d_layout.addWidget(self.leg_detail_synergy)
-
-        layout.addWidget(self.leg_detail_card)
+        layout.addWidget(self.leg_detail_card, 1)
 
         self.tabs.addTab(tab, "⚔️ Legendary & Mythical Guide")
         self.filter_legendaries()
@@ -1646,12 +1771,10 @@ class QuetzalDexApp(QMainWindow):
 
         self.leg_table.setRowCount(len(rows))
         for r_idx, (name, g, lv, loc, req, syn) in enumerate(rows):
-            # Clean text
             clean_req = clean_wiki_text(req)
             clean_loc = clean_wiki_text(loc)
             clean_syn = clean_wiki_text(syn)
 
-            # Check if species is in caught list
             self.cur.execute("SELECT id FROM pokemon WHERE LOWER(name) = LOWER(?) LIMIT 1", (name,))
             p_row = self.cur.fetchone()
             is_c = (p_row[0] in self.caught_species) if p_row else False
