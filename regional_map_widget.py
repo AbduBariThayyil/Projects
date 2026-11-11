@@ -1665,8 +1665,8 @@ class RegionalMapWidget(QWidget):
         # ====================================================================
         # TOP HEADER HUD BAR
         # ====================================================================
-        top_bar = QFrame()
-        top_bar.setStyleSheet("""
+        self.top_bar = QFrame()
+        self.top_bar.setStyleSheet("""
             QFrame {
                 background-color: #0f172a;
                 border: 1px solid #1e293b;
@@ -1674,7 +1674,7 @@ class RegionalMapWidget(QWidget):
                 padding: 4px 8px;
             }
         """)
-        top_layout = QHBoxLayout(top_bar)
+        top_layout = QHBoxLayout(self.top_bar)
         top_layout.setContentsMargins(8, 4, 8, 4)
         top_layout.setSpacing(12)
 
@@ -1913,7 +1913,7 @@ class RegionalMapWidget(QWidget):
 
         top_layout.addWidget(zoom_frame)
 
-        main_layout.addWidget(top_bar)
+        main_layout.addWidget(self.top_bar)
 
         # ====================================================================
         # CENTER INTERACTIVE CANVAS
@@ -1923,8 +1923,8 @@ class RegionalMapWidget(QWidget):
         # ====================================================================
         # BOTTOM STATUS & LEGEND HUD BAR
         # ====================================================================
-        bot_bar = QFrame()
-        bot_bar.setStyleSheet("""
+        self.bot_bar = QFrame()
+        self.bot_bar.setStyleSheet("""
             QFrame {
                 background-color: #0f172a;
                 border: 1px solid #1e293b;
@@ -1932,7 +1932,7 @@ class RegionalMapWidget(QWidget):
                 padding: 4px 12px;
             }
         """)
-        bot_layout = QHBoxLayout(bot_bar)
+        bot_layout = QHBoxLayout(self.bot_bar)
         bot_layout.setContentsMargins(10, 4, 10, 4)
         bot_layout.setSpacing(16)
 
@@ -1997,10 +1997,24 @@ class RegionalMapWidget(QWidget):
         clear_btn.clicked.connect(self.clear_highlights)
         bot_layout.addWidget(clear_btn)
 
-        main_layout.addWidget(bot_bar)
+        main_layout.addWidget(self.bot_bar)
 
         for btn in self.findChildren(QPushButton):
             btn.setFocusPolicy(Qt.NoFocus)
+
+    def set_retro_mode(self, is_retro: bool):
+        """Toggle clean full-screen retro GBA map view without toolbars."""
+        if hasattr(self, 'top_bar') and hasattr(self, 'bot_bar'):
+            if is_retro:
+                self.top_bar.hide()
+                self.bot_bar.hide()
+                self.layout().setContentsMargins(0, 0, 0, 0)
+                self.layout().setSpacing(0)
+            else:
+                self.top_bar.show()
+                self.bot_bar.show()
+                self.layout().setContentsMargins(16, 14, 16, 14)
+                self.layout().setSpacing(10)
 
     # ========================================================================
     # PUBLIC API

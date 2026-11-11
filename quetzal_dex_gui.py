@@ -3172,6 +3172,8 @@ class QuetzalMasterApp(QMainWindow):
                 self.dexnav_l_hint.show()
             if hasattr(self, 'dexnav_r_hint'):
                 self.dexnav_r_hint.show()
+            if hasattr(self, 'map_widget'):
+                self.map_widget.set_retro_mode(True)
 
             if hasattr(self, 'header_frame'):
                 self.header_frame.setStyleSheet("""
@@ -3414,6 +3416,8 @@ class QuetzalMasterApp(QMainWindow):
                 self.dexnav_l_hint.hide()
             if hasattr(self, 'dexnav_r_hint'):
                 self.dexnav_r_hint.hide()
+            if hasattr(self, 'map_widget'):
+                self.map_widget.set_retro_mode(False)
 
             if hasattr(self, 'header_frame'):
                 self.header_frame.setStyleSheet("""
@@ -4294,10 +4298,11 @@ class QuetzalMasterApp(QMainWindow):
     def create_map_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self.map_widget = RegionalMapWidget(db_path=DB_PATH)
+        self.map_widget.set_retro_mode(self.current_theme == "retro")
         self.map_widget.route_selected.connect(self.on_map_route_selected)
         layout.addWidget(self.map_widget, 1)
 
@@ -5468,6 +5473,12 @@ class QuetzalMasterApp(QMainWindow):
             }
             self.all_legendary_data.append(d)
 
+        # Defer creating 80+ card widgets until the tab is displayed
+        if hasattr(self, 'tabs') and self.tabs.currentIndex() != 4 and not getattr(self, '_force_populate_cards', False):
+            if self.all_legendary_data:
+                self.leg_inspector_drawer.populate(self.all_legendary_data[0])
+            return
+
         self.filter_legendaries()
         if self.all_legendary_data:
             self.leg_inspector_drawer.populate(self.all_legendary_data[0])
@@ -5985,7 +5996,10 @@ def main():
     if not app:
         app = QApplication(sys.argv)
     window = QuetzalMasterApp()
-    window.showFullScreen()
+    if "--fullscreen" in sys.argv:
+        window.showFullScreen()
+    else:
+        window.show()
     return app.exec()
 
 
