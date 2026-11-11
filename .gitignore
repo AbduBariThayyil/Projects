@@ -1,3 +1,5 @@
 *.png
 __pycache__/
 test_polybar.sh
+*.db-shm
+*.db-wal
