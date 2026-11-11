@@ -185,6 +185,15 @@ class QuetzalSaveParser:
         minutes = sec0[0x14]
         seconds = sec0[0x15]
 
+        # Extract money from SaveBlock1 (Sector ID 1, offset 0x490)
+        money = 0
+        sec1_idx = self.sector_map.get(1)
+        if sec1_idx is not None:
+            sec1 = self.raw_data[sec1_idx * SECTOR_SIZE : (sec1_idx + 1) * SECTOR_SIZE]
+            raw_money = int.from_bytes(sec1[0x490:0x494], "little")
+            enc_key = int.from_bytes(sec0[0xAF8:0xAFC], "little") if len(sec0) > 0xAFC else 0
+            money = raw_money ^ enc_key
+
         return {
             "name": name,
             "tid": tid,
@@ -192,7 +201,9 @@ class QuetzalSaveParser:
             "hours": hours,
             "minutes": minutes,
             "seconds": seconds,
-            "play_time_str": f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            "money": money,
+            "play_time_str": f"{hours:02d}:{minutes:02d}:{seconds:02d}",
+            "short_time_str": f"{hours}:{minutes:02d}"
         }
 
     def get_party_pokemon(self) -> List[Dict[str, Any]]:

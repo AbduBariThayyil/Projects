@@ -150,3 +150,137 @@ def test_save_reader_national_dex_sync():
     assert 958 in caught
     assert 967 in caught
 
+
+def test_dexnav_1to1_route_encounters(qapp):
+    win = quetzal_dex_gui.QuetzalMasterApp()
+
+    # Verify Habitat Boxes Geometry matching authentic DexNav
+    assert len(win.water_box.slots) == 5
+    assert len(win.land_box.slots) == 12
+    assert len(win.beach_box.slots) == 3
+    assert len(win.hidden_box.slots) == 1
+
+    # Route 101: 0 Water, 12 Land (with Lechonk), 0 Beach, 1 Hidden (Alolan Vulpix)
+    win.route_combo.setCurrentText("ROUTE 101")
+    assert win.dexnav_route_header.text() == "ROUTE 101"
+    
+    # Water has 5 empty X slots
+    assert all(s.mon_data is None for s in win.water_box.slots)
+    assert win.water_box.slots[0].center_box.text() == "✕"
+    
+    # Land has 12 slots populated
+    assert all(s.mon_data is not None for s in win.land_box.slots)
+    # Slot 6 is Lechonk (species_id 1244, national_dex_num 915)
+    lechonk_slot = win.land_box.slots[5]
+    assert lechonk_slot.species_id == 1244
+    assert lechonk_slot.mon_data["species_name"] == "Lechonk"
+    assert lechonk_slot.dex_num.text() == "#0915"
+
+    # Beach has 3 empty X slots
+    assert all(s.mon_data is None for s in win.beach_box.slots)
+    assert win.beach_box.slots[0].center_box.text() == "✕"
+
+    # Hidden has 1 slot: Alolan Vulpix
+    vulpix_slot = win.hidden_box.slots[0]
+    assert vulpix_slot.mon_data is not None
+    assert vulpix_slot.species_id == 954
+    assert vulpix_slot.dex_num.text() == "#0037"
+
+    # Route 103: 5 Water, 12 Land, 0 Beach, 1 Hidden (Ditto), 0 Fishing
+    win.route_combo.setCurrentText("ROUTE 103")
+    assert win.dexnav_route_header.text() == "ROUTE 103"
+    assert all(s.mon_data is not None for s in win.water_box.slots)
+    assert win.water_box.slots[0].mon_data["species_name"] == "Clauncher"
+    assert win.water_box.slots[4].mon_data["species_name"] == "Clawitzer"
+    assert all(s.mon_data is not None for s in win.land_box.slots)
+    assert all(s.mon_data is None for s in win.beach_box.slots)
+    assert win.hidden_box.slots[0].mon_data["species_name"] == "Ditto"
+
+    # Inspector Drawer checks
+    win.water_box.slots[0].slot_selected.emit(win.water_box.slots[0].mon_data)
+    assert win.inspector_drawer.current_species_id == 692
+    assert "Clauncher" in win.inspector_drawer.name_lbl.text()
+    assert hasattr(win.inspector_drawer, "search_btn")
+    assert win.inspector_drawer.search_btn.text() == "SEARCH"
+    assert "SEARCH LEVEL:" in win.inspector_drawer.search_lvl_lbl.text()
+    assert "HIDDEN ABILITY:" in win.inspector_drawer.hidden_ability_lbl.text()
+
+    win.close()
+
+
+def test_authentic_gba_pokedex_view(qapp):
+    from pokedex_retro_view import PokedexRetroView
+    view = PokedexRetroView()
+    assert view is not None
+    # 1. 1025 National Pokédex Entries Loaded
+    assert len(view.pokemon_by_nat) == 1025
+    assert len(view.nat_nums) == 1025
+    assert view.nat_nums[0] == 1
+    assert view.nat_nums[-1] == 1025
+
+    # 2. Aerodactyl (#0142) Base Stats matching Ground Truth
+    assert 142 in view.pokemon_by_nat
+    aero = view.pokemon_by_nat[142]
+    assert aero["name"] == "Aerodactyl"
+    assert aero["hp"] == 80
+    assert aero["atk"] == 105
+    assert aero["def"] == 65
+    assert aero["spa"] == 60
+    assert aero["spd"] == 75
+    assert aero["spe"] == 130
+    assert aero["bst"] == 515
+
+    # Select Aerodactyl
+    view.select_pokemon(142)
+    assert view.current_nat == 142
+    assert "0142 AERODACTYL" in view.main_name_lbl.text()
+    assert "BST: 515" in view.lbl_bst.text()
+
+    # 3. National Summary counts from Save file
+    assert int(view.lbl_seen_val.text()) > 0
+    assert int(view.lbl_own_val.text()) > 0
+    assert "%" in view.lbl_completion.text()
+
+    # 4. Unseen Pokémon Display
+    # Find an unseen entry
+    unseen_nat = next((n for n in view.nat_nums if not view.is_seen(n)), None)
+    if unseen_nat:
+        view.select_pokemon(unseen_nat)
+        assert "-----------" in view.main_name_lbl.text()
+        assert view.lbl_bst.text() == "BST: ???"
+
+    view.close()
+
+
+def test_authentic_gba_start_menu_overlay(qapp):
+    from gba_start_menu_widget import GbaStartMenuOverlay
+    win = quetzal_dex_gui.QuetzalMasterApp()
+    win.show()
+    
+    # 1. Start Menu Overlay Initial State
+    assert hasattr(win, "start_menu")
+    assert win.start_menu is not None
+    assert win.start_menu.player_name == "NIG"
+    assert win.start_menu.money > 0
+    assert ":" in win.start_menu.play_time
+
+    # 2. Toggle Menu via Space / Method
+    win.toggle_start_menu()
+    assert win.start_menu.isVisible() is True
+
+    # 3. Menu Items List
+    menu_ids = [it["id"] for it in win.start_menu.menu_items]
+    assert menu_ids == ["POKÉDEX", "DEXNAV", "POKÉMON", "OPTION", "MPLAYER", "MISC"]
+
+    # 4. Action Triggering
+    # Trigger POKÉDEX action
+    win.start_menu.selected_index = 0
+    win.start_menu.activate_selected()
+    assert win.tabs.currentIndex() == 2  # Switched to Pokédex tab
+    assert win.pokedex_main_tabs.currentIndex() == 0  # In-Game GBA Pokédex active
+
+    # Trigger DEXNAV action
+    win.on_start_menu_action("DEXNAV")
+    assert win.tabs.currentIndex() == 0  # Switched to Route Encounters
+
+    win.close()
