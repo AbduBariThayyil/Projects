@@ -2353,6 +2353,8 @@ class QuetzalMasterApp(QMainWindow):
         self.update_filter_button_styles()
         self.update_habitat_button_styles()
         self.update_route_completion_badge()
+        if hasattr(self, 'update_trainer_cat_button_styles'):
+            self.update_trainer_cat_button_styles()
         if hasattr(self, 'update_leg_filter_button_styles'):
             self.update_leg_filter_button_styles()
         if hasattr(self, 'pokedex_caught_btn'):
@@ -3536,7 +3538,8 @@ class QuetzalMasterApp(QMainWindow):
             top_row.addWidget(btn)
             self.trainer_cat_buttons.append(btn)
 
-        self.trainer_cat_buttons[0].setChecked(True)
+        self.selected_trainer_cat = "All (35)"
+        self.update_trainer_cat_button_styles()
         top_row.addStretch()
 
         self.trainer_search = QLineEdit()
@@ -3563,11 +3566,62 @@ class QuetzalMasterApp(QMainWindow):
         self.trainers_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.trainers_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.trainers_table.verticalHeader().setVisible(False)
+        self.trainers_table.itemSelectionChanged.connect(lambda: play_sfx("menu_move.wav"))
         layout.addWidget(self.trainers_table, 1)
 
         self.tabs.addTab(tab, "⚔️ Trainers & Frontier")
 
         self.populate_trainers_table()
+
+    def update_trainer_cat_button_styles(self):
+        cat_filter = getattr(self, "selected_trainer_cat", "All (35)")
+        for btn in getattr(self, "trainer_cat_buttons", []):
+            is_active = (btn.text() == cat_filter)
+            btn.setChecked(is_active)
+            if is_retro():
+                if is_active:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #008850;
+                            border-top: 2px solid #00ff88;
+                            border-left: 2px solid #00ff88;
+                            border-bottom: 2px solid #042010;
+                            border-right: 2px solid #042010;
+                            color: #ffffff;
+                            font-weight: bold;
+                            font-family: monospace;
+                            border-radius: 2px;
+                            padding: 2px 8px;
+                            font-size: 11px;
+                        }
+                    """)
+                else:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #0c1c22;
+                            border-top: 2px solid #306056;
+                            border-left: 2px solid #306056;
+                            border-bottom: 2px solid #050e12;
+                            border-right: 2px solid #050e12;
+                            color: #6a9c90;
+                            font-family: monospace;
+                            border-radius: 2px;
+                            padding: 2px 8px;
+                            font-size: 11px;
+                        }
+                        QPushButton:hover { background-color: #143038; color: #a8d8c8; }
+                        QPushButton:pressed {
+                            border-top: 2px solid #050e12;
+                            border-left: 2px solid #050e12;
+                            border-bottom: 2px solid #306056;
+                            border-right: 2px solid #306056;
+                        }
+                    """)
+            else:
+                if is_active:
+                    btn.setStyleSheet("background-color: #2563eb; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+                else:
+                    btn.setStyleSheet("background-color: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 4px; padding: 2px 8px;")
 
     def populate_trainers_table(self):
         self.cur.execute("SELECT category, name, title, region, location, unlock_condition, team_preview, reward FROM trainers ORDER BY id ASC")
@@ -3576,9 +3630,9 @@ class QuetzalMasterApp(QMainWindow):
 
     def filter_trainers(self, category: str = None):
         if category:
+            play_sfx("menu_select.wav")
             self.selected_trainer_cat = category
-            for btn in self.trainer_cat_buttons:
-                btn.setChecked(btn.text() == category)
+            self.update_trainer_cat_button_styles()
 
         cat_filter = getattr(self, "selected_trainer_cat", "All (35)")
         query = self.trainer_search.text().strip().lower()
@@ -3702,6 +3756,7 @@ class QuetzalMasterApp(QMainWindow):
         self.populate_legendaries_cards()
 
     def set_leg_status_filter(self, mode: str):
+        play_sfx("menu_select.wav")
         self.leg_filter_mode = mode
         self.update_leg_filter_button_styles()
         self.filter_legendaries()
@@ -3710,16 +3765,63 @@ class QuetzalMasterApp(QMainWindow):
         for btn in self.leg_status_btns:
             is_active = (btn.text().endswith(self.leg_filter_mode) or btn.text() == self.leg_filter_mode)
             btn.setChecked(is_active)
-            if is_active:
-                btn.setStyleSheet("background-color: #0284c7; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 2px 10px;")
+            if is_retro():
+                if is_active:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #008850;
+                            border-top: 2px solid #00ff88;
+                            border-left: 2px solid #00ff88;
+                            border-bottom: 2px solid #042010;
+                            border-right: 2px solid #042010;
+                            color: #ffffff;
+                            font-weight: bold;
+                            font-family: monospace;
+                            border-radius: 2px;
+                            padding: 2px 10px;
+                        }
+                    """)
+                else:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #0c1c22;
+                            border-top: 2px solid #306056;
+                            border-left: 2px solid #306056;
+                            border-bottom: 2px solid #050e12;
+                            border-right: 2px solid #050e12;
+                            color: #6a9c90;
+                            font-family: monospace;
+                            border-radius: 2px;
+                            padding: 2px 10px;
+                        }
+                        QPushButton:hover { background-color: #143038; color: #a8d8c8; }
+                        QPushButton:pressed {
+                            border-top: 2px solid #050e12;
+                            border-left: 2px solid #050e12;
+                            border-bottom: 2px solid #306056;
+                            border-right: 2px solid #306056;
+                        }
+                    """)
             else:
-                btn.setStyleSheet("background-color: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 4px; padding: 2px 10px;")
+                if is_active:
+                    btn.setStyleSheet("background-color: #0284c7; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 2px 10px;")
+                else:
+                    btn.setStyleSheet("background-color: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 4px; padding: 2px 10px;")
+
+    def update_stats_header(self):
+        if not hasattr(self, 'save_status_lbl'):
+            return
+        pct = (len(self.caught_species) / 1499 * 100) if 1499 > 0 else 0
+        if is_retro():
+            self.save_status_lbl.setText(f"💾 SAVE: NIG | POKéDEX: {len(self.caught_species)}/1,499 ({pct:.1f}%)")
+        else:
+            self.save_status_lbl.setText(f"💾 Player: NIG • Caught: {len(self.caught_species)} / 1,499 ({pct:.1f}%)")
 
     def populate_legendaries_cards(self):
         self.cur.execute("""
             SELECT l.name, l.generation, l.level, l.location, l.requirements, l.synergy, l.notes,
-                   MIN(p.id), p.type1, p.type2, p.hp, p.atk, p.def, p.spa, p.spd, p.spe, p.bst, p.catch_rate,
-                   p.abilities, p.hidden_ability
+                    MIN(p.id), p.type1, p.type2, p.hp, p.atk, p.def, p.spa, p.spd, p.spe, p.bst, p.catch_rate,
+                    p.abilities, p.hidden_ability
             FROM legendaries l
             LEFT JOIN pokemon p ON LOWER(l.name) = LOWER(p.name)
             GROUP BY l.name
@@ -3798,9 +3900,11 @@ class QuetzalMasterApp(QMainWindow):
 
     def on_legendary_catch_toggled(self, species_id: int, species_name: str, is_caught: bool):
         if is_caught:
+            play_sfx("caught_fanfare.wav")
             self.caught_species.add(species_id)
             self.cur.execute("INSERT OR IGNORE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (species_id, species_name))
         else:
+            play_sfx("menu_cancel.wav")
             self.caught_species.discard(species_id)
             self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (species_id,))
         self.conn.commit()
@@ -3823,20 +3927,28 @@ class QuetzalMasterApp(QMainWindow):
         layout.setSpacing(12)
 
         # Header Hero Card
-        hero_card = QFrame()
-        hero_card.setStyleSheet("""
+        self.hero_card = QFrame()
+        self.hero_card.setStyleSheet("""
+            background-color: #10262e;
+            border-top: 2px solid #58b8a8;
+            border-left: 2px solid #58b8a8;
+            border-bottom: 2px solid #081820;
+            border-right: 2px solid #081820;
+            border-radius: 4px;
+            padding: 10px 14px;
+        """ if is_retro() else """
             background-color: #0f172a;
             border: 1px solid #1e293b;
             border-radius: 8px;
             padding: 10px 14px;
         """)
-        h_layout = QVBoxLayout(hero_card)
+        h_layout = QVBoxLayout(self.hero_card)
         h_layout.setContentsMargins(6, 4, 6, 4)
         h_layout.setSpacing(4)
 
         title = QLabel("🧭 OPTIMAL DUAL-TYPE SQUAD & REGIONAL LEGENDARY ROADMAP")
         title.setFont(QFont("Arial", 13, QFont.Bold))
-        title.setStyleSheet("color: #38bdf8;")
+        title.setStyleSheet("color: #00ff88; font-family: monospace;" if is_retro() else "color: #38bdf8;")
         h_layout.addWidget(title)
 
         subtitle = QLabel(
@@ -3844,9 +3956,9 @@ class QuetzalMasterApp(QMainWindow):
             "with zero repetitive PC backtracking by utilizing dual-type squad coverage."
         )
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        subtitle.setStyleSheet("color: #6a9c90; font-size: 11px; font-family: monospace;" if is_retro() else "color: #94a3b8; font-size: 11px;")
         h_layout.addWidget(subtitle)
-        layout.addWidget(hero_card)
+        layout.addWidget(self.hero_card)
 
         # Main Scroll Area for Roadmap
         scroll = QScrollArea()
@@ -3859,20 +3971,28 @@ class QuetzalMasterApp(QMainWindow):
         s_layout.setSpacing(14)
 
         # Blueprint Frame: Hall of Fame Coverage Analysis
-        bp_frame = QFrame()
-        bp_frame.setStyleSheet("""
+        self.bp_frame = QFrame()
+        self.bp_frame.setStyleSheet("""
+            background-color: #09171e;
+            border-top: 2px solid #040a0c;
+            border-left: 2px solid #040a0c;
+            border-bottom: 2px solid #387068;
+            border-right: 2px solid #387068;
+            border-radius: 3px;
+            padding: 12px;
+        """ if is_retro() else """
             background-color: #0c121d;
             border: 1.5px solid #0284c7;
             border-radius: 8px;
             padding: 12px;
         """)
-        bp_layout = QVBoxLayout(bp_frame)
+        bp_layout = QVBoxLayout(self.bp_frame)
         bp_layout.setContentsMargins(8, 6, 8, 6)
         bp_layout.setSpacing(8)
 
         bp_title = QLabel("⭐ UNIVERSAL MULTI-USE SQUAD BLUEPRINT")
         bp_title.setFont(QFont("Arial", 11, QFont.Bold))
-        bp_title.setStyleSheet("color: #38bdf8; letter-spacing: 0.5px;")
+        bp_title.setStyleSheet("color: #00ff88; letter-spacing: 0.5px; font-family: monospace;" if is_retro() else "color: #38bdf8; letter-spacing: 0.5px;")
         bp_layout.addWidget(bp_title)
 
         bp_desc = QLabel(
@@ -3886,9 +4006,9 @@ class QuetzalMasterApp(QMainWindow):
             "<i>With these 8 Pokémon, you never need to visit the PC again for type-gated legendary access!</i>"
         )
         bp_desc.setWordWrap(True)
-        bp_desc.setStyleSheet("color: #e2e8f0; font-size: 11px; line-height: 1.5;")
+        bp_desc.setStyleSheet("color: #e2f4ea; font-size: 11px; line-height: 1.5; font-family: monospace;" if is_retro() else "color: #e2e8f0; font-size: 11px; line-height: 1.5;")
         bp_layout.addWidget(bp_desc)
-        s_layout.addWidget(bp_frame)
+        s_layout.addWidget(self.bp_frame)
 
         # Roadmap Sequence Cards
         phases = [
@@ -4024,33 +4144,31 @@ class QuetzalMasterApp(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
 
-        card = QFrame()
-        card.setObjectName("calc_card")
-        card.setStyleSheet("""
+        self.calc_card = QFrame()
+        self.calc_card.setObjectName("calc_card")
+        self.calc_card.setStyleSheet("""
+            QFrame#calc_card {
+                background-color: #10262e;
+                border-top: 2px solid #58b8a8;
+                border-left: 2px solid #58b8a8;
+                border-bottom: 2px solid #081820;
+                border-right: 2px solid #081820;
+                border-radius: 4px;
+            }
+        """ if is_retro() else """
             QFrame#calc_card {
                 background-color: #0f172a;
                 border: 1px solid #1e293b;
                 border-radius: 8px;
             }
-            QPushButton {
-                background-color: #2563eb;
-                color: #FFFFFF;
-                font-size: 13px;
-                font-weight: bold;
-                border-radius: 6px;
-                padding: 6px 14px;
-            }
-            QPushButton:hover {
-                background-color: #3b82f6;
-            }
         """)
-        c_layout = QVBoxLayout(card)
+        c_layout = QVBoxLayout(self.calc_card)
         c_layout.setContentsMargins(16, 16, 16, 16)
         c_layout.setSpacing(12)
 
         title = QLabel("🎯 Quick Ball vs False Swipe Capture Calculator")
         title.setFont(QFont("Arial", 14, QFont.Bold))
-        title.setStyleSheet("color: #38bdf8;")
+        title.setStyleSheet("color: #00ff88; font-family: monospace;" if is_retro() else "color: #38bdf8;")
         c_layout.addWidget(title)
 
         grid = QGridLayout()
@@ -4085,23 +4203,52 @@ class QuetzalMasterApp(QMainWindow):
         c_layout.addLayout(grid)
 
         self.calc_result_lbl = QLabel("Capture Chance per Ball: --- %")
-        self.calc_result_lbl.setStyleSheet("color: #34d399; font-size: 16px; font-weight: bold; padding: 10px 0;")
+        self.calc_result_lbl.setStyleSheet("color: #00ff88; font-family: monospace; font-size: 16px; font-weight: bold; padding: 10px 0;" if is_retro() else "color: #34d399; font-size: 16px; font-weight: bold; padding: 10px 0;")
         c_layout.addWidget(self.calc_result_lbl)
 
-        calc_btn = QPushButton("Calculate Capture Rate")
-        calc_btn.setFixedHeight(34)
-        calc_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        calc_btn.setStyleSheet("background-color: #2563eb; color: #FFFFFF; font-weight: bold; border-radius: 6px;")
-        calc_btn.clicked.connect(self.calculate_catch_rate)
-        c_layout.addWidget(calc_btn)
+        self.calc_btn = QPushButton("Calculate Capture Rate")
+        self.calc_btn.setFixedHeight(34)
+        self.calc_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        if is_retro():
+            self.calc_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #183844;
+                    border-top: 2px solid #58b8a8;
+                    border-left: 2px solid #58b8a8;
+                    border-bottom: 2px solid #081820;
+                    border-right: 2px solid #081820;
+                    color: #00ff88;
+                    font-family: monospace;
+                    font-weight: bold;
+                    font-size: 12px;
+                    border-radius: 2px;
+                    padding: 6px 14px;
+                }
+                QPushButton:hover {
+                    background-color: #245060;
+                    color: #ffffff;
+                }
+                QPushButton:pressed {
+                    border-top: 2px solid #081820;
+                    border-left: 2px solid #081820;
+                    border-bottom: 2px solid #58b8a8;
+                    border-right: 2px solid #58b8a8;
+                    padding-top: 8px; padding-left: 16px;
+                }
+            """)
+        else:
+            self.calc_btn.setStyleSheet("background-color: #2563eb; color: #FFFFFF; font-weight: bold; border-radius: 6px;")
+        self.calc_btn.clicked.connect(self.calculate_catch_rate)
+        c_layout.addWidget(self.calc_btn)
 
-        layout.addWidget(card)
+        layout.addWidget(self.calc_card)
         layout.addStretch()
 
         self.tabs.addTab(tab, "🎯 Catch Calculator")
         self.calculate_catch_rate()
 
     def calculate_catch_rate(self):
+        play_sfx("menu_select.wav")
         pid = self.calc_mon_combo.currentData()
         self.cur.execute("SELECT hp, catch_rate FROM pokemon WHERE id = ?", (pid,))
         r = self.cur.fetchone()
@@ -4168,13 +4315,16 @@ class QuetzalMasterApp(QMainWindow):
             self.cur.execute("SELECT species_id FROM caught_pokemon")
             self.caught_species = set(r[0] for r in self.cur.fetchall())
 
-            self.save_status_lbl.setText(f"💾 Player: NIG • Caught: {len(self.caught_species)} / 1,499 ({len(self.caught_species)/1499*100:.1f}%)")
-            self.live_watcher_badge.setText(f"🟢 Live Save Synced ({time.strftime('%H:%M:%S')})")
+            self.update_stats_header()
+            if is_retro():
+                self.live_watcher_badge.setText(f"● LIVE SYNC ({time.strftime('%H:%M:%S')})")
+            else:
+                self.live_watcher_badge.setText(f"🟢 Live Save Synced ({time.strftime('%H:%M:%S')})")
 
             # Reload active route
             self.load_current_route_encounters()
             self.populate_pokedex_list()
-            self.populate_legendaries_table()
+            self.populate_legendaries_cards()
 
             if hasattr(self, 'map_widget'):
                 self.map_widget.load_data_from_db(DB_PATH)
