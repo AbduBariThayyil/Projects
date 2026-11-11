@@ -270,7 +270,7 @@ def test_authentic_gba_start_menu_overlay(qapp):
 
     # 3. Menu Items List
     menu_ids = [it["id"] for it in win.start_menu.menu_items]
-    assert menu_ids == ["POKÉDEX", "DEXNAV", "POKÉMON", "OPTION", "MPLAYER", "MISC"]
+    assert menu_ids == ["POKÉDEX", "DEXNAV", "TOWN MAP", "POKÉMON", "LEGENDARY", "OPTION", "MISC"]
 
     # 4. Action Triggering
     # Trigger POKÉDEX action
@@ -386,4 +386,73 @@ def test_dexnav_jump_to_pokedex_evos_tab(qapp):
     assert win.retro_pokedex_view.current_nat == sp_nat
     assert win.retro_pokedex_view.current_right_tab == 1
     
+    win.close()
+
+
+def test_pure_gba_retro_mode_no_tabs_and_controls(qapp):
+    win = quetzal_dex_gui.QuetzalMasterApp()
+    win.show()
+    assert win.current_theme == "retro"
+    assert win.tabs.tabBar().isVisible() is False
+    assert win.header_frame.isVisible() is False
+    assert win.controls.isVisible() is False
+    assert win.controller_guide_bar.isVisible() is True
+
+    # Switching to modern restores them
+    win.toggle_theme()
+    assert win.current_theme == "modern"
+    assert win.tabs.tabBar().isVisible() is True
+    assert win.header_frame.isVisible() is True
+    assert win.controls.isVisible() is True
+    assert win.controller_guide_bar.isVisible() is False
+
+    win.close()
+
+
+def test_gba_dpad_navigation(qapp):
+    win = quetzal_dex_gui.QuetzalMasterApp()
+    # Route 101 has Land encounters
+    win._select_dexnav_slot(1, 0, play_sound=False)
+    assert win.dexnav_sel_row == 1
+    assert win.dexnav_sel_col == 0
+    slot_0 = win._get_dexnav_slots_grid()[1][0]
+    assert slot_0.is_selected is True
+    assert "SEARCH" in win.dexnav_search_lbl.text()
+
+    # Move Down
+    win._nav_dexnav_dpad(0, 1)
+    assert win.dexnav_sel_row == 2
+    slot_down = win._get_dexnav_slots_grid()[2][0]
+    assert slot_down.is_selected is True
+    assert slot_0.is_selected is False
+
+    # Move Right
+    win._nav_dexnav_dpad(1, 0)
+    assert win.dexnav_sel_col == 1
+    slot_right = win._get_dexnav_slots_grid()[2][1]
+    assert slot_right.is_selected is True
+
+    win.close()
+
+
+def test_gba_spacebar_start_menu_event_filter(qapp):
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtCore import QEvent, Qt
+
+    win = quetzal_dex_gui.QuetzalMasterApp()
+    win.show()
+    assert win.start_menu.isVisible() is False
+
+    # Simulate Space key event through event filter
+    space_ev = QKeyEvent(QEvent.KeyPress, Qt.Key_Space, Qt.NoModifier)
+    consumed = win.gba_event_filter.eventFilter(win, space_ev)
+    assert consumed is True
+    assert win.start_menu.isVisible() is True
+
+    # Simulate Escape key event through event filter
+    esc_ev = QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+    consumed = win.gba_event_filter.eventFilter(win, esc_ev)
+    assert consumed is True
+    assert win.start_menu.isVisible() is False
+
     win.close()

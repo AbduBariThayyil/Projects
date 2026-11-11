@@ -25,17 +25,70 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QLineEdit, QListWidget, QListWidgetItem,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QScrollArea, QFrame, QSplitter, QTabWidget, QProgressBar, QGridLayout,
-    QSizePolicy, QSpinBox, QCheckBox
+    QSizePolicy, QSpinBox, QCheckBox, QTextEdit, QPlainTextEdit
 )
 from PySide6.QtGui import (
     QFont, QColor, QPixmap, QIcon, QPainter, QBrush, QPen, QCursor
 )
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QObject
 
 import quetzal_save_reader
 from regional_map_widget import RegionalMapWidget, normalize_loc, REGIONAL_MAP_DATA
 from pokedex_retro_view import PokedexRetroView
 from gba_start_menu_widget import GbaStartMenuOverlay
+
+# ==========================================
+# GBA CONSOLE ARCHITECTURE & FILTER
+# ==========================================
+class GbaApplicationEventFilter(QObject):
+    """
+    Application-level event filter ensuring GBA controls take precedence:
+    - Space always toggles Start Menu (unless typing in text input).
+    - Esc / X always closes Start Menu if open.
+    - F11 toggles Fullscreen.
+    - Prevents QPushButton focus stealing from triggering buttons on Space.
+    """
+    def __init__(self, main_win):
+        super().__init__(main_win)
+        self.main_win = main_win
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.KeyPress:
+            focus_w = QApplication.focusWidget()
+            in_text = isinstance(focus_w, (QLineEdit, QTextEdit, QPlainTextEdit))
+
+            if event.key() == Qt.Key_F11:
+                if self.main_win.isFullScreen():
+                    self.main_win.showNormal()
+                else:
+                    self.main_win.showFullScreen()
+                return True
+
+            if event.key() == Qt.Key_Space:
+                if not in_text:
+                    self.main_win.toggle_start_menu()
+                    return True  # Consume completely so NO QPushButton ever handles Space!
+
+            if event.key() in (Qt.Key_Escape, Qt.Key_X):
+                if hasattr(self.main_win, 'start_menu') and self.main_win.start_menu.isVisible():
+                    self.main_win.start_menu.hide_menu()
+                    return True
+                elif in_text and event.key() == Qt.Key_Escape:
+                    focus_w.clearFocus()
+                    return True
+
+        return super().eventFilter(watched, event)
+
+
+class DexNavRetroBackgroundWidget(QWidget):
+    """Authentic GBA DexNav background: sky blue #72b8df with cyan pinstripes #92cce8."""
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        w, h = self.width(), self.height()
+        painter.fillRect(0, 0, w, h, QColor("#72b8df"))
+        painter.setPen(QColor("#92cce8"))
+        for y in range(0, h, 4):
+            painter.drawLine(0, y, w, y)
 
 # ==========================================
 # CONSTANTS & ASSET PATHS
@@ -594,13 +647,19 @@ class DexNavSlotWidget(QFrame):
         self.init_ui()
 
     def init_ui(self):
-        if self.habitat == "LAND":
-            self.setFixedSize(88, 92)
+        if is_retro():
+            if self.habitat == "LAND":
+                self.setFixedSize(58, 58)
+            else:
+                self.setFixedSize(64, 64)
         else:
-            self.setFixedSize(94, 94)
+            if self.habitat == "LAND":
+                self.setFixedSize(88, 92)
+            else:
+                self.setFixedSize(94, 94)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 3, 4, 3)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(1)
 
         # Top Bar: Dex # / Slot # and mini Pokéball
@@ -697,7 +756,7 @@ class DexNavSlotWidget(QFrame):
         # Sprite / Silhouette: show silhouette if uncaught (authentic DexNav behavior)
         pm = get_species_pixmap(pid, is_silhouette=(not self.is_caught))
         if pm:
-            scale_sz = 42 if self.habitat == "LAND" else 46
+            scale_sz = 48 if is_retro() else (42 if self.habitat == "LAND" else 46)
             self.center_box.setPixmap(pm.scaled(scale_sz, scale_sz, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
             self.center_box.setText("🐾")
@@ -720,19 +779,37 @@ class DexNavSlotWidget(QFrame):
 
     def update_style(self):
         retro = is_retro()
+        if retro:
+            self.id_lbl.hide()
+            self.ball_lbl.hide()
+            self.name_lbl.hide()
+            self.rate_lbl.hide()
+            self.form_badge_lbl.hide()
+            if self.habitat == "LAND":
+                self.setFixedSize(58, 58)
+            else:
+                self.setFixedSize(64, 64)
+        else:
+            self.id_lbl.show()
+            self.ball_lbl.show()
+            self.name_lbl.show()
+            self.rate_lbl.show()
+            if self.habitat == "LAND":
+                self.setFixedSize(88, 92)
+            else:
+                self.setFixedSize(94, 94)
+
         if not self.mon_data:
             # Empty X slot styling
             if retro:
                 self.setStyleSheet("""
                     QFrame {
-                        background-color: #081014;
-                        border-top: 1px solid #102428;
-                        border-left: 1px solid #102428;
-                        border-bottom: 1px solid #04080a;
-                        border-right: 1px solid #04080a;
-                        border-radius: 3px;
+                        background-color: #f8fafc;
+                        border: 1px dashed #cbd5e1;
+                        border-radius: 4px;
                     }
                 """)
+                self.center_box.setStyleSheet("color: #cbd5e1; font-weight: bold; font-size: 16px;")
             else:
                 self.setStyleSheet("""
                     QFrame {
@@ -741,6 +818,7 @@ class DexNavSlotWidget(QFrame):
                         border-radius: 6px;
                     }
                 """)
+                self.center_box.setStyleSheet("color: #ef4444; font-weight: bold; font-size: 16px;")
             self.name_lbl.setStyleSheet("color: #475569; font-size: 8px;")
             return
 
@@ -748,39 +826,23 @@ class DexNavSlotWidget(QFrame):
 
         if retro:
             if self.is_selected:
-                border_style = """
-                    background-color: #103525;
-                    border-top: 2px solid #00ff88;
-                    border-left: 2px solid #00ff88;
-                    border-bottom: 2px solid #042010;
-                    border-right: 2px solid #042010;
-                """
-            elif self.is_caught:
-                border_style = """
-                    background-color: #0a2018;
-                    border-top: 1.5px solid #00a850;
-                    border-left: 1.5px solid #00a850;
-                    border-bottom: 1.5px solid #04140c;
-                    border-right: 1.5px solid #04140c;
-                """
+                self.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: #e0f2fe;
+                        border: 3px solid #0284c7;
+                        border-radius: 4px;
+                        {opacity_css}
+                    }}
+                """)
             else:
-                border_style = """
-                    background-color: #09171e;
-                    border-top: 1.5px solid #285462;
-                    border-left: 1.5px solid #285462;
-                    border-bottom: 1.5px solid #040a0c;
-                    border-right: 1.5px solid #040a0c;
-                """
-            self.setStyleSheet(f"""
-                QFrame {{
-                    {border_style}
-                    border-radius: 3px;
-                    {opacity_css}
-                }}
-            """)
-            self.id_lbl.setStyleSheet("color: #58b8a8; font-size: 8px; font-weight: bold;")
-            self.name_lbl.setStyleSheet("color: #e0fff0; font-size: 8px; font-weight: bold;")
-            self.rate_lbl.setStyleSheet("color: #88c8b8; font-size: 7px;")
+                self.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: #ffffff;
+                        border: 1px solid #f1f5f9;
+                        border-radius: 4px;
+                        {opacity_css}
+                    }}
+                """)
         else:
             if self.is_selected:
                 border_style = "border: 2px solid #38bdf8; background-color: #1e293b;"
@@ -974,32 +1036,35 @@ class DexNavHabitatBoxWidget(QFrame):
 
     def apply_theme(self, theme_mode: str):
         retro = (theme_mode == "retro")
-        # Color palettes per habitat
+        # Color palettes per habitat matching authentic DexNav
         colors = {
-            "WATER": {"header_retro": "#0c3048", "border_retro": "#00b8ff", "header_mod": "#1e3a8a", "border_mod": "#3b82f6"},
-            "LAND": {"header_retro": "#0c3c1e", "border_retro": "#00e858", "header_mod": "#14532d", "border_mod": "#22c55e"},
-            "BEACH": {"header_retro": "#483008", "border_retro": "#f8b800", "header_mod": "#78350f", "border_mod": "#f59e0b"},
-            "HIDDEN": {"header_retro": "#481014", "border_retro": "#ff3858", "header_mod": "#7f1d1d", "border_mod": "#ef4444"},
-        }.get(self.habitat, {"header_retro": "#182830", "border_retro": "#58b8a8", "header_mod": "#1e293b", "border_mod": "#64748b"})
+            "WATER": {"header_retro": "#0284c7", "border_retro": "#e0f2fe", "header_mod": "#1e3a8a", "border_mod": "#3b82f6"},
+            "LAND": {"header_retro": "#22c55e", "border_retro": "#dcfce7", "header_mod": "#14532d", "border_mod": "#22c55e"},
+            "BEACH": {"header_retro": "#d97706", "border_retro": "#fef3c7", "header_mod": "#78350f", "border_mod": "#f59e0b"},
+            "HIDDEN": {"header_retro": "#ef4444", "border_retro": "#fee2e2", "header_mod": "#7f1d1d", "border_mod": "#ef4444"},
+        }.get(self.habitat, {"header_retro": "#0f766e", "border_retro": "#ccfbf1", "header_mod": "#1e293b", "border_mod": "#64748b"})
 
         if retro:
             self.setStyleSheet("""
                 DexNavHabitatBoxWidget {
-                    background-color: #0b1820;
-                    border-top: 2px solid #386860;
-                    border-left: 2px solid #386860;
-                    border-bottom: 2px solid #040c10;
-                    border-right: 2px solid #040c10;
-                    border-radius: 4px;
+                    background-color: transparent;
+                    border: none;
                 }
             """)
             self.header_frame.setStyleSheet(f"""
                 background-color: {colors["header_retro"]};
-                border-top: 1.5px solid {colors["border_retro"]};
-                border-left: 1.5px solid {colors["border_retro"]};
-                border-bottom: 1.5px solid #04080c;
-                border-right: 1.5px solid #04080c;
-                border-radius: 2px;
+                border-top: 2px solid rgba(255, 255, 255, 0.4);
+                border-left: 2px solid rgba(255, 255, 255, 0.4);
+                border-bottom: 2px solid rgba(0, 0, 0, 0.2);
+                border-right: 2px solid rgba(0, 0, 0, 0.2);
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            """)
+            self.grid_frame.setStyleSheet("""
+                background-color: #ffffff;
+                border-bottom-left-radius: 4px;
+                border-bottom-right-radius: 4px;
+                border: 2px solid #ffffff;
             """)
             self.title_lbl.setStyleSheet(f"color: #ffffff; font-weight: bold; font-family: monospace; font-size: 11px;")
             self.count_lbl.setStyleSheet(f"color: {colors['border_retro']}; font-weight: bold; font-family: monospace; font-size: 9px;")
@@ -1015,6 +1080,10 @@ class DexNavHabitatBoxWidget(QFrame):
                 background-color: {colors["header_mod"]};
                 border: 1px solid {colors["border_mod"]};
                 border-radius: 6px;
+            """)
+            self.grid_frame.setStyleSheet("""
+                background-color: transparent;
+                border: none;
             """)
             self.title_lbl.setStyleSheet("color: #f8fafc; font-weight: bold; font-size: 11px;")
             self.count_lbl.setStyleSheet(f"color: {colors['border_mod']}; font-weight: bold; font-size: 9px;")
@@ -1436,7 +1505,7 @@ class SpeciesInspectorDrawer(QFrame):
         self.init_ui()
 
     def init_ui(self):
-        self.setFixedWidth(340)
+        self.setFixedWidth(300)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -1508,7 +1577,11 @@ class SpeciesInspectorDrawer(QFrame):
         self.hidden_ability_lbl.setWordWrap(True)
         dn_layout.addWidget(self.hidden_ability_lbl)
 
-        self.items_lbl = QLabel("ITEMS:  None")
+        self.items_hdr = QLabel("ITEMS")
+        self.items_hdr.setAlignment(Qt.AlignCenter)
+        dn_layout.addWidget(self.items_hdr)
+
+        self.items_lbl = QLabel("None")
         self.items_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
         self.items_lbl.setWordWrap(True)
         dn_layout.addWidget(self.items_lbl)
@@ -1706,92 +1779,48 @@ class SpeciesInspectorDrawer(QFrame):
         if theme_mode == "retro":
             self.setStyleSheet("""
                 SpeciesInspectorDrawer {
-                    background-color: #10262e;
-                    border-top: 3px solid #58b8a8;
-                    border-left: 3px solid #58b8a8;
-                    border-bottom: 3px solid #081820;
-                    border-right: 3px solid #081820;
-                    border-radius: 4px;
+                    background-color: #ffffff;
+                    border-top: 5px solid #ef4444;
+                    border-left: 2px solid #cbd5e1;
+                    border-right: 2px solid #cbd5e1;
+                    border-bottom: 2px solid #cbd5e1;
+                    border-radius: 8px;
                 }
             """)
-            self.header_title.setText("📡 DEXNAV // SPECIES TELEMETRY")
-            self.header_title.setStyleSheet("color: #00ff88; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
             self.search_btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #123040;
-                    border-top: 3px solid #00ff88;
-                    border-left: 3px solid #00ff88;
-                    border-bottom: 3px solid #061820;
-                    border-right: 3px solid #061820;
-                    color: #00ff88;
+                    background-color: #22c55e;
+                    border: 2px solid #16a34a;
+                    color: #ffffff;
                     font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
                     font-size: 13px;
                     font-weight: bold;
                     letter-spacing: 2px;
-                    border-radius: 3px;
-                    padding: 6px;
+                    border-radius: 17px;
+                    padding: 6px 20px;
                 }
                 QPushButton:hover {
-                    background-color: #1a4458;
-                    color: #ffffff;
+                    background-color: #16a34a;
                 }
                 QPushButton:pressed {
-                    border-top: 3px solid #061820;
-                    border-left: 3px solid #061820;
-                    border-bottom: 3px solid #00ff88;
-                    border-right: 3px solid #00ff88;
-                    padding-top: 8px; padding-left: 8px;
+                    background-color: #15803d;
                 }
             """)
-            box_style = """
-                background-color: #09171e;
-                border-top: 2px solid #040a0c;
-                border-left: 2px solid #040a0c;
-                border-bottom: 2px solid #387068;
-                border-right: 2px solid #387068;
-                border-radius: 3px;
-            """
-            self.banner.setStyleSheet(box_style)
-            self.dexnav_frame.setStyleSheet(box_style)
-            self.prob_frame.setStyleSheet(box_style)
-            self.stats_frame.setStyleSheet(box_style)
-            for stat, (bar, val_lbl) in self.stat_bars.items():
-                bar.setStyleSheet("""
-                    QProgressBar {
-                        background-color: #081418;
-                        border-top: 1px solid #040a0c;
-                        border-left: 1px solid #040a0c;
-                        border-bottom: 1px solid #285462;
-                        border-right: 1px solid #285462;
-                        border-radius: 2px;
-                    }
-                    QProgressBar::chunk {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #00ff68, stop:0.5 #00e858, stop:1 #009838);
-                        border-radius: 1px;
-                    }
-                """)
-                val_lbl.setStyleSheet("color: #00ff88; font-family: monospace; font-size: 10px; font-weight: bold;")
-            self.open_pokedex_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #183844;
-                    border-top: 2px solid #58b8a8;
-                    border-left: 2px solid #58b8a8;
-                    border-bottom: 2px solid #081820;
-                    border-right: 2px solid #081820;
-                    color: #00ff88;
-                    font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
-                    font-size: 10px;
-                    font-weight: bold;
-                    border-radius: 2px;
-                    padding: 5px 8px;
-                }
-                QPushButton:hover {
-                    background-color: #245060;
-                    border-top: 2px solid #78d8c0;
-                    border-left: 2px solid #78d8c0;
-                    color: #ffffff;
-                }
-            """)
+            self.banner.setStyleSheet("background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;")
+            self.name_lbl.setStyleSheet("color: #0f172a; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 15px; font-weight: bold;")
+            self.dexnav_frame.setStyleSheet("background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;")
+            self.search_lvl_lbl.setStyleSheet("color: #d97706; font-family: monospace; font-size: 11px; font-weight: bold;")
+            self.hidden_ability_lbl.setStyleSheet("color: #0f172a; font-family: monospace; font-size: 11px; font-weight: bold;")
+            self.items_hdr.show()
+            self.items_hdr.setStyleSheet("background-color: #dc2626; color: #ffffff; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 11px; font-weight: bold; padding: 2px 6px; border-radius: 3px;")
+            self.items_lbl.setStyleSheet("color: #0f172a; font-family: monospace; font-size: 12px; font-weight: bold; padding: 2px 4px;")
+
+            self.header_title.hide()
+            self.rate_info_lbl.hide()
+            self.dn_title.hide()
+            self.prob_frame.hide()
+            self.stats_frame.hide()
+            self.open_pokedex_btn.hide()
         else:
             self.setStyleSheet("""
                 SpeciesInspectorDrawer {
@@ -1826,9 +1855,17 @@ class SpeciesInspectorDrawer(QFrame):
                 border-radius: 6px;
             """
             self.banner.setStyleSheet(box_style)
+            self.name_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold;")
             self.dexnav_frame.setStyleSheet(box_style)
             self.prob_frame.setStyleSheet(box_style)
             self.stats_frame.setStyleSheet(box_style)
+            self.header_title.show()
+            self.rate_info_lbl.show()
+            self.dn_title.show()
+            self.prob_frame.show()
+            self.stats_frame.show()
+            self.open_pokedex_btn.show()
+            self.items_hdr.hide()
             for stat, (bar, val_lbl) in self.stat_bars.items():
                 bar.setStyleSheet("""
                     QProgressBar {
@@ -1871,11 +1908,14 @@ class SpeciesInspectorDrawer(QFrame):
         self.is_caught = bool(data.get("is_caught", False))
 
         form_badge = data.get("form_badge") or get_form_badge(pid, nat_dex, nat_dex, data.get("type1", ""), data.get("type2", ""))
-        if form_badge and form_badge != "Standard":
-            display_badge = f"{form_badge} Form" if form_badge in ("Alolan", "Galarian", "Hisuian", "Paldean") else form_badge
-            self.name_lbl.setText(f"#{nat_dex:04d} {name} • {display_badge}")
+        if is_retro():
+            self.name_lbl.setText(name)
         else:
-            self.name_lbl.setText(f"#{nat_dex:04d} {name}")
+            if form_badge and form_badge != "Standard":
+                display_badge = f"{form_badge} Form" if form_badge in ("Alolan", "Galarian", "Hisuian", "Paldean") else form_badge
+                self.name_lbl.setText(f"#{nat_dex:04d} {name} • {display_badge}")
+            else:
+                self.name_lbl.setText(f"#{nat_dex:04d} {name}")
         pm = get_species_pixmap(pid, is_silhouette=(not self.is_caught))
         if pm:
             self.sprite_lbl.setPixmap(pm.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -1902,7 +1942,7 @@ class SpeciesInspectorDrawer(QFrame):
         search_lvl = 10 if self.is_caught else 0
         self.search_lvl_lbl.setText(f"SEARCH LEVEL:  {search_lvl}")
 
-        ha = data.get("hidden_ability")
+        ha = data.get("hidden_ability") or data.get("abilities")
         if ha and ha != "None":
             self.hidden_ability_lbl.setText(f"HIDDEN ABILITY:  {ha}")
         else:
@@ -1910,9 +1950,9 @@ class SpeciesInspectorDrawer(QFrame):
 
         held = data.get("held_items")
         if held and held != "None":
-            self.items_lbl.setText(f"ITEMS:  {held}")
+            self.items_lbl.setText(held if is_retro() else f"ITEMS:  {held}")
         else:
-            self.items_lbl.setText("ITEMS:  None")
+            self.items_lbl.setText("NONE" if is_retro() else "ITEMS:  None")
 
         chance = data.get("chance", 0)
         min_l = data.get("min_level", 0)
@@ -2787,6 +2827,7 @@ class QuetzalMasterApp(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
+        self.main_layout = main_layout
         main_layout.setContentsMargins(12, 10, 12, 12)
         main_layout.setSpacing(8)
 
@@ -2876,11 +2917,39 @@ class QuetzalMasterApp(QMainWindow):
         self.create_legendary_roadmap_tab()
         self.create_calculator_tab()
 
+        # GBA Controller Guide Bar
+        self.controller_guide_bar = QFrame()
+        self.controller_guide_bar.setFixedHeight(28)
+        self.controller_guide_bar.setStyleSheet("""
+            QFrame {
+                background-color: #08161e;
+                border-top: 1px solid #1a3d38;
+            }
+        """)
+        cgb_layout = QHBoxLayout(self.controller_guide_bar)
+        cgb_layout.setContentsMargins(12, 2, 12, 2)
+        self.controller_guide_lbl = QLabel("🎮 [D-PAD / ↑↓←→] Move  •  [A / Z / Enter] Select/Search  •  [B / X / Esc] Back  •  [START / Space] Menu  •  [L / R / Q/W] Route  •  [F11] Fullscreen")
+        self.controller_guide_lbl.setAlignment(Qt.AlignCenter)
+        self.controller_guide_lbl.setStyleSheet("color: #00ff88; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 11px; font-weight: bold;")
+        cgb_layout.addWidget(self.controller_guide_lbl)
+        main_layout.addWidget(self.controller_guide_bar)
+
         self.apply_theme()
 
         # GBA Start Menu Overlay
         self.start_menu = GbaStartMenuOverlay(save_path=self.save_path, parent=self)
         self.start_menu.action_triggered.connect(self.on_start_menu_action)
+
+        for btn in self.findChildren(QPushButton):
+            btn.setFocusPolicy(Qt.NoFocus)
+
+        self.gba_event_filter = GbaApplicationEventFilter(self)
+        qapp = QApplication.instance()
+        if qapp:
+            qapp.installEventFilter(self.gba_event_filter)
+
+        self.dexnav_sel_row = 1
+        self.dexnav_sel_col = 0
 
     def toggle_start_menu(self):
         """Toggle authentic in-game GBA Start Menu overlay."""
@@ -2896,28 +2965,165 @@ class QuetzalMasterApp(QMainWindow):
                 self.pokedex_main_tabs.setCurrentIndex(0)
         elif action == "DEXNAV":
             self.tabs.setCurrentIndex(0)
+        elif action == "TOWN MAP":
+            self.tabs.setCurrentIndex(1)
         elif action == "POKÉMON":
             self.tabs.setCurrentIndex(3)
+        elif action == "LEGENDARY":
+            self.tabs.setCurrentIndex(5)
         elif action == "OPTION":
             self.toggle_theme()
         elif action == "MPLAYER":
             play_sfx("caught_fanfare.wav")
         elif action == "MISC":
-            self.tabs.setCurrentIndex(1)
+            self.tabs.setCurrentIndex(6)
+
+    def _get_dexnav_slots_grid(self):
+        """Returns 2D grid of DexNavSlotWidget:
+        row 0: water_box.slots (5)
+        row 1: land_box.slots[0:6] (6)
+        row 2: land_box.slots[6:12] (6)
+        row 3: beach_box.slots (3) + hidden_box.slots (1) (4)
+        """
+        r0 = list(getattr(self.water_box, 'slots', []))
+        land_slots = getattr(self.land_box, 'slots', [])
+        r1 = list(land_slots[:6])
+        r2 = list(land_slots[6:12])
+        r3 = list(getattr(self.beach_box, 'slots', [])) + list(getattr(self.hidden_box, 'slots', []))
+        return [r0, r1, r2, r3]
+
+    def _select_dexnav_slot(self, row: int, col: int, play_sound: bool = True):
+        grid = self._get_dexnav_slots_grid()
+        if not grid or not (0 <= row < len(grid)):
+            return
+        r_slots = grid[row]
+        if not r_slots:
+            return
+        col = max(0, min(col, len(r_slots) - 1))
+        self.dexnav_sel_row = row
+        self.dexnav_sel_col = col
+        target_slot = r_slots[col]
+
+        for box in [self.water_box, self.land_box, self.beach_box, self.hidden_box]:
+            for s in box.slots:
+                s.is_selected = (s is target_slot)
+                s.update_style()
+
+        if target_slot.mon_data:
+            self.inspector_drawer.populate(target_slot.mon_data)
+            if hasattr(self, 'dexnav_search_lbl'):
+                self.dexnav_search_lbl.setText(f"SEARCH  {target_slot.mon_data['species_name'].upper()}")
+        else:
+            if hasattr(self, 'dexnav_search_lbl'):
+                self.dexnav_search_lbl.setText("SEARCH  POKéMON")
+
+        if hasattr(self, 'cards_scroll'):
+            self.cards_scroll.ensureWidgetVisible(target_slot)
+
+        if play_sound:
+            play_sfx("menu_move.wav")
+
+    def _nav_dexnav_dpad(self, dx: int, dy: int):
+        grid = self._get_dexnav_slots_grid()
+        if not grid:
+            return
+        curr_r = getattr(self, 'dexnav_sel_row', 1)
+        curr_c = getattr(self, 'dexnav_sel_col', 0)
+
+        if dy != 0:
+            new_r = max(0, min(len(grid) - 1, curr_r + dy))
+            new_c = min(curr_c, len(grid[new_r]) - 1)
+            self._select_dexnav_slot(new_r, new_c, play_sound=True)
+        elif dx != 0:
+            new_c = max(0, min(len(grid[curr_r]) - 1, curr_c + dx))
+            self._select_dexnav_slot(curr_r, new_c, play_sound=True)
 
     def keyPressEvent(self, event):
-        """Global key handling: Space toggles Start Menu."""
+        """Global key handling for authentic GBA controls."""
         focus_w = QApplication.focusWidget()
+        in_text = isinstance(focus_w, (QLineEdit, QTextEdit, QPlainTextEdit))
+
+        if event.key() == Qt.Key_F11:
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+            event.accept()
+            return
+
         if event.key() == Qt.Key_Space:
-            if not isinstance(focus_w, QLineEdit):
+            if not in_text:
                 self.toggle_start_menu()
                 event.accept()
                 return
-        elif event.key() == Qt.Key_Escape:
-            if hasattr(self, 'start_menu') and self.start_menu.isVisible():
+
+        if hasattr(self, 'start_menu') and self.start_menu.isVisible():
+            if event.key() in (Qt.Key_Escape, Qt.Key_X):
                 self.start_menu.hide_menu()
                 event.accept()
                 return
+            self.start_menu.keyPressEvent(event)
+            if event.isAccepted():
+                return
+
+        if not in_text:
+            cur_tab = self.tabs.currentIndex()
+            # DexNav Route encounters tab
+            if cur_tab == 0:
+                key = event.key()
+                if key in (Qt.Key_Up, Qt.Key_K):
+                    self._nav_dexnav_dpad(0, -1)
+                    event.accept()
+                    return
+                elif key in (Qt.Key_Down, Qt.Key_J):
+                    self._nav_dexnav_dpad(0, 1)
+                    event.accept()
+                    return
+                elif key in (Qt.Key_Left, Qt.Key_H):
+                    self._nav_dexnav_dpad(-1, 0)
+                    event.accept()
+                    return
+                elif key in (Qt.Key_Right, Qt.Key_L):
+                    self._nav_dexnav_dpad(1, 0)
+                    event.accept()
+                    return
+                elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z):
+                    grid = self._get_dexnav_slots_grid()
+                    r = getattr(self, 'dexnav_sel_row', 1)
+                    c = getattr(self, 'dexnav_sel_col', 0)
+                    if 0 <= r < len(grid) and 0 <= c < len(grid[r]):
+                        slot = grid[r][c]
+                        if slot.mon_data:
+                            play_sfx("menu_select.wav")
+                            if hasattr(self.inspector_drawer, 'search_btn'):
+                                self.inspector_drawer.search_btn.click()
+                    event.accept()
+                    return
+                elif key in (Qt.Key_Escape, Qt.Key_X):
+                    play_sfx("menu_cancel.wav")
+                    event.accept()
+                    return
+                elif key in (Qt.Key_Q, Qt.Key_PageUp, Qt.Key_BracketLeft):
+                    self.on_prev_route()
+                    event.accept()
+                    return
+                elif key in (Qt.Key_W, Qt.Key_PageDown, Qt.Key_BracketRight):
+                    self.on_next_route()
+                    event.accept()
+                    return
+
+            # Town Map tab
+            elif cur_tab == 1 and hasattr(self, 'map_widget'):
+                self.map_widget.keyPressEvent(event)
+                if event.isAccepted():
+                    return
+
+            # Pokédex tab
+            elif cur_tab == 2 and hasattr(self, 'retro_pokedex_view'):
+                self.retro_pokedex_view.keyPressEvent(event)
+                if event.isAccepted():
+                    return
+
         super().keyPressEvent(event)
 
     def resizeEvent(self, event):
@@ -2927,7 +3133,7 @@ class QuetzalMasterApp(QMainWindow):
             self.start_menu.resize(self.size())
 
     def on_tab_changed(self, index: int):
-        play_sfx("pokenav_chirp.wav")
+        play_sfx("menu_select.wav")
 
     def toggle_theme(self):
         play_sfx("menu_select.wav")
@@ -2946,6 +3152,26 @@ class QuetzalMasterApp(QMainWindow):
         if self.current_theme == "retro":
             self.setStyleSheet(RETRO_POKENAV_STYLESHEET)
             self.setWindowTitle("🎮 Pokémon Quetzal // PokéNav Advance Companion")
+
+            if hasattr(self, 'tabs') and self.tabs.tabBar():
+                self.tabs.tabBar().hide()
+            if hasattr(self, 'header_frame'):
+                self.header_frame.hide()
+            if hasattr(self, 'controls'):
+                self.controls.hide()
+            if hasattr(self, 'habitat_bar_frame'):
+                self.habitat_bar_frame.hide()
+            if hasattr(self, 'controller_guide_bar'):
+                self.controller_guide_bar.show()
+            if hasattr(self, 'main_layout'):
+                self.main_layout.setContentsMargins(0, 0, 0, 0)
+                self.main_layout.setSpacing(0)
+            if hasattr(self, 'cards_scroll'):
+                self.cards_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+            if hasattr(self, 'dexnav_l_hint'):
+                self.dexnav_l_hint.show()
+            if hasattr(self, 'dexnav_r_hint'):
+                self.dexnav_r_hint.show()
 
             if hasattr(self, 'header_frame'):
                 self.header_frame.setStyleSheet("""
@@ -3168,6 +3394,26 @@ class QuetzalMasterApp(QMainWindow):
         else:
             self.setStyleSheet(MODERN_STYLESHEET)
             self.setWindowTitle("⚡ Pokémon Quetzal Master Companion & Strategy Hub")
+
+            if hasattr(self, 'tabs') and self.tabs.tabBar():
+                self.tabs.tabBar().show()
+            if hasattr(self, 'header_frame'):
+                self.header_frame.show()
+            if hasattr(self, 'controls'):
+                self.controls.show()
+            if hasattr(self, 'habitat_bar_frame'):
+                self.habitat_bar_frame.show()
+            if hasattr(self, 'controller_guide_bar'):
+                self.controller_guide_bar.hide()
+            if hasattr(self, 'main_layout'):
+                self.main_layout.setContentsMargins(12, 10, 12, 12)
+                self.main_layout.setSpacing(8)
+            if hasattr(self, 'cards_scroll'):
+                self.cards_scroll.setStyleSheet("")
+            if hasattr(self, 'dexnav_l_hint'):
+                self.dexnav_l_hint.hide()
+            if hasattr(self, 'dexnav_r_hint'):
+                self.dexnav_r_hint.hide()
 
             if hasattr(self, 'header_frame'):
                 self.header_frame.setStyleSheet("""
@@ -3477,7 +3723,9 @@ class QuetzalMasterApp(QMainWindow):
         layout.addWidget(self.controls)
 
         # Habitat Filter Pills
-        habitat_bar = QHBoxLayout()
+        self.habitat_bar_frame = QFrame()
+        habitat_bar = QHBoxLayout(self.habitat_bar_frame)
+        habitat_bar.setContentsMargins(0, 0, 0, 0)
         habitat_bar.setSpacing(6)
         habitat_bar.addWidget(QLabel("Habitat:"))
 
@@ -3502,25 +3750,59 @@ class QuetzalMasterApp(QMainWindow):
         self.route_mon_search.textChanged.connect(self.filter_route_cards)
         habitat_bar.addWidget(self.route_mon_search)
 
-        layout.addLayout(habitat_bar)
+        layout.addWidget(self.habitat_bar_frame)
 
         # Splitter: DexNav Route Screen (Left) | DexNav Telemetry Inspector (Right)
         splitter = QSplitter(Qt.Horizontal)
 
         self.cards_scroll = QScrollArea()
         self.cards_scroll.setWidgetResizable(True)
-        self.cards_container = QWidget()
+        self.cards_container = DexNavRetroBackgroundWidget()
         self.cards_grid = QGridLayout(self.cards_container)
-        self.cards_grid.setContentsMargins(6, 6, 6, 6)
-        self.cards_grid.setSpacing(8)
+        self.cards_grid.setContentsMargins(12, 8, 12, 10)
+        self.cards_grid.setSpacing(10)
         self.cards_scroll.setWidget(self.cards_container)
         splitter.addWidget(self.cards_scroll)
 
-        # DexNav Route Header Banner (Clean title, NO [R] button)
+        # DexNav Route Header & Search Top Bar
+        self.dexnav_top_bar = QWidget()
+        self.dexnav_top_bar.setFixedHeight(36)
+        top_bar_layout = QHBoxLayout(self.dexnav_top_bar)
+        top_bar_layout.setContentsMargins(8, 2, 8, 2)
+
+        self.dexnav_search_lbl = QLabel("SEARCH  POKéMON")
+        self.dexnav_search_lbl.setStyleSheet("""
+            color: #ffffff;
+            font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+            font-size: 15px;
+            font-weight: 900;
+            letter-spacing: 1.5px;
+        """)
+        top_bar_layout.addWidget(self.dexnav_search_lbl)
+
+        top_bar_layout.addStretch()
+
+        self.dexnav_l_hint = QLabel("◀ [L]")
+        self.dexnav_l_hint.setStyleSheet("color: rgba(255, 255, 255, 0.75); font-family: monospace; font-size: 12px; font-weight: bold;")
+        top_bar_layout.addWidget(self.dexnav_l_hint)
+
         self.dexnav_route_header = QLabel("ROUTE 101")
         self.dexnav_route_header.setAlignment(Qt.AlignCenter)
-        self.dexnav_route_header.setFixedHeight(34)
-        self.cards_grid.addWidget(self.dexnav_route_header, 0, 0, 1, 2)
+        self.dexnav_route_header.setStyleSheet("""
+            color: #ffffff;
+            font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+            font-size: 15px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            padding: 0 8px;
+        """)
+        top_bar_layout.addWidget(self.dexnav_route_header)
+
+        self.dexnav_r_hint = QLabel("[R] ▶")
+        self.dexnav_r_hint.setStyleSheet("color: rgba(255, 255, 255, 0.75); font-family: monospace; font-size: 12px; font-weight: bold;")
+        top_bar_layout.addWidget(self.dexnav_r_hint)
+
+        self.cards_grid.addWidget(self.dexnav_top_bar, 0, 0, 1, 2)
 
         # Habitat Box 1: WATER (5 slots)
         self.water_box = DexNavHabitatBoxWidget("WATER", "🌊", "#3b82f6", total_slots=5, columns=5)
@@ -4058,7 +4340,7 @@ class QuetzalMasterApp(QMainWindow):
         c_layout.setSpacing(0)
 
         self.pokedex_main_tabs = QTabWidget()
-        self.pokedex_main_tabs.currentChanged.connect(lambda: play_sfx("pokenav_chirp.wav"))
+        self.pokedex_main_tabs.currentChanged.connect(lambda: play_sfx("menu_select.wav"))
 
         # 1. Authentic In-Game GBA Pokédex View (Matching Reference Ground Truth)
         self.retro_pokedex_view = PokedexRetroView(db_path=self.db_path, save_path=self.save_path)
@@ -4147,7 +4429,7 @@ class QuetzalMasterApp(QMainWindow):
 
         # Pokédex Sub-Tabs: Area Locator, Base Stats, Learnsets, Evolution
         self.pokedex_subtabs = QTabWidget()
-        self.pokedex_subtabs.currentChanged.connect(lambda: play_sfx("pokenav_chirp.wav"))
+        self.pokedex_subtabs.currentChanged.connect(lambda: play_sfx("menu_select.wav"))
         right_box.addWidget(self.pokedex_subtabs, 1)
 
         # Sub-tab 1: Area / Habitat Locator ("locating pokemon and shi")
@@ -5703,7 +5985,7 @@ def main():
     if not app:
         app = QApplication(sys.argv)
     window = QuetzalMasterApp()
-    window.show()
+    window.showFullScreen()
     return app.exec()
 
 

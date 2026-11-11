@@ -81,10 +81,11 @@ class GbaStartMenuOverlay(QWidget):
         self.menu_items = [
             {"id": "POKÉDEX", "label": "POKÉDEX", "hint": "View Regional & National Pokédex"},
             {"id": "DEXNAV", "label": "DEXNAV", "hint": "Wild Route Encounters & Habitat"},
-            {"id": "POKÉMON", "label": "POKÉMON", "hint": "Trainer Card & Team Preview"},
+            {"id": "TOWN MAP", "label": "TOWN MAP", "hint": "Authentic 1:1 Hoenn Town Map"},
+            {"id": "POKÉMON", "label": "POKÉMON", "hint": "Trainers & Battle Frontier"},
+            {"id": "LEGENDARY", "label": "LEGENDARY", "hint": "Legendary Encounter Roadmap"},
             {"id": "OPTION", "label": "OPTION", "hint": "Toggle Retro GBA / Cyber Theme"},
-            {"id": "MPLAYER", "label": "MPLAYER", "hint": "Retro 8-Bit Audio Fanfare"},
-            {"id": "MISC", "label": "MISC", "hint": "Town Map & Catch Calculator"}
+            {"id": "MISC", "label": "MISC", "hint": "Catch Calculator & Utilities"},
         ]
         self.selected_index = 0
 
@@ -198,17 +199,18 @@ class GbaStartMenuOverlay(QWidget):
 
         # 2. Right-Hand Menu Card
         menu_w = min(280.0, w * 0.30)
-        menu_h = 440.0
+        menu_h = min(480.0, h - 56.0)
         menu_x = w - menu_w - 32.0
         menu_y = 28.0
         self.menu_card_rect = QRectF(menu_x, menu_y, menu_w, menu_h)
         self.draw_flower_card(painter, self.menu_card_rect, tile_size=24.0)
 
         # Draw Menu Items & Cursor
-        item_y_start = menu_y + 32.0
-        item_h = 58.0
+        item_y_start = menu_y + 24.0
+        item_h = (menu_h - 48.0) / max(1, len(self.menu_items))
+        self.item_h = item_h
 
-        font_menu = QFont("JetBrainsMono Nerd Font", 15, QFont.Bold)
+        font_menu = QFont("JetBrainsMono Nerd Font", 14, QFont.Bold)
         painter.setFont(font_menu)
 
         for i, item in enumerate(self.menu_items):
@@ -218,15 +220,15 @@ class GbaStartMenuOverlay(QWidget):
             if is_sel:
                 # Authentic red or dark selection arrow
                 painter.setPen(QColor("#ef3131"))
-                painter.drawText(QRectF(menu_x + 24.0, cur_y, 30.0, item_h), Qt.AlignLeft | Qt.AlignVCenter, "▶")
+                painter.drawText(QRectF(menu_x + 20.0, cur_y, 28.0, item_h), Qt.AlignLeft | Qt.AlignVCenter, "▶")
                 painter.setPen(QColor("#0f172a"))
             else:
                 painter.setPen(QColor("#475569"))
 
-            painter.drawText(QRectF(menu_x + 58.0, cur_y, menu_w - 70.0, item_h), Qt.AlignLeft | Qt.AlignVCenter, item["label"])
+            painter.drawText(QRectF(menu_x + 50.0, cur_y, menu_w - 60.0, item_h), Qt.AlignLeft | Qt.AlignVCenter, item["label"])
 
         # 3. Bottom Controls Hint Pill
-        hint_text = "⌨ [↑/↓] Navigate  •  [ENTER/SPACE] Select  •  [ESC] Close Menu"
+        hint_text = "🎮 [D-PAD / ↑↓] Move  •  [A / Z / ENTER] Select  •  [B / X / ESC] Back  •  [START / SPACE] Close"
         font_hint = QFont("JetBrainsMono Nerd Font", 10, QFont.Bold)
         painter.setFont(font_hint)
         painter.setPen(QColor("#e2e8f0"))
@@ -251,11 +253,11 @@ class GbaStartMenuOverlay(QWidget):
             self.update()
             event.accept()
 
-        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space, Qt.Key_Z):
             self.activate_selected()
             event.accept()
 
-        elif key in (Qt.Key_Escape, Qt.Key_Backspace):
+        elif key in (Qt.Key_Escape, Qt.Key_Backspace, Qt.Key_X):
             self.hide_menu()
             event.accept()
 
@@ -268,8 +270,8 @@ class GbaStartMenuOverlay(QWidget):
 
         if hasattr(self, "menu_card_rect") and self.menu_card_rect.contains(pos):
             # Check which menu item was clicked
-            item_y_start = self.menu_card_rect.y() + 32.0
-            item_h = 58.0
+            item_y_start = self.menu_card_rect.y() + 24.0
+            item_h = getattr(self, "item_h", 52.0)
             clicked_idx = int((pos.y() - item_y_start) // item_h)
             if 0 <= clicked_idx < len(self.menu_items):
                 self.selected_index = clicked_idx

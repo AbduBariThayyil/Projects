@@ -708,6 +708,7 @@ class PokedexRetroView(QWidget):
         for btn in (self.tab_stats_btn, self.tab_evos_btn, self.tab_how_to_get_btn):
             btn.setFixedHeight(28)
             btn.setCursor(QCursor(Qt.PointingHandCursor))
+            btn.setFocusPolicy(Qt.NoFocus)
 
         self.tab_stats_btn.clicked.connect(lambda: self.switch_right_tab(0))
         self.tab_evos_btn.clicked.connect(lambda: self.switch_right_tab(1))
@@ -1885,11 +1886,22 @@ class PokedexRetroView(QWidget):
     def keyPressEvent(self, event):
         """Handle keyboard navigation for authentic GBA feel."""
         key = event.key()
-        if key == Qt.Key_Up:
+        if key in (Qt.Key_Up, Qt.Key_K):
             self.step_selection(-1)
             event.accept()
-        elif key == Qt.Key_Down:
+        elif key in (Qt.Key_Down, Qt.Key_J):
             self.step_selection(1)
+            event.accept()
+        elif key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Tab):
+            delta = 1 if key in (Qt.Key_Right, Qt.Key_Tab) else -1
+            new_idx = (self.current_right_tab + delta) % 3
+            self.switch_right_tab(new_idx)
+            event.accept()
+        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z):
+            play_sfx("menu_select.wav")
+            event.accept()
+        elif key in (Qt.Key_Escape, Qt.Key_X):
+            play_sfx("menu_cancel.wav")
             event.accept()
         elif key == Qt.Key_PageUp:
             self.step_selection(-10)

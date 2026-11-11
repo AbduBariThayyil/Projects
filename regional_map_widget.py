@@ -27,6 +27,7 @@ import sys
 import os
 import math
 import sqlite3
+import subprocess
 from typing import Dict, List, Tuple, Optional, Any, Set
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer, QSize
@@ -38,6 +39,22 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QButtonGroup, QFrame, QSizePolicy
 )
+
+PROJECT_DIR = "/home/vibecoder/Projects"
+SFX_DIR = os.path.join(PROJECT_DIR, "assets", "sfx")
+
+def play_sfx(name: str):
+    """Play sound effect non-blockingly."""
+    fname = name if name.endswith(".wav") else f"{name}.wav"
+    wav = os.path.join(SFX_DIR, fname)
+    if os.path.exists(wav):
+        try:
+            subprocess.Popen(["paplay", wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            try:
+                subprocess.Popen(["pw-play", wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
 # ============================================================================
 # CONSTANTS & THEMES
@@ -764,6 +781,82 @@ class MapCanvas(QWidget):
             self.setCursor(QCursor(Qt.ArrowCursor))
             self.update()
 
+    def keyPressEvent(self, event):
+        """D-Pad navigation and GBA controller interaction."""
+        key = event.key()
+        if key in (Qt.Key_Up, Qt.Key_K):
+            self._move_dpad(0, -1)
+            event.accept()
+        elif key in (Qt.Key_Down, Qt.Key_J):
+            self._move_dpad(0, 1)
+            event.accept()
+        elif key in (Qt.Key_Left, Qt.Key_H):
+            self._move_dpad(-1, 0)
+            event.accept()
+        elif key in (Qt.Key_Right, Qt.Key_L):
+            self._move_dpad(1, 0)
+            event.accept()
+        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z):
+            if self.selected_node:
+                play_sfx("menu_select.wav")
+                self.node_clicked.emit(self.selected_node, self.region)
+            event.accept()
+        elif key in (Qt.Key_Escape, Qt.Key_X):
+            play_sfx("menu_cancel.wav")
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def _move_dpad(self, dx: int, dy: int):
+        """Move reticle to adjacent node in the direction of the D-Pad press."""
+        nodes = REGIONAL_MAP_DATA.get(self.region, {}).get("nodes", {})
+        if not nodes:
+            return
+
+        if not self.selected_node or self.selected_node not in nodes:
+            if self.region == REGION_HOENN and "Littleroot Town" in nodes:
+                self.selected_node = "Littleroot Town"
+            else:
+                self.selected_node = next(iter(nodes.keys()))
+            play_sfx("menu_move.wav")
+            self.update()
+            return
+
+        curr_info = nodes[self.selected_node]
+        cx, cy = curr_info["x"], curr_info["y"]
+        best_node = None
+        best_score = float("inf")
+
+        for name, info in nodes.items():
+            if name == self.selected_node:
+                continue
+            nx, ny = info["x"], info["y"]
+            diff_x = nx - cx
+            diff_y = ny - cy
+
+            if dx > 0 and diff_x <= 0:
+                continue
+            if dx < 0 and diff_x >= 0:
+                continue
+            if dy > 0 and diff_y <= 0:
+                continue
+            if dy < 0 and diff_y >= 0:
+                continue
+
+            if dx != 0:
+                score = abs(diff_x) + 2.2 * abs(diff_y)
+            else:
+                score = abs(diff_y) + 2.2 * abs(diff_x)
+
+            if score < best_score:
+                best_score = score
+                best_node = name
+
+        if best_node:
+            self.selected_node = best_node
+            play_sfx("menu_move.wav")
+            self.update()
+
     # ========================================================================
     # PAINT EVENT
     # ========================================================================
@@ -1254,6 +1347,24 @@ class MapCanvas(QWidget):
             painter.setPen(glow_pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(QPointF(px, py), node_radius + 4.0, node_radius + 4.0)
+
+            if is_selected:
+                # Authentic crisp GBA Pokénav Town Map reticle corners [ ]
+                ret_sz = node_radius + 6.0
+                clen = 5.0
+                painter.setPen(QPen(QColor("#ffffff"), 2.5))
+                # Top-left
+                painter.drawLine(QPointF(px - ret_sz, py - ret_sz), QPointF(px - ret_sz + clen, py - ret_sz))
+                painter.drawLine(QPointF(px - ret_sz, py - ret_sz), QPointF(px - ret_sz, py - ret_sz + clen))
+                # Top-right
+                painter.drawLine(QPointF(px + ret_sz, py - ret_sz), QPointF(px + ret_sz - clen, py - ret_sz))
+                painter.drawLine(QPointF(px + ret_sz, py - ret_sz), QPointF(px + ret_sz, py - ret_sz + clen))
+                # Bottom-left
+                painter.drawLine(QPointF(px - ret_sz, py + ret_sz), QPointF(px - ret_sz + clen, py + ret_sz))
+                painter.drawLine(QPointF(px - ret_sz, py + ret_sz), QPointF(px - ret_sz, py + ret_sz - clen))
+                # Bottom-right
+                painter.drawLine(QPointF(px + ret_sz, py + ret_sz), QPointF(px + ret_sz - clen, py + ret_sz))
+                painter.drawLine(QPointF(px + ret_sz, py + ret_sz), QPointF(px + ret_sz, py + ret_sz - clen))
 
         painter.save()
         painter.setOpacity(alpha_mult)
@@ -1888,6 +1999,9 @@ class RegionalMapWidget(QWidget):
 
         main_layout.addWidget(bot_bar)
 
+        for btn in self.findChildren(QPushButton):
+            btn.setFocusPolicy(Qt.NoFocus)
+
     # ========================================================================
     # PUBLIC API
     # ========================================================================
@@ -2027,6 +2141,13 @@ class RegionalMapWidget(QWidget):
 
     def _on_canvas_node_clicked(self, node_name: str, region: str):
         self.route_selected.emit(node_name, region)
+
+    def keyPressEvent(self, event):
+        if hasattr(self, 'canvas'):
+            self.canvas.keyPressEvent(event)
+            if event.isAccepted():
+                return
+        super().keyPressEvent(event)
 
     def _on_canvas_node_hovered(self, node_name: str, region: str):
         pass
