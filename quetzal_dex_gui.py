@@ -3189,6 +3189,7 @@ class QuetzalMasterApp(QMainWindow):
     def on_pokedex_mon_selected(self, row: int):
         if row < 0:
             return
+        play_sfx("menu_move.wav")
         item = self.pokedex_list.item(row)
         if not item:
             return
@@ -3387,6 +3388,7 @@ class QuetzalMasterApp(QMainWindow):
 
     def jump_to_route(self, route_name: str, region: str):
         """Switches to Route Encounters tab and selects this route."""
+        play_sfx("menu_select.wav")
         reg_idx = self.region_combo.findText(region)
         if reg_idx >= 0:
             self.region_combo.setCurrentIndex(reg_idx)
@@ -3397,6 +3399,7 @@ class QuetzalMasterApp(QMainWindow):
 
     def show_location_on_map(self, route_name: str, region: str):
         """Switches to Regional Town Map tab and highlights this route."""
+        play_sfx("menu_select.wav")
         if hasattr(self, 'map_widget'):
             self.map_widget.set_region(region)
             self.map_widget.highlight_locations([route_name])
@@ -3404,6 +3407,7 @@ class QuetzalMasterApp(QMainWindow):
 
     def jump_to_pokedex_mon(self, species_id: int):
         """Jumps directly to this Pokémon inside the Pokédex tab."""
+        play_sfx("menu_select.wav")
         self.tabs.setCurrentIndex(2)
         # Find in list
         for i in range(self.pokedex_list.count()):
@@ -3420,40 +3424,92 @@ class QuetzalMasterApp(QMainWindow):
         is_c = pid in self.caught_species
 
         if is_c:
+            play_sfx("menu_cancel.wav")
             self.caught_species.discard(pid)
             self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (pid,))
         else:
+            play_sfx("caught_fanfare.wav")
             self.caught_species.add(pid)
             self.cur.execute("INSERT OR REPLACE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (pid, name))
         self.conn.commit()
 
         self.update_pokedex_caught_btn(not is_c)
         self.populate_pokedex_list()
-        self.save_status_lbl.setText(f"💾 Player: NIG • Caught: {len(self.caught_species)} / 1,499 ({len(self.caught_species)/1499*100:.1f}%)")
+        pct = (len(self.caught_species) / 1499 * 100) if 1499 > 0 else 0
+        if is_retro():
+            self.save_status_lbl.setText(f"💾 SAVE: NIG | POKéDEX: {len(self.caught_species)}/1,499 ({pct:.1f}%)")
+        else:
+            self.save_status_lbl.setText(f"💾 Player: NIG • Caught: {len(self.caught_species)} / 1,499 ({pct:.1f}%)")
 
     def update_pokedex_caught_btn(self, is_caught: bool):
-        if is_caught:
-            self.pokedex_caught_btn.setText("✓ CAUGHT")
-            self.pokedex_caught_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #065f46;
-                    border: 1px solid #10b981;
-                    color: #FFFFFF;
-                    font-weight: bold;
-                    border-radius: 4px;
-                }
-            """)
+        if is_retro():
+            if is_caught:
+                self.pokedex_caught_btn.setText("✓ CAUGHT")
+                self.pokedex_caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #008850;
+                        color: #00ff88;
+                        border-top: 2px solid #00ff88;
+                        border-left: 2px solid #00ff88;
+                        border-bottom: 2px solid #042010;
+                        border-right: 2px solid #042010;
+                        border-radius: 2px;
+                        font-weight: bold;
+                        font-family: monospace;
+                        font-size: 11px;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #042010;
+                        border-left: 2px solid #042010;
+                        border-bottom: 2px solid #00ff88;
+                        border-right: 2px solid #00ff88;
+                    }
+                """)
+            else:
+                self.pokedex_caught_btn.setText("○ MISSING")
+                self.pokedex_caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #5c1810;
+                        color: #ff8878;
+                        border-top: 2px solid #ff8878;
+                        border-left: 2px solid #ff8878;
+                        border-bottom: 2px solid #200806;
+                        border-right: 2px solid #200806;
+                        border-radius: 2px;
+                        font-weight: bold;
+                        font-family: monospace;
+                        font-size: 11px;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #200806;
+                        border-left: 2px solid #200806;
+                        border-bottom: 2px solid #ff8878;
+                        border-right: 2px solid #ff8878;
+                    }
+                """)
         else:
-            self.pokedex_caught_btn.setText("○ MISSING")
-            self.pokedex_caught_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #451a03;
-                    border: 1px solid #d97706;
-                    color: #fbbf24;
-                    font-weight: bold;
-                    border-radius: 4px;
-                }
-            """)
+            if is_caught:
+                self.pokedex_caught_btn.setText("✓ CAUGHT")
+                self.pokedex_caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #065f46;
+                        border: 1px solid #10b981;
+                        color: #FFFFFF;
+                        font-weight: bold;
+                        border-radius: 4px;
+                    }
+                """)
+            else:
+                self.pokedex_caught_btn.setText("○ MISSING")
+                self.pokedex_caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #451a03;
+                        border: 1px solid #d97706;
+                        color: #fbbf24;
+                        font-weight: bold;
+                        border-radius: 4px;
+                    }
+                """)
 
     # ==========================================
     # TAB 3: TRAINERS & BATTLE FRONTIER
