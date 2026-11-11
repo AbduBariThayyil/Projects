@@ -87,7 +87,7 @@ def get_bitfield(val: int, offset: int, width: int) -> int:
 class QuetzalSaveParser:
     """Complete Reverse Engineering Parser for Pokémon Quetzal save files."""
 
-    def __init__(self, save_path: str = DEFAULT_SAVE_PATH):
+    def __init__(self, save_path: str = DEFAULT_SAVE_PATH, db_path: str = DEFAULT_DB_PATH):
         if not os.path.exists(save_path):
             raise FileNotFoundError(f"Save file not found at: {save_path}")
         with open(save_path, "rb") as f:
@@ -97,8 +97,44 @@ class QuetzalSaveParser:
             raise ValueError(f"Save file too small: {len(self.raw_data)} bytes (expected >= 128KB)")
 
         self.save_path = save_path
+        self.db_path = db_path
         self.active_slot = self._determine_active_slot()
         self.sector_map = self._build_sector_map(self.active_slot)
+        self.nat_to_species, self.species_to_nat = self._load_national_dex_map()
+
+    def _load_national_dex_map(self) -> Tuple[Dict[int, List[int]], Dict[int, int]]:
+        """Load mapping between species IDs and National Dex numbers."""
+        nat_to_sps: Dict[int, List[int]] = {}
+        sp_to_nat: Dict[int, int] = {}
+        # Try database first
+        if os.path.exists(self.db_path):
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=5.0)
+                cur = conn.cursor()
+                cur.execute("SELECT id, national_dex_num FROM pokemon WHERE national_dex_num IS NOT NULL")
+                for sp, nat in cur.fetchall():
+                    sp_to_nat[sp] = nat
+                    nat_to_sps.setdefault(nat, []).append(sp)
+                conn.close()
+            except Exception:
+                pass
+
+        # If empty, try reading ROM table directly
+        rom_path = "/home/vibecoder/Games/Console Games/GBA/Moemon Quetzal.gba"
+        if not sp_to_nat and os.path.exists(rom_path):
+            try:
+                with open(rom_path, "rb") as f:
+                    rom_data = f.read()
+                off = 0x548f24
+                for sp in range(1, 1500):
+                    if off + sp * 2 + 2 <= len(rom_data):
+                        nat = struct.unpack_from("<H", rom_data, off + sp * 2)[0]
+                        sp_to_nat[sp] = nat
+                        nat_to_sps.setdefault(nat, []).append(sp)
+            except Exception:
+                pass
+
+        return nat_to_sps, sp_to_nat
 
     def _determine_active_slot(self) -> int:
         """Find the active save slot (0 or 1) by evaluating save counters and checksums."""
@@ -290,14 +326,14 @@ class QuetzalSaveParser:
 
         return boxed_pokemon
 
-    def get_pokedex_bitfield_species(self) -> Set[int]:
-        """Extract caught species IDs from Pokédex bitfields in Sector 4 (ROP/National, Johto, Kanto)."""
+    def get_pokedex_bitfield_natdex(self) -> Set[int]:
+        """Extract caught National Dex numbers from Pokédex bitfields in Sector 4 (ROP/National, Johto, Kanto)."""
         sec4_idx = self.sector_map.get(4)
         if sec4_idx is None:
             return set()
 
         sec4 = self.raw_data[sec4_idx * SECTOR_SIZE : (sec4_idx + 1) * SECTOR_SIZE]
-        caught = set()
+        caught_nat = set()
 
         # 1. Primary ROP / National Dex bitfield at 0x9D0 (130 bytes = 1034 bits)
         if len(sec4) >= 0x9D0 + 130:
@@ -306,7 +342,7 @@ class QuetzalSaveParser:
                 byte_idx = (n - 1) >> 3
                 bit_idx = (n - 1) & 7
                 if (dex_slice[byte_idx] >> bit_idx) & 1:
-                    caught.add(n)
+                    caught_nat.add(n)
 
         # 2. Johto Dex bitfield at 0x1CC (if populated)
         if len(sec4) >= 0x1CC + 130:
@@ -316,7 +352,7 @@ class QuetzalSaveParser:
                     byte_idx = (n - 1) >> 3
                     bit_idx = (n - 1) & 7
                     if (johto_slice[byte_idx] >> bit_idx) & 1:
-                        caught.add(n)
+                        caught_nat.add(n)
 
         # 3. Kanto Dex bitfield at 0x3D4 (if populated)
         if len(sec4) >= 0x3D4 + 130:
@@ -326,8 +362,24 @@ class QuetzalSaveParser:
                     byte_idx = (n - 1) >> 3
                     bit_idx = (n - 1) & 7
                     if (kanto_slice[byte_idx] >> bit_idx) & 1:
-                        caught.add(n)
+                        caught_nat.add(n)
 
+        return caught_nat
+
+    def get_pokedex_bitfield_species(self) -> Set[int]:
+        """
+        Extract caught species IDs from Pokédex bitfields in Sector 4.
+        Uses national_dex_num mapping so if bit 37 is caught, all forms sharing
+        national_dex_num = 37 (e.g. Vulpix #37 and Alolan Vulpix #954) are recognized.
+        """
+        caught_nats = self.get_pokedex_bitfield_natdex()
+        caught = set()
+        for nat in caught_nats:
+            sps = self.nat_to_species.get(nat)
+            if sps:
+                caught.update(sps)
+            else:
+                caught.add(nat)
         return caught
 
     def get_all_caught_species(self) -> Set[int]:
@@ -336,18 +388,25 @@ class QuetzalSaveParser:
         - Player's 6 party Pokémon
         - All PC box Pokémon (boxes 1 to 45/67)
         - Pokédex owned bitfields in SaveBlock1 / Sector 4
+        All forms sharing the same national_dex_num are included.
         """
         caught = set(self.get_pokedex_bitfield_species())
 
         # Union with party Pokémon
         for mon in self.get_party_pokemon():
-            if mon["species_id"] > 0:
-                caught.add(mon["species_id"])
+            sp = mon["species_id"]
+            if sp > 0:
+                nat = self.species_to_nat.get(sp, sp)
+                for rel_sp in self.nat_to_species.get(nat, [sp]):
+                    caught.add(rel_sp)
 
         # Union with PC box Pokémon
         for mon in self.get_box_pokemon():
-            if mon["species_id"] > 0:
-                caught.add(mon["species_id"])
+            sp = mon["species_id"]
+            if sp > 0:
+                nat = self.species_to_nat.get(sp, sp)
+                for rel_sp in self.nat_to_species.get(nat, [sp]):
+                    caught.add(rel_sp)
 
         return caught
 
@@ -377,7 +436,7 @@ def update_database_user_pokedex(save_path: str = DEFAULT_SAVE_PATH, db_path: st
     Update quetzal_database.db with user_pokedex table populated from active save file.
     Returns (caught_count, seen_count).
     """
-    parser = QuetzalSaveParser(save_path)
+    parser = QuetzalSaveParser(save_path, db_path=db_path)
     caught_set = parser.get_all_caught_species()
     seen_set = parser.get_all_seen_species()
 
@@ -392,32 +451,22 @@ def update_database_user_pokedex(save_path: str = DEFAULT_SAVE_PATH, db_path: st
     cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute("PRAGMA busy_timeout=10000;")
 
-    # Regional form expansion mapping:
-    # Query SELECT id, name FROM pokemon WHERE id IN ({}) for caught species.
-    # Find all form IDs in pokemon table that share the exact same name (case-insensitive)
-    # as any caught species (e.g. Vulpix ID 37 -> Alolan Vulpix ID 954; Zorua ID 570 -> Hisuian Zorua ID 1233).
-    # Add those form IDs to caught_set and insert them into caught_pokemon.
-    if caught_set:
-        caught_list = list(caught_set)
-        caught_names = set()
-        chunk_size = 500
-        for i in range(0, len(caught_list), chunk_size):
-            chunk = caught_list[i:i + chunk_size]
-            placeholders = ",".join("?" for _ in chunk)
-            cur.execute(f"SELECT id, name FROM pokemon WHERE id IN ({placeholders})", chunk)
-            for row in cur.fetchall():
-                if row[1]:
-                    caught_names.add(row[1].strip().lower())
+    # Ensure all forms sharing the same national_dex_num are fully expanded in database
+    cur.execute("SELECT id, national_dex_num FROM pokemon WHERE national_dex_num IS NOT NULL")
+    db_rows = cur.fetchall()
+    sp_to_nat = {r[0]: r[1] for r in db_rows}
+    nat_to_sps = {}
+    for sp, nat in sp_to_nat.items():
+        nat_to_sps.setdefault(nat, []).append(sp)
 
-        if caught_names:
-            name_list = list(caught_names)
-            for i in range(0, len(name_list), chunk_size):
-                chunk = name_list[i:i + chunk_size]
-                name_placeholders = ",".join("?" for _ in chunk)
-                cur.execute(f"SELECT id FROM pokemon WHERE LOWER(name) IN ({name_placeholders})", chunk)
-                form_ids = {row[0] for row in cur.fetchall()}
-                caught_set.update(form_ids)
-                seen_set.update(form_ids)
+    if caught_set:
+        expanded = set(caught_set)
+        for sp in caught_set:
+            nat = sp_to_nat.get(sp)
+            if nat and nat in nat_to_sps:
+                expanded.update(nat_to_sps[nat])
+        caught_set = expanded
+        seen_set.update(caught_set)
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_pokedex (

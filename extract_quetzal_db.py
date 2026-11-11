@@ -159,7 +159,8 @@ def main():
         bst INTEGER,
         type1 TEXT,
         type2 TEXT,
-        catch_rate INTEGER
+        catch_rate INTEGER,
+        national_dex_num INTEGER
     )
     """)
 
@@ -234,6 +235,8 @@ def main():
     for i in range(1, 1500):
         name = get_species_name(i)
         stat_off = 0x550a34 + i * 36
+        nat_off = 0x548f24 + i * 2
+        nat_dex = struct.unpack_from("<H", rom, nat_off)[0] if nat_off + 2 <= len(rom) else i
         if stat_off + 36 <= len(rom):
             hp, atk, df, spe, spa, spd = struct.unpack_from("<6B", rom, stat_off)
             t1, t2 = rom[stat_off + 6], rom[stat_off + 7]
@@ -241,8 +244,8 @@ def main():
             type1 = TYPE_NAMES[t1] if t1 < len(TYPE_NAMES) else f"Type_{t1}"
             type2 = TYPE_NAMES[t2] if t2 < len(TYPE_NAMES) else f"Type_{t2}"
             bst = hp + atk + df + spa + spd + spe
-            pokemon_records.append((i, name, hp, atk, df, spa, spd, spe, bst, type1, type2, catch_rate))
-    cur.executemany("INSERT INTO pokemon VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", pokemon_records)
+            pokemon_records.append((i, name, hp, atk, df, spa, spd, spe, bst, type1, type2, catch_rate, nat_dex))
+    cur.executemany("INSERT INTO pokemon VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", pokemon_records)
 
     print("Extracting 986 moves...")
     move_records = []
@@ -508,6 +511,7 @@ def main():
 
     # Indices for blazing speed
     cur.execute("CREATE INDEX idx_pokemon_name ON pokemon(name);")
+    cur.execute("CREATE INDEX idx_pokemon_natdex ON pokemon(national_dex_num);")
     cur.execute("CREATE INDEX idx_learnsets_pid ON learnsets(pokemon_id);")
     cur.execute("CREATE INDEX idx_evolutions_pid ON evolutions(pokemon_id);")
     cur.execute("CREATE INDEX idx_encounters_spname ON encounters(species_name);")

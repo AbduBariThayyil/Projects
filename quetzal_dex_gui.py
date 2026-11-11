@@ -463,6 +463,83 @@ class TypeBadge(QLabel):
             """)
 
 
+def get_form_badge(species_id: int, national_dex_num: int, base_species_id: int, type1: str = "", type2: str = "") -> str:
+    """
+    Returns a clean, authentic Pokémon form badge name.
+    If it is the base species (or sole form), returns 'Standard'.
+    """
+    if species_id == base_species_id:
+        return "Standard"
+
+    # Megas and Primals
+    if 899 <= species_id <= 948:
+        if species_id in (900, 912):
+            return "Mega X"
+        if species_id in (901, 913):
+            return "Mega Y"
+        if species_id == 939:
+            return "Primal"
+        if species_id == 940:
+            return "Primal"
+        return "Mega"
+
+    # Alolan Forms (Gen 7)
+    if 949 <= species_id <= 966:
+        return "Alolan"
+
+    # Galarian Forms (Gen 8)
+    if 967 <= species_id <= 985:
+        return "Galarian"
+
+    # Cap / Cosplay Pikachu & Special
+    if 986 <= species_id <= 999:
+        return f"Cap {species_id - 985}"
+
+    # Weather forms (Castform)
+    if 1028 <= species_id <= 1030:
+        return {1028: "Sunny", 1029: "Rainy", 1030: "Snowy"}.get(species_id, "Castform")
+
+    # Deoxys forms
+    if 1031 <= species_id <= 1033:
+        return {1031: "Attack", 1032: "Defense", 1033: "Speed"}.get(species_id, "Form")
+
+    # Rotom forms
+    if 1041 <= species_id <= 1045:
+        return {1041: "Heat", 1042: "Wash", 1043: "Frost", 1044: "Fan", 1045: "Mow"}.get(species_id, "Rotom")
+
+    # Origin / Sky forms
+    if species_id == 1046:
+        return "Origin"
+    if species_id == 1047:
+        return "Sky"
+
+    # Therian Formes
+    if 1065 <= species_id <= 1067:
+        return "Therian"
+
+    # Kyurem Black / White
+    if species_id == 1077:
+        return "Black"
+    if species_id == 1078:
+        return "White"
+
+    # Hisuian Forms (Gen 8 Legends: Arceus)
+    if 1223 <= species_id <= 1239:
+        return "Hisuian"
+
+    # Paldean Forms (Gen 9)
+    if 1363 <= species_id <= 1369:
+        return "Paldean"
+
+    # Gigantamax Forms
+    if 1435 <= species_id <= 1468:
+        return "G-Max"
+
+    # Generic fallback based on typing
+    t_clean = type1 if (type1 == type2 or not type2 or type2 == "None") else f"{type1}/{type2}"
+    return f"[{t_clean}]"
+
+
 class ModernEncounterCard(QFrame):
     """
     Modern responsive encounter card with authentic Emerald GBA retro styling.
@@ -478,6 +555,10 @@ class ModernEncounterCard(QFrame):
         self.is_caught = mon_data.get("is_caught", False)
         self.species_id = mon_data["species_id"]
         self.species_name = mon_data["species_name"]
+        self.national_dex_num = mon_data.get("national_dex_num", self.species_id)
+        self.form_badge = mon_data.get("form_badge")
+        if not self.form_badge:
+            self.form_badge = get_form_badge(self.species_id, self.national_dex_num, self.national_dex_num, mon_data.get("type1", ""), mon_data.get("type2", ""))
 
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.init_ui()
@@ -510,14 +591,56 @@ class ModernEncounterCard(QFrame):
         info_col.setContentsMargins(0, 0, 0, 0)
         info_col.setSpacing(3)
 
-        # Row 1: Dex # + Name
+        # Row 1: Dex # + Name + Form Badge
         title_box = QHBoxLayout()
         title_box.setSpacing(6)
-        self.dex_num = QLabel(f"#{self.species_id:04d}")
+        self.dex_num = QLabel(f"#{self.national_dex_num:04d}")
         title_box.addWidget(self.dex_num)
 
         self.name_lbl = QLabel(self.species_name)
         title_box.addWidget(self.name_lbl)
+
+        if self.form_badge and self.form_badge != "Standard":
+            display_badge = f"{self.form_badge} Form" if self.form_badge in ("Alolan", "Galarian", "Hisuian", "Paldean") else self.form_badge
+            self.form_badge_lbl = QLabel(display_badge)
+            if is_retro():
+                self.form_badge_lbl.setStyleSheet("""
+                    background-color: #10262e;
+                    color: #58f8e8;
+                    border: 1px solid #58b8a8;
+                    border-radius: 2px;
+                    padding: 0px 4px;
+                    font-family: monospace;
+                    font-size: 9px;
+                    font-weight: bold;
+                """)
+            else:
+                if "Alolan" in self.form_badge:
+                    bg, fg, border = "#0c4a6e", "#bae6fd", "#0284c7"
+                elif "Galarian" in self.form_badge:
+                    bg, fg, border = "#4c1d95", "#ddd6fe", "#7c3aed"
+                elif "Hisuian" in self.form_badge:
+                    bg, fg, border = "#134e4a", "#99f6e4", "#0d9488"
+                elif "Paldean" in self.form_badge:
+                    bg, fg, border = "#7c2d12", "#ffedd5", "#ea580c"
+                elif "Mega" in self.form_badge or "Primal" in self.form_badge:
+                    bg, fg, border = "#78350f", "#fef3c7", "#d97706"
+                elif "G-Max" in self.form_badge:
+                    bg, fg, border = "#7f1d1d", "#fee2e2", "#dc2626"
+                else:
+                    bg, fg, border = "#1e293b", "#e2e8f0", "#475569"
+
+                self.form_badge_lbl.setStyleSheet(f"""
+                    background-color: {bg};
+                    color: {fg};
+                    border: 1px solid {border};
+                    border-radius: 3px;
+                    padding: 0px 4px;
+                    font-size: 9px;
+                    font-weight: bold;
+                """)
+            title_box.addWidget(self.form_badge_lbl)
+
         title_box.addStretch()
         info_col.addLayout(title_box)
 
@@ -1073,9 +1196,16 @@ class SpeciesInspectorDrawer(QFrame):
     def populate(self, data: dict):
         self.current_species_id = data["species_id"]
         pid = data["species_id"]
+        nat_dex = data.get("national_dex_num", pid)
+        self.current_national_dex_num = nat_dex
         name = data["species_name"]
 
-        self.name_lbl.setText(f"#{pid:04d} {name}")
+        form_badge = data.get("form_badge") or get_form_badge(pid, nat_dex, nat_dex, data.get("type1", ""), data.get("type2", ""))
+        if form_badge and form_badge != "Standard":
+            display_badge = f"{form_badge} Form" if form_badge in ("Alolan", "Galarian", "Hisuian", "Paldean") else form_badge
+            self.name_lbl.setText(f"#{nat_dex:04d} {name} • {display_badge}")
+        else:
+            self.name_lbl.setText(f"#{nat_dex:04d} {name}")
         pm = get_species_pixmap(pid, is_silhouette=False)
         if pm:
             self.sprite_lbl.setPixmap(pm.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -1177,8 +1307,10 @@ class ModernLegendaryCard(QFrame):
         super().__init__(parent)
         self.leg_data = leg_data
         self.species_id = leg_data.get("species_id", 0)
+        self.national_dex_num = leg_data.get("national_dex_num", self.species_id)
         self.name = leg_data.get("name", "Unknown")
         self.is_caught = leg_data.get("is_caught", False)
+        self.form_badge = leg_data.get("form_badge") or get_form_badge(self.species_id, self.national_dex_num, self.national_dex_num, leg_data.get("type1", ""), leg_data.get("type2", ""))
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.init_ui()
 
@@ -1212,17 +1344,31 @@ class ModernLegendaryCard(QFrame):
         info_col.setContentsMargins(0, 0, 0, 0)
         info_col.setSpacing(3)
 
-        # Row 1: Dex # + Name + Gen Tag
+        # Row 1: Dex # + Name + Form Badge + Gen Tag
         title_box = QHBoxLayout()
         title_box.setSpacing(6)
-        if self.species_id > 0:
-            self.dex_num = QLabel(f"#{self.species_id:04d}")
+        if self.national_dex_num > 0:
+            self.dex_num = QLabel(f"#{self.national_dex_num:04d}")
             self.dex_num.setStyleSheet("color: #facc15; font-size: 11px; font-weight: bold;")
             title_box.addWidget(self.dex_num)
 
         self.name_lbl = QLabel(f"⭐ {self.name}")
         self.name_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold;")
         title_box.addWidget(self.name_lbl)
+
+        if self.form_badge and self.form_badge != "Standard":
+            display_badge = f"{self.form_badge} Form" if self.form_badge in ("Alolan", "Galarian", "Hisuian", "Paldean") else self.form_badge
+            self.form_badge_lbl = QLabel(display_badge)
+            self.form_badge_lbl.setStyleSheet("""
+                background-color: #3b2a05;
+                color: #fef08a;
+                border: 1px solid #ca8a04;
+                border-radius: 3px;
+                padding: 1px 5px;
+                font-size: 9px;
+                font-weight: bold;
+            """)
+            title_box.addWidget(self.form_badge_lbl)
 
         gen = self.leg_data.get("generation", "")
         if gen:
@@ -1808,14 +1954,19 @@ class LegendaryInspectorDrawer(QFrame):
     def populate(self, data: dict):
         self.current_species_id = data.get("species_id", 0)
         pid = self.current_species_id
+        nat_dex = data.get("national_dex_num", pid)
+        self.current_national_dex_num = nat_dex
         name = data.get("name", "Unknown")
         is_caught = data.get("is_caught", False)
 
-        if pid > 0:
-            self.dex_lbl.setText(f"#{pid:04d}")
+        form_badge = data.get("form_badge") or get_form_badge(pid, nat_dex, nat_dex, data.get("type1", ""), data.get("type2", ""))
+        form_suffix = f" • {form_badge} Form" if (form_badge and form_badge != "Standard") else ""
+
+        if nat_dex > 0:
+            self.dex_lbl.setText(f"#{nat_dex:04d}")
         else:
             self.dex_lbl.setText("SPECIAL")
-        self.name_lbl.setText(f"⭐ {name}")
+        self.name_lbl.setText(f"⭐ {name}{form_suffix}")
 
         pm = get_species_pixmap(pid, is_silhouette=(not is_caught))
         if pm:
@@ -1903,6 +2054,36 @@ class QuetzalMasterApp(QMainWindow):
         # Load caught species
         self.cur.execute("SELECT species_id FROM caught_pokemon")
         self.caught_species = set(row[0] for row in self.cur.fetchall())
+
+        # Load national dex maps and form groupings
+        self.cur.execute("SELECT id, national_dex_num, name, type1, type2 FROM pokemon ORDER BY national_dex_num ASC, id ASC")
+        rows = self.cur.fetchall()
+        self.sp_to_nat = {}
+        self.sp_to_name = {}
+        self.nat_to_sps = {}
+        self.nat_base_species = {}
+        self.nat_dex_to_forms = {}
+
+        for pid, nat, name, t1, t2 in rows:
+            nat = nat if nat is not None else pid
+            self.sp_to_nat[pid] = nat
+            self.sp_to_name[pid] = name
+            self.nat_to_sps.setdefault(nat, []).append(pid)
+            if nat not in self.nat_base_species:
+                self.nat_base_species[nat] = pid
+
+        for pid, nat, name, t1, t2 in rows:
+            nat = nat if nat is not None else pid
+            base_id = self.nat_base_species[nat]
+            badge = get_form_badge(pid, nat, base_id, t1, t2)
+            self.nat_dex_to_forms.setdefault(nat, []).append({
+                "id": pid,
+                "name": name,
+                "national_dex_num": nat,
+                "type1": t1,
+                "type2": t2,
+                "badge": badge
+            })
 
         self.current_region = "Hoenn"
         self.current_route_name = "ROUTE 101"
@@ -2787,7 +2968,8 @@ class QuetzalMasterApp(QMainWindow):
         sql = """
             SELECT e.method, e.slot, e.chance, e.min_level, e.max_level, e.species_id, e.species_name,
                    p.type1, p.type2, p.abilities, p.hidden_ability, p.held_items,
-                   p.hp, p.atk, p.def, p.spa, p.spd, p.spe, p.bst, p.catch_rate
+                   p.hp, p.atk, p.def, p.spa, p.spd, p.spe, p.bst, p.catch_rate,
+                   p.national_dex_num
             FROM encounters e
             LEFT JOIN pokemon p ON e.species_id = p.id
             WHERE e.location_name = ?
@@ -2809,12 +2991,18 @@ class QuetzalMasterApp(QMainWindow):
                 continue
             seen_keys.add(key)
 
+            nat_dex = r[20] if len(r) > 20 and r[20] is not None else self.sp_to_nat.get(r[5], r[5])
+            base_id = self.nat_base_species.get(nat_dex, r[5])
+            form_badge = get_form_badge(r[5], nat_dex, base_id, r[7], r[8])
+
             d = {
                 "method": r[0], "slot": r[1], "chance": r[2], "min_level": r[3], "max_level": r[4],
                 "species_id": r[5], "species_name": r[6], "type1": r[7], "type2": r[8],
                 "abilities": r[9], "hidden_ability": r[10], "held_items": r[11],
                 "hp": r[12], "atk": r[13], "def": r[14], "spa": r[15], "spd": r[16], "spe": r[17],
                 "bst": r[18], "catch_rate": r[19],
+                "national_dex_num": nat_dex,
+                "form_badge": form_badge,
                 "is_caught": r[5] in self.caught_species
             }
             self.current_route_data.append(d)
@@ -2838,12 +3026,17 @@ class QuetzalMasterApp(QMainWindow):
                 item.widget().deleteLater()
 
         search_query = self.route_mon_search.text().strip().lower()
+        clean_q = search_query.lstrip("#").strip()
 
         filtered = []
         for d in self.current_route_data:
-            # Search query
+            # Search query (matches name, species_id, national_dex_num, or form badge)
             if search_query:
-                if search_query not in d["species_name"].lower() and search_query not in str(d["species_id"]):
+                matches_name = search_query in d["species_name"].lower()
+                matches_id = search_query in str(d["species_id"])
+                matches_nat = (clean_q.isdigit() and int(clean_q) == d.get("national_dex_num")) or (f"#{d.get('national_dex_num', 0):04d}" in search_query)
+                matches_form = bool(d.get("form_badge") and search_query in d["form_badge"].lower())
+                if not (matches_name or matches_id or matches_nat or matches_form):
                     continue
 
             # Caught status filter
@@ -2897,20 +3090,33 @@ class QuetzalMasterApp(QMainWindow):
             card.update_card_style(is_selected=is_sel)
 
     def on_encounter_catch_toggled(self, species_id: int, species_name: str, is_caught: bool):
+        nat_num = self.sp_to_nat.get(species_id, species_id)
+        related_ids = self.nat_to_sps.get(nat_num, [species_id])
+
         if is_caught:
             play_sfx("caught_fanfare.wav")
-            self.caught_species.add(species_id)
-            self.cur.execute("INSERT OR REPLACE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (species_id, species_name))
+            for rid in related_ids:
+                self.caught_species.add(rid)
+                rname = self.sp_to_name.get(rid, species_name)
+                self.cur.execute("INSERT OR REPLACE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (rid, rname))
+                self.cur.execute("INSERT OR REPLACE INTO user_pokedex (species_id, caught, seen) VALUES (?, 1, 1)", (rid,))
         else:
             play_sfx("menu_cancel.wav")
-            self.caught_species.discard(species_id)
-            self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (species_id,))
+            for rid in related_ids:
+                self.caught_species.discard(rid)
+                self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (rid,))
+                self.cur.execute("UPDATE user_pokedex SET caught = 0 WHERE species_id = ?", (rid,))
         self.conn.commit()
 
         # Update in-memory data
         for d in self.current_route_data:
-            if d.get("species_id") == species_id:
+            if d.get("species_id") in related_ids or d.get("national_dex_num") == nat_num:
                 d["is_caught"] = is_caught
+
+        for card in self.all_rendered_cards:
+            if card.species_id in related_ids or getattr(card, "national_dex_num", None) == nat_num:
+                card.is_caught = is_caught
+                card.update_card_style(is_selected=False)
 
         # Update summary badge
         pct = (len(self.caught_species) / 1499 * 100) if 1499 > 0 else 0
@@ -2981,9 +3187,9 @@ class QuetzalMasterApp(QMainWindow):
         left_box = QVBoxLayout()
         left_box.setSpacing(6)
 
-        left_box.addWidget(QLabel("National Pokédex (#1 – #1,499):"))
+        left_box.addWidget(QLabel("National Pokédex (#1 – #1,025):"))
         self.pokedex_search = QLineEdit()
-        self.pokedex_search.setPlaceholderText("Search species (e.g. Breloom, Ralts, #285)...")
+        self.pokedex_search.setPlaceholderText("Search species (e.g. Vulpix, Breloom, #0037, Alolan)...")
         self.pokedex_search.textChanged.connect(self.filter_pokedex_list)
         left_box.addWidget(self.pokedex_search)
 
@@ -3030,6 +3236,13 @@ class QuetzalMasterApp(QMainWindow):
         self.pokedex_name_lbl = QLabel("#0001 Bulbasaur")
         self.pokedex_name_lbl.setStyleSheet("color: #00ff88; font-family: monospace; font-size: 16px; font-weight: bold;" if is_retro() else "color: #f8fafc; font-size: 16px; font-weight: bold;")
         title_col.addWidget(self.pokedex_name_lbl)
+
+        # Form toggles / chips container
+        self.pokedex_forms_container = QWidget()
+        self.pokedex_forms_layout = QHBoxLayout(self.pokedex_forms_container)
+        self.pokedex_forms_layout.setContentsMargins(0, 0, 0, 0)
+        self.pokedex_forms_layout.setSpacing(6)
+        title_col.addWidget(self.pokedex_forms_container)
 
         self.pokedex_types_row = QHBoxLayout()
         self.pokedex_types_row.setSpacing(4)
@@ -3163,29 +3376,85 @@ class QuetzalMasterApp(QMainWindow):
         self.pokedex_subtabs.addTab(tab, "🧬 Evolution Line")
 
     def populate_pokedex_list(self):
-        self.cur.execute("SELECT id, name FROM pokemon ORDER BY id ASC")
-        rows = self.cur.fetchall()
-
         self.pokedex_list.blockSignals(True)
         self.pokedex_list.clear()
-        for pid, name in rows:
-            tag = "✓" if pid in self.caught_species else "○"
-            item = QListWidgetItem(f"#{pid:04d} {name}  {tag}")
-            if pid in self.caught_species:
-                item.setForeground(QColor("#34d399"))
-            else:
-                item.setForeground(QColor("#94a3b8"))
-            self.pokedex_list.addItem(item)
-        self.pokedex_list.blockSignals(False)
 
+        # Group pokemon by national_dex_num
+        for nat_dex in sorted(self.nat_dex_to_forms.keys()):
+            forms = self.nat_dex_to_forms[nat_dex]
+            base_form = forms[0]
+            base_id = base_form["id"]
+            base_name = base_form["name"]
+            base_t1 = base_form["type1"]
+            base_t2 = base_form["type2"]
+            base_tag = "✓" if base_id in self.caught_species else "○"
+
+            if len(forms) == 1:
+                item = QListWidgetItem(f"#{nat_dex:04d} {base_name}  {base_tag}")
+                item.setData(Qt.UserRole, base_id)
+                item.setData(Qt.UserRole + 1, nat_dex)
+                item.setData(Qt.UserRole + 2, False)
+                if base_id in self.caught_species:
+                    item.setForeground(QColor("#34d399"))
+                else:
+                    item.setForeground(QColor("#94a3b8"))
+                self.pokedex_list.addItem(item)
+            else:
+                t_str = f"[{base_t1}]" if (base_t1 == base_t2 or not base_t2 or base_t2 == "None") else f"[{base_t1}/{base_t2}]"
+                item = QListWidgetItem(f"#{nat_dex:04d} {base_name} {t_str}  {base_tag}")
+                item.setData(Qt.UserRole, base_id)
+                item.setData(Qt.UserRole + 1, nat_dex)
+                item.setData(Qt.UserRole + 2, False)
+                if base_id in self.caught_species:
+                    item.setForeground(QColor("#34d399"))
+                else:
+                    item.setForeground(QColor("#94a3b8"))
+                self.pokedex_list.addItem(item)
+
+                # Indented variants under primary National Dex entry
+                for var in forms[1:]:
+                    v_id = var["id"]
+                    v_badge = var["badge"]
+                    v_t1 = var["type1"]
+                    v_t2 = var["type2"]
+                    v_t_str = f"[{v_t1}]" if (v_t1 == v_t2 or not v_t2 or v_t2 == "None") else f"[{v_t1}/{v_t2}]"
+                    v_tag = "✓" if v_id in self.caught_species else "○"
+                    var_item = QListWidgetItem(f"   ↳ #{nat_dex:04d} {v_badge} {base_name} {v_t_str}  {v_tag}")
+                    var_item.setData(Qt.UserRole, v_id)
+                    var_item.setData(Qt.UserRole + 1, nat_dex)
+                    var_item.setData(Qt.UserRole + 2, True)
+                    if v_id in self.caught_species:
+                        var_item.setForeground(QColor("#38bdf8"))
+                    else:
+                        var_item.setForeground(QColor("#64748b"))
+                    self.pokedex_list.addItem(var_item)
+
+        self.pokedex_list.blockSignals(False)
         if self.pokedex_list.count() > 0:
             self.pokedex_list.setCurrentRow(0)
 
     def filter_pokedex_list(self, query: str):
         q = query.strip().lower()
+        cleaned = q.lstrip("#").strip()
+        num_query = int(cleaned) if cleaned.isdigit() else None
+
         for i in range(self.pokedex_list.count()):
             item = self.pokedex_list.item(i)
-            match = (q in item.text().lower())
+            text = item.text().lower()
+            nat_dex = item.data(Qt.UserRole + 1)
+
+            match = False
+            if not q:
+                match = True
+            elif num_query is not None:
+                if nat_dex == num_query:
+                    match = True
+                else:
+                    hash_idx = text.find("#")
+                    name_part = text[hash_idx + 5:].strip() if hash_idx != -1 else text
+                    match = (q in name_part)
+            else:
+                match = (q in text)
             item.setHidden(not match)
 
     def on_pokedex_mon_selected(self, row: int):
@@ -3195,21 +3464,131 @@ class QuetzalMasterApp(QMainWindow):
         item = self.pokedex_list.item(row)
         if not item:
             return
-        pid = int(item.text().split()[0].replace("#", ""))
+        pid = item.data(Qt.UserRole)
+        if pid is None:
+            pid = int(item.text().split()[0].replace("#", ""))
+        self.load_pokedex_mon_details(pid)
+
+    def select_pokedex_form(self, target_id: int):
+        play_sfx("menu_select.wav")
+        for i in range(self.pokedex_list.count()):
+            item = self.pokedex_list.item(i)
+            if item.data(Qt.UserRole) == target_id:
+                self.pokedex_list.blockSignals(True)
+                self.pokedex_list.setCurrentRow(i)
+                self.pokedex_list.blockSignals(False)
+                break
+        self.load_pokedex_mon_details(target_id)
+
+    def load_pokedex_mon_details(self, pid: int):
         self.current_pokedex_mon_id = pid
 
         self.cur.execute("""
-            SELECT name, hp, atk, def, spa, spd, spe, bst, type1, type2, catch_rate, abilities, hidden_ability
+            SELECT name, hp, atk, def, spa, spd, spe, bst, type1, type2, catch_rate, abilities, hidden_ability, national_dex_num
             FROM pokemon WHERE id = ?
         """, (pid,))
         r = self.cur.fetchone()
         if not r:
             return
 
-        name, hp, atk, df, spa, spd, spe, bst, t1, t2, cr, ab, ha = r
+        name, hp, atk, df, spa, spd, spe, bst, t1, t2, cr, ab, ha = r[:13]
+        nat_dex = r[13] if len(r) > 13 and r[13] is not None else self.sp_to_nat.get(pid, pid)
         self.current_pokedex_mon_name = name
+        self.current_national_dex_num = nat_dex
 
-        self.pokedex_name_lbl.setText(f"#{pid:04d} {name} (Catch Rate: {cr})")
+        base_id = self.nat_base_species.get(nat_dex, pid)
+        form_badge = get_form_badge(pid, nat_dex, base_id, t1, t2)
+
+        # Update title with form badge
+        if form_badge and form_badge != "Standard":
+            display_badge = f"{form_badge} Form" if form_badge in ("Alolan", "Galarian", "Hisuian", "Paldean") else form_badge
+            self.pokedex_name_lbl.setText(f"#{nat_dex:04d} {name} • {display_badge} (Catch Rate: {cr})")
+        else:
+            self.pokedex_name_lbl.setText(f"#{nat_dex:04d} {name} (Catch Rate: {cr})")
+
+        # Update Form Toggles / Chips
+        while self.pokedex_forms_layout.count():
+            it = self.pokedex_forms_layout.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+
+        forms = self.nat_dex_to_forms.get(nat_dex, [])
+        if len(forms) > 1:
+            self.pokedex_forms_container.show()
+            for f_info in forms:
+                f_id = f_info["id"]
+                f_badge = f_info["badge"]
+                f_t1 = f_info["type1"]
+                f_t2 = f_info["type2"]
+                f_t_str = f"[{f_t1}]" if (f_t1 == f_t2 or not f_t2 or f_t2 == "None") else f"[{f_t1}/{f_t2}]"
+                chip = QPushButton(f"{f_badge} {f_t_str}")
+                chip.setCursor(QCursor(Qt.PointingHandCursor))
+                chip.setCheckable(True)
+                is_active = (f_id == pid)
+                chip.setChecked(is_active)
+                if is_retro():
+                    if is_active:
+                        chip.setStyleSheet("""
+                            QPushButton {
+                                background-color: #185468;
+                                border-top: 2px solid #58f8e8;
+                                border-left: 2px solid #58f8e8;
+                                border-bottom: 2px solid #081820;
+                                border-right: 2px solid #081820;
+                                color: #ffffff;
+                                font-family: monospace;
+                                font-weight: bold;
+                                font-size: 10px;
+                                border-radius: 2px;
+                                padding: 2px 7px;
+                            }
+                        """)
+                    else:
+                        chip.setStyleSheet("""
+                            QPushButton {
+                                background-color: #0c1c22;
+                                border-top: 2px solid #306056;
+                                border-left: 2px solid #306056;
+                                border-bottom: 2px solid #050e12;
+                                border-right: 2px solid #050e12;
+                                color: #6a9c90;
+                                font-family: monospace;
+                                font-size: 10px;
+                                border-radius: 2px;
+                                padding: 2px 7px;
+                            }
+                            QPushButton:hover { background-color: #143038; color: #a8d8c8; }
+                        """)
+                else:
+                    if is_active:
+                        chip.setStyleSheet("""
+                            QPushButton {
+                                background-color: #2563eb;
+                                border: 1px solid #60a5fa;
+                                color: #FFFFFF;
+                                font-weight: bold;
+                                font-size: 10px;
+                                border-radius: 4px;
+                                padding: 2px 7px;
+                            }
+                        """)
+                    else:
+                        chip.setStyleSheet("""
+                            QPushButton {
+                                background-color: #1e293b;
+                                border: 1px solid #334155;
+                                color: #94a3b8;
+                                font-size: 10px;
+                                border-radius: 4px;
+                                padding: 2px 7px;
+                            }
+                            QPushButton:hover { background-color: #334155; color: #FFFFFF; }
+                        """)
+                chip.clicked.connect(lambda checked=False, target_id=f_id: self.select_pokedex_form(target_id))
+                self.pokedex_forms_layout.addWidget(chip)
+            self.pokedex_forms_layout.addStretch()
+        else:
+            self.pokedex_forms_container.hide()
 
         # Sprite
         pm = get_species_pixmap(pid, is_silhouette=False)
@@ -3411,12 +3790,39 @@ class QuetzalMasterApp(QMainWindow):
         """Jumps directly to this Pokémon inside the Pokédex tab."""
         play_sfx("menu_select.wav")
         self.tabs.setCurrentIndex(2)
-        # Find in list
+
+        # 1. Match exact species_id first
         for i in range(self.pokedex_list.count()):
             item = self.pokedex_list.item(i)
-            if f"#{species_id:04d}" in item.text():
+            if item.data(Qt.UserRole) == species_id:
                 self.pokedex_list.setCurrentRow(i)
-                break
+                return
+
+        # 2. Match by national_dex_num
+        nat = self.sp_to_nat.get(species_id, species_id)
+        for i in range(self.pokedex_list.count()):
+            item = self.pokedex_list.item(i)
+            if item.data(Qt.UserRole + 1) == nat:
+                self.pokedex_list.setCurrentRow(i)
+                if species_id in self.nat_to_sps.get(nat, []):
+                    self.load_pokedex_mon_details(species_id)
+                return
+
+    def refresh_pokedex_list_tags(self):
+        """Silky-smooth tag and color update for pokedex items without rebuilding or jumping."""
+        for i in range(self.pokedex_list.count()):
+            item = self.pokedex_list.item(i)
+            pid = item.data(Qt.UserRole)
+            is_sub = item.data(Qt.UserRole + 2)
+            is_c = pid in self.caught_species
+            old_text = item.text()
+            if old_text.endswith("✓") or old_text.endswith("○"):
+                new_text = old_text[:-1] + ("✓" if is_c else "○")
+                item.setText(new_text)
+            if is_c:
+                item.setForeground(QColor("#38bdf8" if is_sub else "#34d399"))
+            else:
+                item.setForeground(QColor("#64748b" if is_sub else "#94a3b8"))
 
     def on_pokedex_caught_clicked(self):
         if not hasattr(self, 'current_pokedex_mon_id'):
@@ -3425,18 +3831,27 @@ class QuetzalMasterApp(QMainWindow):
         name = self.current_pokedex_mon_name
         is_c = pid in self.caught_species
 
+        # Synchronize all forms sharing national_dex_num
+        nat = self.sp_to_nat.get(pid, pid)
+        related_ids = self.nat_to_sps.get(nat, [pid])
+
         if is_c:
             play_sfx("menu_cancel.wav")
-            self.caught_species.discard(pid)
-            self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (pid,))
+            for rid in related_ids:
+                self.caught_species.discard(rid)
+                self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (rid,))
+                self.cur.execute("UPDATE user_pokedex SET caught = 0 WHERE species_id = ?", (rid,))
         else:
             play_sfx("caught_fanfare.wav")
-            self.caught_species.add(pid)
-            self.cur.execute("INSERT OR REPLACE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (pid, name))
+            for rid in related_ids:
+                self.caught_species.add(rid)
+                rname = self.sp_to_name.get(rid, name)
+                self.cur.execute("INSERT OR REPLACE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (rid, rname))
+                self.cur.execute("INSERT OR REPLACE INTO user_pokedex (species_id, caught, seen) VALUES (?, 1, 1)", (rid,))
         self.conn.commit()
 
         self.update_pokedex_caught_btn(not is_c)
-        self.populate_pokedex_list()
+        self.refresh_pokedex_list_tags()
         pct = (len(self.caught_species) / 1499 * 100) if 1499 > 0 else 0
         if is_retro():
             self.save_status_lbl.setText(f"💾 SAVE: NIG | POKéDEX: {len(self.caught_species)}/1,499 ({pct:.1f}%)")
@@ -3821,7 +4236,7 @@ class QuetzalMasterApp(QMainWindow):
         self.cur.execute("""
             SELECT l.name, l.generation, l.level, l.location, l.requirements, l.synergy, l.notes,
                     MIN(p.id), p.type1, p.type2, p.hp, p.atk, p.def, p.spa, p.spd, p.spe, p.bst, p.catch_rate,
-                    p.abilities, p.hidden_ability
+                    p.abilities, p.hidden_ability, p.national_dex_num
             FROM legendaries l
             LEFT JOIN pokemon p ON LOWER(l.name) = LOWER(p.name)
             GROUP BY l.name
@@ -3831,16 +4246,23 @@ class QuetzalMasterApp(QMainWindow):
         self.all_legendary_data = []
         for r in rows:
             name, gen, lvl, loc, req, syn, notes = r[:7]
-            sp_id, t1, t2, hp, atk, df, spa, spd, spe, bst, cr, ab, ha = r[7:]
+            sp_id, t1, t2, hp, atk, df, spa, spd, spe, bst, cr, ab, ha = r[7:20]
             sp_id = sp_id if sp_id else 0
             is_caught = sp_id in self.caught_species if sp_id else False
+
+            nat_dex = r[20] if len(r) > 20 and r[20] is not None else self.sp_to_nat.get(sp_id, sp_id)
+            base_id = self.nat_base_species.get(nat_dex, sp_id)
+            form_badge = get_form_badge(sp_id, nat_dex, base_id, t1, t2)
+
             d = {
                 "name": name, "generation": gen, "level": lvl, "location": loc,
                 "requirements": req, "synergy": syn, "notes": notes,
                 "species_id": sp_id, "type1": t1, "type2": t2,
                 "hp": hp or 0, "atk": atk or 0, "def": df or 0, "spa": spa or 0,
                 "spd": spd or 0, "spe": spe or 0, "bst": bst or 0, "catch_rate": cr or 3,
-                "abilities": ab, "hidden_ability": ha, "is_caught": is_caught
+                "abilities": ab, "hidden_ability": ha, "is_caught": is_caught,
+                "national_dex_num": nat_dex,
+                "form_badge": form_badge
             }
             self.all_legendary_data.append(d)
 
@@ -3899,19 +4321,32 @@ class QuetzalMasterApp(QMainWindow):
             card.update_card_style(is_selected=is_sel)
 
     def on_legendary_catch_toggled(self, species_id: int, species_name: str, is_caught: bool):
+        nat_num = self.sp_to_nat.get(species_id, species_id)
+        related_ids = self.nat_to_sps.get(nat_num, [species_id])
+
         if is_caught:
             play_sfx("caught_fanfare.wav")
-            self.caught_species.add(species_id)
-            self.cur.execute("INSERT OR IGNORE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (species_id, species_name))
+            for rid in related_ids:
+                self.caught_species.add(rid)
+                rname = self.sp_to_name.get(rid, species_name)
+                self.cur.execute("INSERT OR REPLACE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (rid, rname))
+                self.cur.execute("INSERT OR REPLACE INTO user_pokedex (species_id, caught, seen) VALUES (?, 1, 1)", (rid,))
         else:
             play_sfx("menu_cancel.wav")
-            self.caught_species.discard(species_id)
-            self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (species_id,))
+            for rid in related_ids:
+                self.caught_species.discard(rid)
+                self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (rid,))
+                self.cur.execute("UPDATE user_pokedex SET caught = 0 WHERE species_id = ?", (rid,))
         self.conn.commit()
 
         for d in self.all_legendary_data:
-            if d["name"] == species_name:
+            if d.get("species_id") in related_ids or d.get("national_dex_num") == nat_num or d["name"] == species_name:
                 d["is_caught"] = is_caught
+
+        for card in self.rendered_leg_cards:
+            if card.species_id in related_ids or getattr(card, "national_dex_num", None) == nat_num or card.name == species_name:
+                card.is_caught = is_caught
+                card.update_card_style(is_selected=False)
 
         self.update_stats_header()
         if hasattr(self, 'map_widget'):
