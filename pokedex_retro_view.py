@@ -845,7 +845,10 @@ class PokedexRetroView(QWidget):
         while self.types_layout.count() > 0:
             item = self.types_layout.takeAt(0)
             if item.widget():
-                item.widget().deleteLater()
+                w = item.widget()
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
 
         if not t1 or t1 == "???":
             lbl = QLabel("UNKNOWN")
