@@ -2661,7 +2661,8 @@ class QuetzalMasterApp(QMainWindow):
                 ("Regirock", "Desert Ruins (Route 111 Desert)", "Sealed Chamber unlock (Wailord #1, Relicanth #6, Dig). Walk 2 left, 2 down, Rock Smash.", "Rock"),
                 ("Regice", "Island Cave (Route 105)", "Clockwise perimeter walk flush along room walls, inspect wall.", "Ice"),
                 ("Registeel", "Ancient Tomb (Route 120)", "Stand at center and use Flash.", "Steel"),
-                ("Latios / Latias", "Southern Island / Roaming Hoenn", "Obtain Eon Ticket, speak to Norman in Petalburg.", "Dragon / Psychic"),
+                ("Latios", "Southern Island", "Post-League. Buy Eon Ticket at Battle Frontier Mart (100k). Male avatar + 6 Male Pokémon in party. Ferry from Slateport Harbor.", "Male protagonist + 6 Male Pokémon"),
+                ("Latias", "Southern Island", "Post-League. Buy Eon Ticket at Battle Frontier Mart (100k). Female avatar + At least 5 Female Pokémon in party. Ferry from Lilycove Harbor.", "Female protagonist + 5 Female Pokémon"),
                 ("Jirachi", "Mossdeep White Rock Space Center", "Interact with white rock with Wishing Stone or Space Center trigger.", "Steel / Psychic"),
                 ("Deoxys", "Birth Island (Triangle Puzzle)", "Walk straight shortest path to hot triangle without running until it turns red.", "Psychic")
             ]),
@@ -2673,17 +2674,27 @@ class QuetzalMasterApp(QMainWindow):
                 ("Mew", "Faraway Island Deep Foliage", "Old Sea Map ferry, play hide-and-seek in grass maze.", "Psychic")
             ]),
             ("PHASE 3: JOHTO SACRED SHRINES & BELL TOWERS", "#d97706", [
-                ("Raikou, Entei, Suicune", "Burned Tower & Roaming Johto", "Awaken beasts in Burned Tower basement in Ecruteak City.", "Electric / Fire / Water"),
+                ("Raikou", "Route 119 upper cliff behind Weather Institute", "Requires Acro Bike + Waterfall. Put Zapdos in Slot 1 + 5 Electric-types in party.", "Zapdos + 5 Electric-types"),
+                ("Entei", "Jagged Pass / Magma Hideout", "Machinery chamber. Put Moltres in Slot 1 + 5 Fire-types in party. Pre-League accessible.", "Moltres + 5 Fire-types"),
+                ("Suicune", "Route 130 island", "Put Entei in Slot 1, Raikou in Slot 2 + 4 Water-types in party.", "Entei + Raikou + 4 Water-types"),
                 ("Lugia", "Whirl Islands Deep Chamber", "Bring Tidal Bell + Silver Wing from Goldenrod Radio Director + Whirlpool user.", "Psychic / Flying"),
                 ("Ho-Oh", "Tin Tower Roof (Ecruteak City)", "Clear Bell + Rainbow Wing, defeat Ecruteak Wise Trio.", "Fire / Flying"),
                 ("Celebi", "Ilex Forest Shrine", "Bring GS Ball to forest shrine.", "Grass / Psychic")
             ]),
             ("PHASE 4: DIMENSIONAL PORTALS & ULTRA EXPEDITIONS", "#7c3aed", [
-                ("Dialga, Palkia, Giratina", "Spear Pillar Dimensional Rift", "Adamant, Lustrous, and Griseous Orbs required at dimensional anomaly.", "Dragon / Steel / Water / Ghost"),
-                ("Reshiram, Zekrom, Kyurem", "Giant Chasm / Dragonspiral Tower", "Light Stone & Dark Stone triggers.", "Dragon / Fire / Electric / Ice"),
-                ("Xerneas & Yveltal", "Geosenge Deep Ruins", "Power Plant Pass & Fairy/Dark dual keys.", "Fairy / Dark"),
+                ("Dialga", "Mt. Pyre summit", "Post-League. Defeat Lucas; catch Uxie, Mesprit, Azelf. Avatar: Lucas, Dawn, or Cynthia. Party: At least 5 Gen 4 Pokémon (Dex 387–493).", "At least 5 Gen 4 Pokémon"),
+                ("Palkia", "Mt. Pyre summit", "Post-League. Defeat Lucas; catch Uxie, Mesprit, Azelf. Avatar: Lucas, Dawn, or Cynthia. Party: At least 5 Gen 4 Pokémon (Dex 387–493).", "At least 5 Gen 4 Pokémon"),
+                ("Giratina", "Mt. Pyre top floor", "Defeat/catch Dialga & Palkia. Same Gen 4 party + Sinnoh avatar.", "Dialga + Palkia + Sinnoh Avatar"),
+                ("Reshiram", "Sky Pillar summit", "Defeat Rayquaza, unlock Battle Frontier. Avatar: N. Party: 5 Gen 5 Pokémon.", "5 Gen 5 Pokémon"),
+                ("Zekrom", "Sky Pillar summit", "Defeat Rayquaza, unlock Battle Frontier. Avatar: N. Party: 5 Gen 5 Pokémon.", "5 Gen 5 Pokémon"),
+                ("Kyurem", "Shoal Cave", "Defeat/catch Reshiram & Zekrom. Party: 5 Gen 5 Pokémon.", "Shoal Cave (Reshiram + Zekrom)"),
+                ("Xerneas", "Safari Zone", "Avatar: Calem or Serena. Party: 5 Gen 6 Pokémon (Dex 650–721).", "5 Gen 6 Pokémon"),
+                ("Yveltal", "Mt. Pyre summit", "Avatar: Calem or Serena. Party: 5 Gen 6 Pokémon.", "Mt. Pyre (Dark/Flying-types)"),
                 ("Necrozma & Ultra Beasts", "Ultra Megalopolis Portal", "Post-game Wormhole portal exploration.", "Psychic / Ultra"),
-                ("Treasures of Ruin (Wo-Chien, Chien-Pao, Ting-Lu, Chi-Yu)", "Paldea Ruin Shrines", "Pull all 8 Ominous Stakes per elemental shrine.", "Dark + Grass / Ice / Ground / Fire")
+                ("Wo-Chien", "Petalburg Woods", "Party: 5 Paldean Grass-types.", "Route 119 (Ominous Purple Stakes)"),
+                ("Chien-Pao", "Shoal Cave bridge", "Party: 5 Paldean Ice-types.", "Shoal Cave (Ominous Yellow Stakes)"),
+                ("Ting-Lu", "Route 111 Desert", "North of Regi cave. Party: 5 Paldean Ground-types.", "Route 111 Desert (Ominous Green Stakes)"),
+                ("Chi-Yu", "Magma Hideout", "Groudon chamber. Party: 5 Paldean Fire-types.", "Magma Hideout (Ominous Blue Stakes)")
             ])
         ]
 

@@ -392,6 +392,33 @@ def update_database_user_pokedex(save_path: str = DEFAULT_SAVE_PATH, db_path: st
     cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute("PRAGMA busy_timeout=10000;")
 
+    # Regional form expansion mapping:
+    # Query SELECT id, name FROM pokemon WHERE id IN ({}) for caught species.
+    # Find all form IDs in pokemon table that share the exact same name (case-insensitive)
+    # as any caught species (e.g. Vulpix ID 37 -> Alolan Vulpix ID 954; Zorua ID 570 -> Hisuian Zorua ID 1233).
+    # Add those form IDs to caught_set and insert them into caught_pokemon.
+    if caught_set:
+        caught_list = list(caught_set)
+        caught_names = set()
+        chunk_size = 500
+        for i in range(0, len(caught_list), chunk_size):
+            chunk = caught_list[i:i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            cur.execute(f"SELECT id, name FROM pokemon WHERE id IN ({placeholders})", chunk)
+            for row in cur.fetchall():
+                if row[1]:
+                    caught_names.add(row[1].strip().lower())
+
+        if caught_names:
+            name_list = list(caught_names)
+            for i in range(0, len(name_list), chunk_size):
+                chunk = name_list[i:i + chunk_size]
+                name_placeholders = ",".join("?" for _ in chunk)
+                cur.execute(f"SELECT id FROM pokemon WHERE LOWER(name) IN ({name_placeholders})", chunk)
+                form_ids = {row[0] for row in cur.fetchall()}
+                caught_set.update(form_ids)
+                seen_set.update(form_ids)
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_pokedex (
         species_id INTEGER PRIMARY KEY,
