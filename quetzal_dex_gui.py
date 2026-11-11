@@ -4689,24 +4689,41 @@ class QuetzalMasterApp(QMainWindow):
             self.map_widget.highlight_locations([route_name])
         self.tabs.setCurrentIndex(1)
 
-    def jump_to_pokedex_mon(self, species_id: int):
-        """Jumps directly to this Pokémon inside the Pokédex tab."""
+    def jump_to_pokedex_mon(self, species_id: int, activate_tab: str = "EVOS"):
+        """Jumps directly to this Pokémon inside the Pokédex tab and activates EVOS & PATHS view."""
         play_sfx("menu_select.wav")
         self.tabs.setCurrentIndex(2)
 
-        # 1. Match exact species_id first
+        # 1. Switch to In-Game GBA Pokédex View & activate EVOS & PATHS tab
+        if hasattr(self, "pokedex_main_tabs"):
+            self.pokedex_main_tabs.setCurrentIndex(0)
+
+        nat = self.sp_to_nat.get(species_id, species_id)
+        if hasattr(self, "retro_pokedex_view") and self.retro_pokedex_view is not None:
+            self.retro_pokedex_view.select_pokemon(nat)
+            if activate_tab == "EVOS":
+                self.retro_pokedex_view.show_evos_tab()
+            elif activate_tab == "HOW_TO_GET":
+                self.retro_pokedex_view.show_how_to_get_tab()
+            elif activate_tab == "STATS":
+                self.retro_pokedex_view.show_stats_tab()
+
+        # 2. Match exact species_id first in Area Finder legacy list
         for i in range(self.pokedex_list.count()):
             item = self.pokedex_list.item(i)
             if item.data(Qt.UserRole) == species_id:
+                self.pokedex_list.blockSignals(True)
                 self.pokedex_list.setCurrentRow(i)
+                self.pokedex_list.blockSignals(False)
                 return
 
-        # 2. Match by national_dex_num
-        nat = self.sp_to_nat.get(species_id, species_id)
+        # 3. Match by national_dex_num
         for i in range(self.pokedex_list.count()):
             item = self.pokedex_list.item(i)
             if item.data(Qt.UserRole + 1) == nat:
+                self.pokedex_list.blockSignals(True)
                 self.pokedex_list.setCurrentRow(i)
+                self.pokedex_list.blockSignals(False)
                 if species_id in self.nat_to_sps.get(nat, []):
                     self.load_pokedex_mon_details(species_id)
                 return

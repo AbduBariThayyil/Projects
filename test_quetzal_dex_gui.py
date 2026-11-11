@@ -284,3 +284,106 @@ def test_authentic_gba_start_menu_overlay(qapp):
     assert win.tabs.currentIndex() == 0  # Switched to Route Encounters
 
     win.close()
+
+
+def test_pokedex_retro_evos_and_paths(qapp):
+    from pokedex_retro_view import PokedexRetroView, EvoNodeCard
+    from PySide6.QtWidgets import QLabel
+    view = PokedexRetroView()
+    
+    # 1. Linear chain: Charmander (#4) -> Charmeleon (#5) -> Charizard (#6)
+    view.select_pokemon(4)
+    view.show_evos_tab()
+    assert view.current_right_tab == 1
+    assert view.right_stack.currentIndex() == 1
+    evo_cards = view.evos_container.findChildren(EvoNodeCard)
+    evo_nats = [c.nat for c in evo_cards]
+    assert evo_nats == [4, 5, 6]
+    
+    # 2. Branching tree: Eevee (#133) -> 8 Eeveelutions
+    view.select_pokemon(133)
+    eevee_cards = [c.nat for c in view.evos_container.findChildren(EvoNodeCard)]
+    assert len(eevee_cards) == 9
+    assert set(eevee_cards) == {133, 134, 135, 136, 196, 197, 470, 471, 700}
+    
+    # 3. Branching tree: Applin (#840) -> Flapple, Appletun, Dipplin -> Hydrapple
+    view.select_pokemon(840)
+    applin_cards = [c.nat for c in view.evos_container.findChildren(EvoNodeCard)]
+    assert len(applin_cards) == 5
+    
+    # 4. Branching tree: Tyrogue (#236) -> Hitmonlee, Hitmonchan, Hitmontop
+    view.select_pokemon(236)
+    tyrogue_cards = [c.nat for c in view.evos_container.findChildren(EvoNodeCard)]
+    assert len(tyrogue_cards) == 4
+    
+    # 5. Single non-evolving: Aerodactyl (#142) -> DOES NOT EVOLVE
+    view.select_pokemon(142)
+    labels = [lbl.text() for lbl in view.evos_container.findChildren(QLabel)]
+    assert any("DOES NOT EVOLVE" in t for t in labels)
+    
+    # 6. Interactive jump: Click Jolteon (#135) in Eevee chain
+    view.select_pokemon(133)
+    jolteon_card = next(c for c in view.evos_container.findChildren(EvoNodeCard) if c.nat == 135)
+    jolteon_card.on_click(135)
+    assert view.current_nat == 135
+    
+    view.close()
+
+
+def test_pokedex_retro_how_to_get(qapp):
+    from pokedex_retro_view import PokedexRetroView
+    from PySide6.QtWidgets import QLabel
+    view = PokedexRetroView()
+    view.show_how_to_get_tab()
+    assert view.current_right_tab == 2
+    assert view.right_stack.currentIndex() == 2
+    
+    # 1. Wild encounters: Pikachu (#25)
+    view.select_pokemon(25)
+    labels = [lbl.text() for lbl in view.how_container.findChildren(QLabel)]
+    assert any("HOENN REGION" in t for t in labels)
+    assert any("KANTO REGION" in t for t in labels)
+    assert any("NEW MAUVILLE" in t for t in labels)
+    
+    # 2. Legendary encounter: Rayquaza (#384)
+    view.select_pokemon(384)
+    labels = [lbl.text() for lbl in view.how_container.findChildren(QLabel)]
+    assert any("LEGENDARY" in t for t in labels)
+    assert any("Sky Pillar" in t for t in labels)
+    assert any("Mach Bike" in t for t in labels)
+    
+    # 3. Evolution-only (0 wild spawns): Charmeleon (#5)
+    view.select_pokemon(5)
+    labels = [lbl.text() for lbl in view.how_container.findChildren(QLabel)]
+    assert any("NO WILD SPAWNS" in t for t in labels)
+    assert any("Obtain by evolving #0004 Charmander" in t for t in labels)
+    
+    # Test jump button to pre-evolution
+    view.on_pre_evo_btn_clicked(4)
+    assert view.current_nat == 4
+    
+    # 4. Special Acquisition: Beldum (#374)
+    view.select_pokemon(374)
+    labels = [lbl.text() for lbl in view.how_container.findChildren(QLabel)]
+    assert any("Steven's House" in t for t in labels)
+    
+    view.close()
+
+
+def test_dexnav_jump_to_pokedex_evos_tab(qapp):
+    win = quetzal_dex_gui.QuetzalMasterApp()
+    
+    # From Route Encounters (tab 0), select slot
+    slot = win.land_box.slots[0]
+    slot.slot_selected.emit(slot.mon_data)
+    
+    # Click DexNav inspector's View Learnset & Evolution in Pokédex button
+    win.inspector_drawer.open_pokedex_btn.click()
+    
+    assert win.tabs.currentIndex() == 2
+    assert win.pokedex_main_tabs.currentIndex() == 0
+    sp_nat = win.sp_to_nat.get(slot.species_id, slot.species_id)
+    assert win.retro_pokedex_view.current_nat == sp_nat
+    assert win.retro_pokedex_view.current_right_tab == 1
+    
+    win.close()

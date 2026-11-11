@@ -16,12 +16,13 @@ Replicates the exact GBA Pokédex layout from Moemon Quetzal / Pokémon Emerald:
 import os
 import sqlite3
 import subprocess
+from collections import defaultdict, deque
 from typing import Dict, List, Optional, Tuple, Any
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QListWidget, QListWidgetItem, QFrame,
-    QScrollArea, QSizePolicy, QGraphicsOpacityEffect
+    QScrollArea, QSizePolicy, QGraphicsOpacityEffect, QStackedWidget
 )
 from PySide6.QtGui import (
     QPainter, QPixmap, QColor, QFont, QPen, QBrush, QImage,
@@ -92,6 +93,229 @@ def get_pokeball_icon() -> QIcon:
     return _CACHED_POKEBALL_ICON
 
 
+# ---------------------------------------------------------------------
+# TYPE COLORS, METHOD FORMATTING & RETRO CARDS
+# ---------------------------------------------------------------------
+TYPE_COLORS = {
+    "Normal": "#94a3b8", "Fire": "#ef4444", "Water": "#3b82f6",
+    "Grass": "#22c55e", "Electric": "#eab308", "Ice": "#06b6d4",
+    "Fighting": "#b91c1c", "Poison": "#a855f7", "Ground": "#d97706",
+    "Flying": "#818cf8", "Psychic": "#ec4899", "Bug": "#84cc16",
+    "Rock": "#78716c", "Ghost": "#6366f1", "Dragon": "#4f46e5",
+    "Steel": "#64748b", "Dark": "#334155", "Fairy": "#f472b6"
+}
+
+def get_type_color(type_name: Optional[str]) -> str:
+    if not type_name:
+        return "#64748b"
+    return TYPE_COLORS.get(type_name.capitalize(), "#64748b")
+
+SPECIAL_GIFTS_DATABASE: Dict[int, str] = {
+    1: "Starter Gift: Available in early routes & Professor Birch's expansion.",
+    4: "Starter Gift: Available on Route 116 & Professor Birch's expansion.",
+    7: "Starter Gift: Available in Professor Birch's expansion.",
+    133: "Gift: Prize Pokémon obtainable at Mauville / Celadon Game Corner.",
+    137: "Gift: Prize Pokémon available at Mauville Game Corner.",
+    138: "Fossil: Revive Helix Fossil at Devon Corporation (Rustboro City 2F).",
+    140: "Fossil: Revive Dome Fossil at Devon Corporation (Rustboro City 2F).",
+    142: "Fossil: Revive Old Amber at Devon Corporation (Rustboro City 2F).",
+    152: "Starter Gift: Received from Prof. Birch's Lab in Littleroot Town after completing Hoenn Pokédex.",
+    155: "Starter Gift: Received from Prof. Birch's Lab in Littleroot Town after completing Hoenn Pokédex.",
+    158: "Starter Gift: Received from Prof. Birch's Lab in Littleroot Town after completing Hoenn Pokédex.",
+    175: "Gift Egg: Received from Traveling NPC / Pokémon Day Care.",
+    252: "Starter Choice: Pick Treecko from Prof. Birch's bag on Route 101.",
+    255: "Starter Choice: Pick Torchic from Prof. Birch's bag on Route 101.",
+    258: "Starter Choice: Pick Mudkip from Prof. Birch's bag on Route 101.",
+    345: "Fossil: Revive Root Fossil at Devon Corporation (Rustboro City 2F).",
+    347: "Fossil: Revive Claw Fossil at Devon Corporation (Rustboro City 2F).",
+    351: "Special Gift: Awarded by Weather Institute Scientist (Route 119) after defeating Team Aqua/Magma.",
+    360: "Gift Egg: Received from the elderly lady near Lavaridge Town hot springs.",
+    374: "Special Gift: Pokéball waiting on the desk in Steven's House (Mossdeep City) post-game.",
+    408: "Fossil: Revive Skull Fossil at Devon Corporation (Rustboro City 2F).",
+    410: "Fossil: Revive Armor Fossil at Devon Corporation (Rustboro City 2F).",
+    564: "Fossil: Revive Cover Fossil at Devon Corporation (Rustboro City 2F).",
+    566: "Fossil: Revive Plume Fossil at Devon Corporation (Rustboro City 2F).",
+    696: "Fossil: Revive Jaw Fossil at Devon Corporation (Rustboro City 2F).",
+    698: "Fossil: Revive Sail Fossil at Devon Corporation (Rustboro City 2F)."
+}
+
+def format_evolution_method(method: str) -> str:
+    method_map = {
+        "Method 26": "Use Dawn Stone (Male)",
+        "Method 27": "Use Dawn Stone (Female)",
+        "Method 28": "Level 50 in Rain",
+        "Method 29": "Level Up with Remoraid / Trade",
+        "Method 30": "Level 32 with Dark-type in Party",
+        "Method 31": "Trade with Shelmet/Karrablast",
+        "Method 33": "Level 30 (Amped Nature)",
+        "Method 34": "Level 30 (Low Key Nature)",
+        "Method 41": "Use Linking Cord / Item",
+        "Method 42": "Level 50 in Rain",
+        "Method 43": "Level 25",
+        "Method 44": "Learn Hyper Drill",
+        "Method 45": "Level 36",
+        "Method 46": "Level 19",
+    }
+    return method_map.get(method, method)
+
+def get_species_form_name(species_id: int, base_id: int) -> str:
+    if species_id == base_id:
+        return "Standard"
+    if 949 <= species_id <= 966:
+        return "Alolan"
+    if 967 <= species_id <= 985:
+        return "Galarian"
+    if 1223 <= species_id <= 1239:
+        return "Hisuian"
+    if 1363 <= species_id <= 1369:
+        return "Paldean"
+    if 899 <= species_id <= 948:
+        return "Mega"
+    return "Alternate"
+
+
+class EvoNodeCard(QFrame):
+    """Interactive retro Pokémon card in evolution chain."""
+    def __init__(self, species_id: int, nat: int, name: str, type1: Optional[str], type2: Optional[str],
+                 is_current: bool, is_seen: bool, pixmap: Optional[QPixmap],
+                 form_name: str = "", on_click=None, parent=None):
+        super().__init__(parent)
+        self.nat = nat
+        self.on_click = on_click
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+
+        if is_current:
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: #fef2f2;
+                    border: 2px solid #ef4444;
+                    border-radius: 6px;
+                }
+                QFrame:hover {
+                    background-color: #fee2e2;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: #ffffff;
+                    border: 2px solid #cbd5e1;
+                    border-radius: 6px;
+                }
+                QFrame:hover {
+                    background-color: #f1f5f9;
+                    border-color: #94a3b8;
+                }
+            """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(8)
+
+        # Sprite
+        sp_lbl = QLabel()
+        sp_lbl.setFixedSize(36, 36)
+        sp_lbl.setAlignment(Qt.AlignCenter)
+        if pixmap and not pixmap.isNull():
+            sp_lbl.setPixmap(pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.FastTransformation))
+        else:
+            sp_lbl.setText("❓")
+        layout.addWidget(sp_lbl)
+
+        # Info VBox
+        vbox = QVBoxLayout()
+        vbox.setSpacing(2)
+        vbox.setContentsMargins(0, 0, 0, 0)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(4)
+        nat_str = f"#{nat:04d}"
+
+        name_lbl = QLabel(f"{nat_str} {name.upper()}")
+        name_lbl.setStyleSheet(f"""
+            color: {'#b91c1c' if is_current else '#0f172a'};
+            font-family: 'JetBrainsMono Nerd Font', monospace;
+            font-size: 11px;
+            font-weight: 900;
+        """)
+        title_row.addWidget(name_lbl)
+
+        if form_name and form_name != "Standard":
+            f_lbl = QLabel(f"[{form_name}]")
+            f_lbl.setStyleSheet("""
+                color: #0284c7;
+                font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 9px;
+                font-weight: bold;
+            """)
+            title_row.addWidget(f_lbl)
+
+        title_row.addStretch()
+
+        if is_current:
+            cur_badge = QLabel("★ ACTIVE")
+            cur_badge.setStyleSheet("""
+                color: #ef4444;
+                font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 9px;
+                font-weight: 900;
+            """)
+            title_row.addWidget(cur_badge)
+
+        vbox.addLayout(title_row)
+
+        # Types row
+        types_h = QHBoxLayout()
+        types_h.setSpacing(4)
+        for t in (type1, type2):
+            if t and t != "None" and is_seen:
+                t_badge = QLabel(t.upper())
+                t_badge.setStyleSheet(f"""
+                    background-color: {get_type_color(t)};
+                    color: #ffffff;
+                    border-radius: 3px;
+                    font-family: 'JetBrainsMono Nerd Font', monospace;
+                    font-size: 8px;
+                    font-weight: 900;
+                    padding: 1px 5px;
+                """)
+                types_h.addWidget(t_badge)
+        types_h.addStretch()
+        vbox.addLayout(types_h)
+
+        layout.addLayout(vbox, 1)
+
+    def mousePressEvent(self, event):
+        if self.on_click:
+            self.on_click(self.nat)
+        super().mousePressEvent(event)
+
+
+def create_evo_arrow(method_text: str, is_branch: bool = False) -> QWidget:
+    """Crisp GBA method arrow."""
+    w = QWidget()
+    h = QHBoxLayout(w)
+    h.setContentsMargins(0, 1, 0, 1)
+    h.setSpacing(4)
+    h.setAlignment(Qt.AlignCenter)
+
+    arrow_sym = "┡──▶ [ " if is_branch else "▼ ──[ "
+    lbl = QLabel(f"{arrow_sym}{method_text} ]──▶")
+    lbl.setAlignment(Qt.AlignCenter)
+    lbl.setStyleSheet("""
+        color: #047857;
+        background-color: #ecfdf5;
+        border: 1px solid #10b981;
+        border-radius: 4px;
+        font-family: 'JetBrainsMono Nerd Font', monospace;
+        font-size: 9px;
+        font-weight: bold;
+        padding: 2px 6px;
+    """)
+    h.addWidget(lbl)
+    return w
+
+
 class PokedexRetroView(QWidget):
     """
     Authentic in-game GBA Pokédex screen replicating uploaded_media_1.
@@ -118,6 +342,15 @@ class PokedexRetroView(QWidget):
         # Sprite cache
         self.sprite_cache: Dict[int, QPixmap] = {}
         self.silhouette_cache: Dict[int, QPixmap] = {}
+
+        # Right Card Tab state: 0 = STATS, 1 = EVOS, 2 = HOW_TO_GET
+        self.current_right_tab: int = 0
+        self.all_pokemon_records: Dict[int, Dict[str, Any]] = {}
+        self.nat_to_all_sps: Dict[int, List[int]] = defaultdict(list)
+        self.evo_forward: Dict[int, List[Tuple[int, str]]] = defaultdict(list)
+        self.evo_backward: Dict[int, List[Tuple[int, str]]] = defaultdict(list)
+        self.legendaries_list: List[Dict[str, Any]] = []
+        self.encounters_by_sp_id: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
 
         self.init_ui()
         self.load_data()
@@ -378,14 +611,14 @@ class PokedexRetroView(QWidget):
         body_layout.addWidget(center_box, 1)
 
         # -------------------------------------------------------------
-        # PANE 3: RIGHT STACK (NATIONAL & BASE STATS)
+        # PANE 3: RIGHT STACK (NATIONAL, TABS, STATS/EVOS/HOW-TO-GET)
         # -------------------------------------------------------------
         right_box = QVBoxLayout()
-        right_box.setSpacing(14)
+        right_box.setSpacing(10)
 
         # CARD 1: NATIONAL DEX PROGRESS
         self.card_national = QFrame()
-        self.card_national.setFixedWidth(290)
+        self.card_national.setFixedWidth(310)
         self.card_national.setStyleSheet("""
             QFrame {
                 background-color: #ffffff;
@@ -452,9 +685,120 @@ class PokedexRetroView(QWidget):
 
         right_box.addWidget(self.card_national)
 
-        # CARD 2: BASE STATS CARD
+        # -------------------------------------------------------------
+        # RETRO SEGMENTED PILL TAB BAR: [ STATS ] [ EVOS ] [ HOW TO GET ]
+        # -------------------------------------------------------------
+        self.tab_bar_frame = QFrame()
+        self.tab_bar_frame.setFixedWidth(310)
+        self.tab_bar_frame.setStyleSheet("""
+            QFrame {
+                background-color: #e2e8f0;
+                border: 2px solid #293131;
+                border-radius: 8px;
+            }
+        """)
+        tab_h = QHBoxLayout(self.tab_bar_frame)
+        tab_h.setContentsMargins(4, 4, 4, 4)
+        tab_h.setSpacing(4)
+
+        self.tab_stats_btn = QPushButton("📊 STATS")
+        self.tab_evos_btn = QPushButton("🧬 EVOS & PATHS")
+        self.tab_how_to_get_btn = QPushButton("📍 HOW TO GET")
+
+        for btn in (self.tab_stats_btn, self.tab_evos_btn, self.tab_how_to_get_btn):
+            btn.setFixedHeight(28)
+            btn.setCursor(QCursor(Qt.PointingHandCursor))
+
+        self.tab_stats_btn.clicked.connect(lambda: self.switch_right_tab(0))
+        self.tab_evos_btn.clicked.connect(lambda: self.switch_right_tab(1))
+        self.tab_how_to_get_btn.clicked.connect(lambda: self.switch_right_tab(2))
+
+        tab_h.addWidget(self.tab_stats_btn)
+        tab_h.addWidget(self.tab_evos_btn)
+        tab_h.addWidget(self.tab_how_to_get_btn)
+        self._update_tab_button_styles()
+
+        right_box.addWidget(self.tab_bar_frame)
+
+        # -------------------------------------------------------------
+        # STACKED WIDGET (STATS / EVOS & PATHS / HOW TO GET)
+        # -------------------------------------------------------------
+        self.right_stack = QStackedWidget()
+        self.right_stack.setFixedWidth(310)
+
+        # Tab 0: Base Stats Card
+        self.create_stats_card()
+        self.right_stack.addWidget(self.card_stats)
+
+        # Tab 1: Evolution Chains Card
+        self.create_evos_card()
+        self.right_stack.addWidget(self.card_evos)
+
+        # Tab 2: How to Get Card
+        self.create_how_to_get_card()
+        self.right_stack.addWidget(self.card_how_to_get)
+
+        right_box.addWidget(self.right_stack, 1)
+        body_layout.addLayout(right_box)
+
+        root_layout.addLayout(body_layout, 1)
+
+    def switch_right_tab(self, idx: int):
+        """Switch between STATS (0), EVOS & PATHS (1), and HOW TO GET (2)."""
+        if self.current_right_tab != idx:
+            play_sfx("menu_move.wav")
+        self.current_right_tab = idx
+        self.right_stack.setCurrentIndex(idx)
+        self._update_tab_button_styles()
+
+    def _update_tab_button_styles(self):
+        """Authentic Emerald/GBA retro tab styling."""
+        active_style = """
+            QPushButton {
+                background-color: #ef3131;
+                color: #ffffff;
+                border: 2px solid #b91c1c;
+                border-radius: 6px;
+                font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 10px;
+                font-weight: 900;
+                padding: 2px 4px;
+            }
+        """
+        inactive_style = """
+            QPushButton {
+                background-color: #ffffff;
+                color: #475569;
+                border: 2px solid #cbd5e1;
+                border-radius: 6px;
+                font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 10px;
+                font-weight: bold;
+                padding: 2px 4px;
+            }
+            QPushButton:hover {
+                background-color: #f1f5f9;
+                color: #0f172a;
+                border-color: #94a3b8;
+            }
+        """
+        self.tab_stats_btn.setStyleSheet(active_style if self.current_right_tab == 0 else inactive_style)
+        self.tab_evos_btn.setStyleSheet(active_style if self.current_right_tab == 1 else inactive_style)
+        self.tab_how_to_get_btn.setStyleSheet(active_style if self.current_right_tab == 2 else inactive_style)
+
+    def show_stats_tab(self):
+        self.switch_right_tab(0)
+
+    def show_evos_tab(self):
+        self.switch_right_tab(1)
+
+    def show_how_to_get_tab(self):
+        self.switch_right_tab(2)
+
+    def create_stats_card(self):
+        """Tab 0: Authentic Base Stats Card."""
         self.card_stats = QFrame()
-        self.card_stats.setFixedWidth(290)
+        self.card_stats.setFixedWidth(310)
         self.card_stats.setStyleSheet("""
             QFrame {
                 background-color: #ffffff;
@@ -499,10 +843,101 @@ class PokedexRetroView(QWidget):
             self.stat_widgets[code] = (bar, val_lbl)
             cs_layout.addLayout(row)
 
-        right_box.addWidget(self.card_stats, 1)
-        body_layout.addLayout(right_box)
+    def create_evos_card(self):
+        """Tab 1: Evolution Chains & Branching Paths Card."""
+        self.card_evos = QFrame()
+        self.card_evos.setFixedWidth(310)
+        self.card_evos.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 2px solid #293131;
+                border-radius: 8px;
+            }
+        """)
+        layout = QVBoxLayout(self.card_evos)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
 
-        root_layout.addLayout(body_layout, 1)
+        hdr = QHBoxLayout()
+        lbl_title = QLabel("🧬 EVOLUTIONS & PATHS")
+        lbl_title.setStyleSheet("color: #0f172a; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 12px; font-weight: 900; letter-spacing: 1px;")
+        hdr.addWidget(lbl_title)
+        hdr.addStretch()
+        layout.addLayout(hdr)
+
+        self.evos_scroll = QScrollArea()
+        self.evos_scroll.setWidgetResizable(True)
+        self.evos_scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical {
+                background: #f1f5f9; width: 6px; border-radius: 3px;
+            }
+            QScrollBar::handle:vertical {
+                background: #cbd5e1; border-radius: 3px; min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover { background: #94a3b8; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        self.evos_container = QWidget()
+        self.evos_layout = QVBoxLayout(self.evos_container)
+        self.evos_layout.setContentsMargins(0, 4, 0, 4)
+        self.evos_layout.setSpacing(6)
+        self.evos_scroll.setWidget(self.evos_container)
+
+        layout.addWidget(self.evos_scroll, 1)
+
+    def create_how_to_get_card(self):
+        """Tab 2: How to Get Card (Habitats, Quests, Special Gifts)."""
+        self.card_how_to_get = QFrame()
+        self.card_how_to_get.setFixedWidth(310)
+        self.card_how_to_get.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 2px solid #293131;
+                border-radius: 8px;
+            }
+        """)
+        layout = QVBoxLayout(self.card_how_to_get)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+
+        hdr = QHBoxLayout()
+        lbl_title = QLabel("📍 HOW TO GET")
+        lbl_title.setStyleSheet("color: #0f172a; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 12px; font-weight: 900; letter-spacing: 1px;")
+        hdr.addWidget(lbl_title)
+        hdr.addStretch()
+
+        self.how_status_badge = QLabel("○ MISSING")
+        self.how_status_badge.setStyleSheet("""
+            background-color: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1;
+            border-radius: 4px; font-family: 'JetBrainsMono Nerd Font', monospace;
+            font-size: 10px; font-weight: 900; padding: 2px 6px;
+        """)
+        hdr.addWidget(self.how_status_badge)
+        layout.addLayout(hdr)
+
+        self.how_scroll = QScrollArea()
+        self.how_scroll.setWidgetResizable(True)
+        self.how_scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical {
+                background: #f1f5f9; width: 6px; border-radius: 3px;
+            }
+            QScrollBar::handle:vertical {
+                background: #cbd5e1; border-radius: 3px; min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover { background: #94a3b8; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        self.how_container = QWidget()
+        self.how_layout = QVBoxLayout(self.how_container)
+        self.how_layout.setContentsMargins(0, 4, 0, 4)
+        self.how_layout.setSpacing(6)
+        self.how_scroll.setWidget(self.how_container)
+
+        layout.addWidget(self.how_scroll, 1)
 
     # -------------------------------------------------------------
     # DATA LOADING & SAVE SYNCHRONIZATION
@@ -513,6 +948,12 @@ class PokedexRetroView(QWidget):
         self.nat_nums.clear()
         self.sp_to_nat.clear()
         self.nat_to_base_id.clear()
+        self.all_pokemon_records.clear()
+        self.nat_to_all_sps.clear()
+        self.evo_forward.clear()
+        self.evo_backward.clear()
+        self.legendaries_list.clear()
+        self.encounters_by_sp_id.clear()
 
         # 1. Parse Save File if present
         if os.path.exists(self.save_path):
@@ -528,16 +969,29 @@ class PokedexRetroView(QWidget):
             self.seen_species = set()
             self.caught_species = set()
 
-        # 2. Query SQLite Database for 1025 National Dex Entries
+        # 2. Query SQLite Database for 1025 National Dex Entries, Evolutions, Encounters, Legendaries
         if os.path.exists(self.db_path):
             try:
                 con = sqlite3.connect(self.db_path)
                 cur = con.cursor()
 
-                # Build species -> nat mapping
-                all_p = cur.execute("SELECT id, national_dex_num FROM pokemon").fetchall()
-                for pid, nat in all_p:
-                    self.sp_to_nat[pid] = nat if nat is not None else pid
+                # Build full pokemon records & species -> nat mapping
+                all_p = cur.execute("""
+                    SELECT id, name, hp, atk, def, spa, spd, spe, bst, type1, type2, catch_rate, hidden_ability, abilities, national_dex_num
+                    FROM pokemon
+                """).fetchall()
+
+                for pid, name, hp, atk, df, spa, spd, spe, bst, t1, t2, cr, hab, ab, nat in all_p:
+                    nat_num = nat if nat is not None else pid
+                    self.sp_to_nat[pid] = nat_num
+                    self.all_pokemon_records[pid] = {
+                        "species_id": pid, "name": name, "national_dex_num": nat_num,
+                        "hp": hp, "atk": atk, "def": df, "spa": spa, "spd": spd, "spe": spe,
+                        "bst": bst or (hp + atk + df + spa + spd + spe),
+                        "type1": t1, "type2": t2, "catch_rate": cr,
+                        "hidden_ability": hab, "abilities": ab
+                    }
+                    self.nat_to_all_sps[nat_num].append(pid)
 
                 # Select base form for each national dex number 1..1025
                 rows = cur.execute("""
@@ -548,7 +1002,6 @@ class PokedexRetroView(QWidget):
                     )
                     ORDER BY p.national_dex_num ASC
                 """).fetchall()
-                con.close()
 
                 for r in rows:
                     nat, pid, name, hp, atk, df, spa, spd, spe, bst, t1, t2, ab, hab, cr = r
@@ -572,6 +1025,27 @@ class PokedexRetroView(QWidget):
                     self.nat_nums.append(nat)
                     self.nat_to_base_id[nat] = pid
 
+                # 3. Evolutions Graph
+                for src_id, sname, tgt_id, tname, method in cur.execute("SELECT pokemon_id, pokemon_name, target_id, target_name, method_desc FROM evolutions").fetchall():
+                    self.evo_forward[src_id].append((tgt_id, method))
+                    self.evo_backward[tgt_id].append((src_id, method))
+
+                # 4. Legendaries Master Guide
+                for name, gen, lvl, loc, req, syn, notes in cur.execute("SELECT name, generation, level, location, requirements, synergy, notes FROM legendaries").fetchall():
+                    self.legendaries_list.append({
+                        "name": name, "generation": gen, "level": lvl, "location": loc,
+                        "requirements": req, "synergy": syn, "notes": notes
+                    })
+
+                # 5. Wild Route Encounters
+                for rgn, mg, mn, loc_name, meth, slot, chance, min_lv, max_lv, sp_id, sp_name in cur.execute("SELECT region, map_group, map_num, location_name, method, slot, chance, min_level, max_level, species_id, species_name FROM encounters").fetchall():
+                    self.encounters_by_sp_id[sp_id].append({
+                        "region": rgn, "location_name": loc_name, "method": meth,
+                        "chance": chance, "min_level": min_lv, "max_level": max_lv,
+                        "species_id": sp_id, "species_name": sp_name
+                    })
+
+                con.close()
             except Exception as e:
                 print(f"[PokedexRetroView] DB query error: {e}")
 
@@ -786,6 +1260,12 @@ class PokedexRetroView(QWidget):
                 bar.set_value(0)
                 val_lbl.setText("???")
 
+        # 4. Update Evolution Chains Card
+        self.update_evos_card(nat)
+
+        # 5. Update How To Get Card
+        self.update_how_to_get_card(nat)
+
         self.pokemon_selected.emit(nat)
 
     def load_main_sprite(self, species_id: int, is_silhouette: bool):
@@ -888,6 +1368,516 @@ class PokedexRetroView(QWidget):
                 border-radius: 4px;
             """)
             self.types_layout.addWidget(lbl)
+
+    # -------------------------------------------------------------
+    # EVOLUTION CHAINS & HOW TO GET CARDS
+    # -------------------------------------------------------------
+    def on_evo_card_clicked(self, nat: int):
+        """1-click interactive jump when clicking an evolution card."""
+        if nat and nat in self.pokemon_by_nat:
+            play_sfx("menu_select.wav")
+            if self.filter_mode != "ALL" and not (self.filter_mode == "SEEN" and self.is_seen(nat)) and not (self.filter_mode == "CAUGHT" and self.is_caught(nat)):
+                self.set_filter_mode("ALL")
+            self.select_pokemon(nat)
+            for row in range(self.pokemon_list.count()):
+                item = self.pokemon_list.item(row)
+                if item and item.data(Qt.UserRole) == nat:
+                    self.pokemon_list.blockSignals(True)
+                    self.pokemon_list.setCurrentRow(row)
+                    self.pokemon_list.blockSignals(False)
+                    break
+
+    def on_pre_evo_btn_clicked(self, nat: int):
+        """1-click jump to pre-evolution from How to Get card."""
+        self.on_evo_card_clicked(nat)
+
+    def update_evos_card(self, nat: int):
+        """Render full evolution tree with branching paths and interactive jump."""
+        while self.evos_layout.count() > 0:
+            item = self.evos_layout.takeAt(0)
+            if item.widget():
+                w = item.widget()
+                w.setParent(None)
+                w.deleteLater()
+            elif item.layout():
+                while item.layout().count() > 0:
+                    sub = item.layout().takeAt(0)
+                    if sub.widget():
+                        w = sub.widget()
+                        w.setParent(None)
+                        w.deleteLater()
+
+        # Target species candidates
+        candidate_sps = [
+            s for s in self.nat_to_all_sps.get(nat, [self.nat_to_base_id.get(nat, nat)])
+            if s in self.evo_forward or s in self.evo_backward
+        ]
+
+        if not candidate_sps:
+            # Does not evolve badge
+            no_evo_frame = QFrame()
+            no_evo_frame.setStyleSheet("""
+                QFrame {
+                    background-color: #f8fafc;
+                    border: 2px dashed #94a3b8;
+                    border-radius: 8px;
+                }
+            """)
+            ne_layout = QVBoxLayout(no_evo_frame)
+            ne_layout.setContentsMargins(14, 20, 14, 20)
+            ne_layout.setSpacing(8)
+
+            badge = QLabel("🔒 DOES NOT EVOLVE")
+            badge.setAlignment(Qt.AlignCenter)
+            badge.setStyleSheet("""
+                color: #475569;
+                background-color: #e2e8f0;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 11px;
+                font-weight: 900;
+                padding: 4px 10px;
+            """)
+            ne_layout.addWidget(badge)
+
+            lbl_desc = QLabel("This Pokémon does not evolve into or from any other species.")
+            lbl_desc.setWordWrap(True)
+            lbl_desc.setAlignment(Qt.AlignCenter)
+            lbl_desc.setStyleSheet("color: #64748b; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: bold;")
+            ne_layout.addWidget(lbl_desc)
+
+            self.evos_layout.addWidget(no_evo_frame)
+            self.evos_layout.addStretch()
+            return
+
+        # Find connected components and roots
+        visited_all = set()
+        connected_components = []
+
+        for start_sp in candidate_sps:
+            if start_sp in visited_all:
+                continue
+            component = set()
+            q = deque([start_sp])
+            while q:
+                curr = q.popleft()
+                if curr in component:
+                    continue
+                component.add(curr)
+                for nxt, _ in self.evo_forward.get(curr, []):
+                    if nxt not in component:
+                        q.append(nxt)
+                for prv, _ in self.evo_backward.get(curr, []):
+                    if prv not in component:
+                        q.append(prv)
+            visited_all.update(component)
+
+            # Find roots (nodes with no in-edges within this component)
+            roots = [sp for sp in component if not any(src in component for src, _ in self.evo_backward.get(sp, []))]
+            connected_components.append((roots, component))
+
+        rendered_sps = set()
+
+        def render_subtree(node_sp: int, target_layout: QVBoxLayout, is_root: bool = False):
+            if node_sp in rendered_sps:
+                return
+            rendered_sps.add(node_sp)
+
+            rec = self.all_pokemon_records.get(node_sp, {})
+            node_nat = rec.get("national_dex_num", self.sp_to_nat.get(node_sp, node_sp))
+            name = rec.get("name", "Unknown")
+            t1 = rec.get("type1")
+            t2 = rec.get("type2")
+            form_name = get_species_form_name(node_sp, self.nat_to_base_id.get(node_nat, node_nat))
+            is_seen = self.is_seen(node_nat)
+            is_curr = (node_nat == self.current_nat)
+            pixmap = self.get_sprite_pixmap(node_sp, not is_seen)
+
+            card = EvoNodeCard(node_sp, node_nat, name, t1, t2, is_curr, is_seen, pixmap, form_name, on_click=self.on_evo_card_clicked)
+            target_layout.addWidget(card)
+
+            # Forward edges
+            raw_children = self.evo_forward.get(node_sp, [])
+            if not raw_children:
+                return
+
+            tgt_methods = defaultdict(list)
+            for tgt_id, meth in raw_children:
+                fmt_meth = format_evolution_method(meth)
+                if fmt_meth not in tgt_methods[tgt_id]:
+                    tgt_methods[tgt_id].append(fmt_meth)
+
+            if len(tgt_methods) > 1:
+                # Branching node
+                bf = QFrame()
+                bf.setStyleSheet("""
+                    QFrame {
+                        background-color: #f8fafc;
+                        border-left: 3px solid #10b981;
+                        border-radius: 4px;
+                    }
+                """)
+                b_vbox = QVBoxLayout(bf)
+                b_vbox.setContentsMargins(6, 6, 2, 6)
+                b_vbox.setSpacing(4)
+
+                b_lbl = QLabel(f"↳ {len(tgt_methods)} Evolution Branches:")
+                b_lbl.setStyleSheet("color: #047857; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: 900;")
+                b_vbox.addWidget(b_lbl)
+
+                for tgt_id, methods in tgt_methods.items():
+                    m_text = " / ".join(methods)
+                    arrow = create_evo_arrow(m_text, is_branch=True)
+                    b_vbox.addWidget(arrow)
+                    render_subtree(tgt_id, b_vbox, is_root=False)
+
+                target_layout.addWidget(bf)
+            else:
+                # Linear evolution
+                tgt_id, methods = list(tgt_methods.items())[0]
+                m_text = " / ".join(methods)
+                arrow = create_evo_arrow(m_text, is_branch=False)
+                target_layout.addWidget(arrow)
+                render_subtree(tgt_id, target_layout, is_root=False)
+
+        for comp_idx, (roots, comp) in enumerate(connected_components):
+            if len(connected_components) > 1:
+                # E.g. Standard line vs Galarian line
+                comp_root = roots[0] if roots else 0
+                r_name = self.all_pokemon_records.get(comp_root, {}).get("name", "Form")
+                r_form = get_species_form_name(comp_root, self.nat_to_base_id.get(self.sp_to_nat.get(comp_root, comp_root), comp_root))
+                tag = f"{r_form} Line" if r_form != "Standard" else "Standard Line"
+                line_badge = QLabel(f"🌐 {tag}:")
+                line_badge.setStyleSheet("color: #0284c7; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: 900; margin-top: 4px;")
+                self.evos_layout.addWidget(line_badge)
+
+            for root in roots:
+                render_subtree(root, self.evos_layout, is_root=True)
+
+        self.evos_layout.addStretch()
+
+    def update_how_to_get_card(self, nat: int):
+        """Render wild encounters grouped by region, legendary quests, or evolution acquisition."""
+        while self.how_layout.count() > 0:
+            item = self.how_layout.takeAt(0)
+            if item.widget():
+                w = item.widget()
+                w.setParent(None)
+                w.deleteLater()
+            elif item.layout():
+                while item.layout().count() > 0:
+                    sub = item.layout().takeAt(0)
+                    if sub.widget():
+                        w = sub.widget()
+                        w.setParent(None)
+                        w.deleteLater()
+
+        # Status badge update
+        is_c = self.is_caught(nat)
+        if is_c:
+            self.how_status_badge.setText("✓ CAUGHT")
+            self.how_status_badge.setStyleSheet("""
+                background-color: #ecfdf5; color: #047857; border: 1px solid #10b981;
+                border-radius: 4px; font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 10px; font-weight: 900; padding: 2px 6px;
+            """)
+        else:
+            self.how_status_badge.setText("○ MISSING")
+            self.how_status_badge.setStyleSheet("""
+                background-color: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1;
+                border-radius: 4px; font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 10px; font-weight: 900; padding: 2px 6px;
+            """)
+
+        mon = self.pokemon_by_nat.get(nat, {})
+        mon_name = mon.get("name", "")
+        target_sps = self.nat_to_all_sps.get(nat, [self.nat_to_base_id.get(nat, nat)])
+
+        # 1. Legendary Check
+        matched_legs = [
+            leg for leg in self.legendaries_list
+            if leg["name"].lower() == mon_name.lower() or mon_name.lower() in leg["name"].lower()
+        ]
+
+        if matched_legs:
+            for leg in matched_legs:
+                leg_card = QFrame()
+                leg_card.setStyleSheet("""
+                    QFrame {
+                        background-color: #fffbeb;
+                        border: 2px solid #f59e0b;
+                        border-radius: 6px;
+                    }
+                """)
+                lc = QVBoxLayout(leg_card)
+                lc.setContentsMargins(8, 8, 8, 8)
+                lc.setSpacing(4)
+
+                lt = QLabel(f"👑 LEGENDARY: {leg['name'].upper()}")
+                lt.setStyleSheet("color: #b45309; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 11px; font-weight: 900;")
+                lc.addWidget(lt)
+
+                loc_lbl = QLabel(f"📍 Location: {leg['location']}")
+                loc_lbl.setWordWrap(True)
+                loc_lbl.setStyleSheet("color: #0f172a; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: bold;")
+                lc.addWidget(loc_lbl)
+
+                lvl_lbl = QLabel(f"⚔️ Encounter: {leg['level']} • {leg.get('generation', 'Hoenn Native')}")
+                lvl_lbl.setStyleSheet("color: #475569; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: bold;")
+                lc.addWidget(lvl_lbl)
+
+                req_t = QLabel("📜 Storyline & Puzzle Requirements:")
+                req_t.setStyleSheet("color: #b45309; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 9px; font-weight: 900; margin-top: 2px;")
+                lc.addWidget(req_t)
+
+                req_lbl = QLabel(leg["requirements"])
+                req_lbl.setWordWrap(True)
+                req_lbl.setStyleSheet("color: #334155; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 9px;")
+                lc.addWidget(req_lbl)
+
+                if leg.get("synergy"):
+                    syn_lbl = QLabel(f"⚡ Recommended Synergy: {leg['synergy']}")
+                    syn_lbl.setWordWrap(True)
+                    syn_lbl.setStyleSheet("color: #0369a1; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 9px; font-weight: bold;")
+                    lc.addWidget(syn_lbl)
+
+                if leg.get("notes"):
+                    notes_lbl = QLabel(f"💡 Notes: {leg['notes']}")
+                    notes_lbl.setWordWrap(True)
+                    notes_lbl.setStyleSheet("color: #64748b; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 9px; font-style: italic;")
+                    lc.addWidget(notes_lbl)
+
+                self.how_layout.addWidget(leg_card)
+
+        # 2. Special Gifts & Events Check
+        if nat in SPECIAL_GIFTS_DATABASE:
+            gift_card = QFrame()
+            gift_card.setStyleSheet("""
+                QFrame {
+                    background-color: #eff6ff;
+                    border: 2px solid #3b82f6;
+                    border-radius: 6px;
+                }
+            """)
+            gc = QVBoxLayout(gift_card)
+            gc.setContentsMargins(8, 8, 8, 8)
+            gc.setSpacing(4)
+
+            gt = QLabel("🎁 SPECIAL ACQUISITION / GIFT")
+            gt.setStyleSheet("color: #1d4ed8; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 11px; font-weight: 900;")
+            gc.addWidget(gt)
+
+            g_desc = QLabel(SPECIAL_GIFTS_DATABASE[nat])
+            g_desc.setWordWrap(True)
+            g_desc.setStyleSheet("color: #1e293b; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: bold;")
+            gc.addWidget(g_desc)
+
+            self.how_layout.addWidget(gift_card)
+
+        # 3. Wild Route Encounters
+        all_encs = []
+        for sp_id in target_sps:
+            all_encs.extend(self.encounters_by_sp_id.get(sp_id, []))
+
+        by_region = defaultdict(lambda: defaultdict(lambda: {"min_lv": 999, "max_lv": 0, "chance": 0}))
+        for enc in all_encs:
+            rgn = enc["region"]
+            loc = enc["location_name"]
+            meth = enc["method"]
+            entry = by_region[rgn][(loc, meth)]
+            entry["min_lv"] = min(entry["min_lv"], enc["min_level"])
+            entry["max_lv"] = max(entry["max_lv"], enc["max_level"])
+            entry["chance"] += enc["chance"]
+
+        total_loc_count = sum(len(locs) for locs in by_region.values())
+
+        if total_loc_count > 0:
+            wild_hdr = QLabel(f"🌿 WILD HABITATS ({total_loc_count} spots)")
+            wild_hdr.setStyleSheet("color: #0f172a; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 11px; font-weight: 900; margin-top: 4px;")
+            self.how_layout.addWidget(wild_hdr)
+
+            region_order = ["Hoenn", "Kanto", "Johto", "Sevii Islands"]
+            method_colors = {
+                "Tall Grass": "#16a34a",
+                "Surfing": "#0284c7",
+                "Beach": "#d97706",
+                "Hidden Rare": "#9333ea",
+                "Rock Smash": "#78716c",
+                "Fishing (Old Rod)": "#0d9488",
+                "Fishing (Good Rod)": "#0891b2",
+                "Fishing (Super Rod)": "#4f46e5"
+            }
+
+            for rgn in region_order:
+                if rgn not in by_region or not by_region[rgn]:
+                    continue
+                r_box = QFrame()
+                r_box.setStyleSheet("""
+                    QFrame {
+                        background-color: #ffffff;
+                        border: 1px solid #cbd5e1;
+                        border-radius: 6px;
+                    }
+                """)
+                rb = QVBoxLayout(r_box)
+                rb.setContentsMargins(6, 6, 6, 6)
+                rb.setSpacing(4)
+
+                r_title = QLabel(f"🌐 {rgn.upper()} REGION")
+                r_title.setStyleSheet("color: #0284c7; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: 900;")
+                rb.addWidget(r_title)
+
+                for (loc, meth), data in sorted(by_region[rgn].items(), key=lambda x: (-x[1]["chance"], x[0][0])):
+                    row_w = QWidget()
+                    r_layout = QHBoxLayout(row_w)
+                    r_layout.setContentsMargins(0, 0, 0, 0)
+                    r_layout.setSpacing(4)
+
+                    loc_lbl = QLabel(loc)
+                    loc_lbl.setStyleSheet("color: #0f172a; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: bold;")
+                    r_layout.addWidget(loc_lbl)
+
+                    r_layout.addStretch()
+
+                    m_color = method_colors.get(meth, "#64748b")
+                    m_badge = QLabel(meth)
+                    m_badge.setStyleSheet(f"""
+                        background-color: {m_color};
+                        color: #ffffff;
+                        font-family: 'JetBrainsMono Nerd Font', monospace;
+                        font-size: 8px;
+                        font-weight: 900;
+                        padding: 1px 4px;
+                        border-radius: 3px;
+                    """)
+                    r_layout.addWidget(m_badge)
+
+                    rate_lbl = QLabel(f"{data['chance']}%")
+                    rate_lbl.setStyleSheet("color: #2563eb; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 9px; font-weight: 900;")
+                    r_layout.addWidget(rate_lbl)
+
+                    min_l, max_l = data["min_lv"], data["max_lv"]
+                    lv_str = f"Lv.{min_l}" if min_l == max_l else f"Lv.{min_l}-{max_l}"
+                    lv_lbl = QLabel(lv_str)
+                    lv_lbl.setStyleSheet("color: #64748b; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 9px; font-weight: bold;")
+                    r_layout.addWidget(lv_lbl)
+
+                    rb.addWidget(row_w)
+
+                self.how_layout.addWidget(r_box)
+
+        # 4. Pre-evolution Check
+        pre_evos = []
+        for sp_id in target_sps:
+            for src_id, meth in self.evo_backward.get(sp_id, []):
+                pre_evos.append((src_id, meth))
+
+        if total_loc_count == 0 and not matched_legs:
+            # Evolution-Only or No Wild Spawns
+            evo_only_card = QFrame()
+            evo_only_card.setStyleSheet("""
+                QFrame {
+                    background-color: #fffbeb;
+                    border: 2px solid #f59e0b;
+                    border-radius: 6px;
+                }
+            """)
+            eoc = QVBoxLayout(evo_only_card)
+            eoc.setContentsMargins(8, 8, 8, 8)
+            eoc.setSpacing(6)
+
+            eoc_title = QLabel("🚫 NO WILD SPAWNS")
+            eoc_title.setStyleSheet("color: #b45309; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 11px; font-weight: 900;")
+            eoc.addWidget(eoc_title)
+
+            if pre_evos:
+                src_id, meth = pre_evos[0]
+                src_rec = self.all_pokemon_records.get(src_id, {})
+                src_nat = src_rec.get("national_dex_num", self.sp_to_nat.get(src_id, src_id))
+                src_name = src_rec.get("name", "Pre-Evolution")
+                m_desc = format_evolution_method(meth)
+
+                desc = QLabel(f"No wild spawns. Obtain by evolving #{src_nat:04d} {src_name} at {m_desc}.")
+                desc.setWordWrap(True)
+                desc.setStyleSheet("color: #0f172a; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px; font-weight: bold;")
+                eoc.addWidget(desc)
+
+                jump_btn = QPushButton(f"▶ Jump to #{src_nat:04d} {src_name}")
+                jump_btn.setFixedHeight(28)
+                jump_btn.setCursor(QCursor(Qt.PointingHandCursor))
+                jump_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #ef4444;
+                        color: #ffffff;
+                        border: 1px solid #b91c1c;
+                        border-radius: 4px;
+                        font-family: 'JetBrainsMono Nerd Font', monospace;
+                        font-size: 10px;
+                        font-weight: 900;
+                    }
+                    QPushButton:hover {
+                        background-color: #dc2626;
+                    }
+                """)
+                jump_btn.clicked.connect(lambda _, n=src_nat: self.on_pre_evo_btn_clicked(n))
+                eoc.addWidget(jump_btn)
+            else:
+                if nat not in SPECIAL_GIFTS_DATABASE:
+                    desc = QLabel("No wild spawns recorded in Hoenn, Kanto, Johto, or Sevii. Obtain via special in-game trade, event, or Battle Frontier reward.")
+                    desc.setWordWrap(True)
+                    desc.setStyleSheet("color: #64748b; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 10px;")
+                    eoc.addWidget(desc)
+
+            self.how_layout.addWidget(evo_only_card)
+
+        elif total_loc_count > 0 and pre_evos:
+            # Wild spawns exist AND pre-evolution exists
+            src_id, meth = pre_evos[0]
+            src_rec = self.all_pokemon_records.get(src_id, {})
+            src_nat = src_rec.get("national_dex_num", self.sp_to_nat.get(src_id, src_id))
+            src_name = src_rec.get("name", "Pre-Evolution")
+            m_desc = format_evolution_method(meth)
+
+            alt_box = QFrame()
+            alt_box.setStyleSheet("""
+                QFrame {
+                    background-color: #f8fafc;
+                    border: 1px dashed #cbd5e1;
+                    border-radius: 6px;
+                }
+            """)
+            ab = QVBoxLayout(alt_box)
+            ab.setContentsMargins(6, 6, 6, 6)
+            ab.setSpacing(4)
+
+            alt_lbl = QLabel(f"💡 Also obtainable by evolving #{src_nat:04d} {src_name} ({m_desc}).")
+            alt_lbl.setWordWrap(True)
+            alt_lbl.setStyleSheet("color: #475569; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: 9px; font-weight: bold;")
+            ab.addWidget(alt_lbl)
+
+            jump_btn = QPushButton(f"▶ Jump to #{src_nat:04d} {src_name}")
+            jump_btn.setFixedHeight(24)
+            jump_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            jump_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #f1f5f9;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    font-family: 'JetBrainsMono Nerd Font', monospace;
+                    font-size: 9px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #e2e8f0;
+                }
+            """)
+            jump_btn.clicked.connect(lambda _, n=src_nat: self.on_pre_evo_btn_clicked(n))
+            ab.addWidget(jump_btn)
+            self.how_layout.addWidget(alt_box)
+
+        self.how_layout.addStretch()
 
     # -------------------------------------------------------------
     # KEYBOARD NAVIGATION (GBA CONTROLS)
