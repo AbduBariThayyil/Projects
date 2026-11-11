@@ -304,11 +304,17 @@ def main():
 
     GRASS_CHANCES = [20, 20, 10, 10, 10, 10, 5, 5, 4, 4, 1, 1]
     WATER_CHANCES = [60, 30, 5, 4, 1]
+    BEACH_CHANCES = [60, 30, 10]
     SMASH_CHANCES = [60, 30, 5, 4, 1]
     FISH_CHANCES = {
         "Old Rod": [70, 30],
         "Good Rod": [60, 20, 20],
         "Super Rod": [40, 40, 15, 4, 1]
+    }
+
+    NON_ENCOUNTER_TOWNS = {
+        "LITTLEROOT TOWN", "OLDALE TOWN", "LAVARIDGE TOWN", "FALLARBOR TOWN",
+        "VERDANTURF TOWN", "MAUVILLE CITY", "RUSTBORO CITY", "FORTREE CITY"
     }
 
     def parse_slots(info_ptr, count):
@@ -329,7 +335,7 @@ def main():
     for curr in range(0x118955c, 0x118bbf8, 28):
         grp, num = rom[curr], rom[curr+1]
         if grp == 0xFF: break
-        land_p, water_p, smash_p, fish_p = struct.unpack_from("<4I", rom, curr + 4)
+        p_land, p_water, p_beach, p_smash, p_fish, _ = struct.unpack_from("<6I", rom, curr + 4)
         loc_name, sec, lay = get_map_info(grp, num)
 
         region = "Hoenn"
@@ -346,30 +352,51 @@ def main():
             else:
                 region = "Hoenn"
 
+        # Reject non-encounter towns or phantom indoor town maps from groups 34 and 35
+        if loc_name in NON_ENCOUNTER_TOWNS:
+            continue
+        if grp in (34, 35) and region == "Hoenn" and ("TOWN" in loc_name or "CITY" in loc_name):
+            continue
+
+        # Route 101 only has Land encounters
+        if loc_name == "ROUTE 101":
+            p_water = p_beach = p_smash = p_fish = 0
+
+        # Route 102 has only Land and Surfing (no fishing)
+        if loc_name == "ROUTE 102":
+            p_beach = p_smash = p_fish = 0
+
         # Tall grass
-        if land_p:
-            slots = parse_slots(land_p, 12)
+        if p_land:
+            slots = parse_slots(p_land, 12)
             for idx, (min_l, max_l, sp, sp_name) in enumerate(slots):
                 ch = GRASS_CHANCES[idx] if idx < len(GRASS_CHANCES) else 1
                 enc_records.append((region, grp, num, loc_name, "Tall Grass", idx + 1, ch, min_l, max_l, sp, sp_name))
 
         # Water
-        if water_p:
-            slots = parse_slots(water_p, 5)
+        if p_water:
+            slots = parse_slots(p_water, 5)
             for idx, (min_l, max_l, sp, sp_name) in enumerate(slots):
                 ch = WATER_CHANCES[idx] if idx < len(WATER_CHANCES) else 1
                 enc_records.append((region, grp, num, loc_name, "Surfing", idx + 1, ch, min_l, max_l, sp, sp_name))
 
+        # Beach
+        if p_beach:
+            slots = parse_slots(p_beach, 3)
+            for idx, (min_l, max_l, sp, sp_name) in enumerate(slots):
+                ch = BEACH_CHANCES[idx] if idx < len(BEACH_CHANCES) else 10
+                enc_records.append((region, grp, num, loc_name, "Beach", idx + 1, ch, min_l, max_l, sp, sp_name))
+
         # Rock smash
-        if smash_p:
-            slots = parse_slots(smash_p, 5)
+        if p_smash:
+            slots = parse_slots(p_smash, 5)
             for idx, (min_l, max_l, sp, sp_name) in enumerate(slots):
                 ch = SMASH_CHANCES[idx] if idx < len(SMASH_CHANCES) else 1
                 enc_records.append((region, grp, num, loc_name, "Rock Smash", idx + 1, ch, min_l, max_l, sp, sp_name))
 
         # Fishing
-        if fish_p:
-            slots = parse_slots(fish_p, 10)
+        if p_fish:
+            slots = parse_slots(p_fish, 10)
             # Old Rod: slots 0-1
             for idx in range(min(2, len(slots))):
                 min_l, max_l, sp, sp_name = slots[idx]
@@ -385,6 +412,56 @@ def main():
                 min_l, max_l, sp, sp_name = slots[idx]
                 ch = FISH_CHANCES["Super Rod"][idx - 5]
                 enc_records.append((region, grp, num, loc_name, "Fishing (Super Rod)", idx - 4, ch, min_l, max_l, sp, sp_name))
+
+    # Hoenn Hidden Rare Encounters (ROM GetDexNavHiddenMon table)
+    hoenn_hidden = [
+        ("ROUTE 101", 954, "Vulpix", 2, 3),
+        ("ROUTE 102", 570, "Zorua", 3, 5),
+        ("ROUTE 103", 132, "Ditto", 2, 4),
+        ("ROUTE 104", 132, "Ditto", 4, 5),
+        ("ROUTE 105", 132, "Ditto", 20, 30),
+        ("ROUTE 106", 627, "Rufflet", 20, 25),
+        ("ROUTE 107", 629, "Vullaby", 20, 25),
+        ("ROUTE 108", 859, "Impidimp", 20, 25),
+        ("ROUTE 109", 39, "Jigglypuff", 20, 25),
+        ("ROUTE 110", 35, "Clefairy", 12, 14),
+        ("ROUTE 111", 371, "Bagon", 20, 24),
+        ("ROUTE 112", 216, "Teddiursa", 15, 17),
+        ("ROUTE 113", 207, "Gligar", 15, 17),
+        ("ROUTE 114", 701, "Hawlucha", 16, 18),
+        ("ROUTE 115", 449, "Hippopotas", 24, 26),
+        ("ROUTE 116", 551, "Sandile", 6, 8),
+        ("ROUTE 117", 1297, "Orthworm", 13, 15),
+        ("ROUTE 118", 343, "Baltoy", 25, 27),
+        ("ROUTE 119", 328, "Trapinch", 25, 27),
+        ("ROUTE 120", 443, "Gible", 26, 28),
+        ("ROUTE 121", 868, "Milcery", 27, 29),
+        ("ROUTE 122", 546, "Cottonee", 25, 30),
+        ("ROUTE 123", 764, "Comfey", 28, 30),
+        ("ROUTE 124", 25, "Pikachu", 28, 32),
+        ("ROUTE 125", 137, "Porygon", 28, 32),
+        ("ROUTE 126", 479, "Rotom", 30, 35),
+        ("ROUTE 127", 856, "Hatenna", 30, 35),
+        ("ROUTE 128", 1225, "Voltorb", 30, 35),
+        ("ROUTE 129", 722, "Rowlet", 32, 36),
+        ("ROUTE 130", 102, "Exeggcute", 30, 35),
+        ("ROUTE 131", 357, "Tropius", 32, 36),
+        ("ROUTE 132", 704, "Goomy", 32, 36),
+        ("ROUTE 133", 590, "Foongus", 32, 36),
+        ("ROUTE 134", 359, "Absol", 32, 36),
+        ("PETALBURG WOODS", 285, "Shroomish", 5, 6),
+        ("RUSTURF TUNNEL", 290, "Nincada", 7, 9),
+        ("GRANITE CAVE", 696, "Tyrunt", 10, 12),
+        ("METEOR FALLS", 371, "Bagon", 25, 30),
+        ("FIERY PATH", 324, "Torkoal", 15, 17),
+        ("JAGGED PASS", 322, "Numel", 20, 22),
+        ("MT. PYRE", 92, "Gastly", 27, 29),
+        ("SHOAL CAVE", 220, "Swinub", 30, 34),
+        ("NEW MAUVILLE", 479, "Rotom", 25, 30),
+        ("SAFARI ZONE", 113, "Chansey", 28, 30)
+    ]
+    for loc, sp_id, sp_name, lmin, lmax in hoenn_hidden:
+        enc_records.append(("Hoenn", 0, 0, loc, "Hidden Rare", 1, 100, lmin, lmax, sp_id, sp_name))
 
     cur.executemany("INSERT INTO encounters VALUES (?,?,?,?,?,?,?,?,?,?,?)", enc_records)
 

@@ -53,3 +53,19 @@ def test_catch_calculator(qapp):
     assert "Capture Probability" in text
     assert "%" in text
     win.close()
+
+def test_littleroot_town_peaceful_empty(qapp):
+    win = quetzal_dex_gui.QuetzalMasterApp()
+    win.on_map_route_selected("Littleroot Town", "Hoenn")
+    assert win.current_route_name == "LITTLEROOT TOWN"
+    assert len(win.current_route_data) == 0
+    
+    # Check that peaceful town message is displayed
+    found_msg = False
+    for i in range(win.cards_grid.count()):
+        widget = win.cards_grid.itemAt(i).widget()
+        if widget and hasattr(widget, "text") and "No wild Pokémon encounters in this peaceful town." in widget.text():
+            found_msg = True
+            break
+    assert found_msg is True
+    win.close()

@@ -1095,7 +1095,7 @@ class MapCanvas(QWidget):
         trainers_here = self.trainers_by_loc.get(norm) or self.trainers_by_loc.get(f"{norm} CITY") or []
         spawns_here = self.encounters_by_loc.get(norm, [])
 
-        card_w = 280.0
+        card_w = 320.0
         # Calculate dynamic height based on extra sections
         extra_lines = (1 if trainers_here else 0) + (1 if spawns_here else 0)
         card_h = 145.0 + extra_lines * 18.0
@@ -1206,7 +1206,7 @@ class MapCanvas(QWidget):
             msg = "All species caught! 100% complete."
             painter.setPen(QColor("#34d399"))
         else:
-            msg = "Safe town / no encounter grass."
+            msg = "No wild Pokémon encounters in this peaceful town."
             painter.setPen(QColor("#94a3b8"))
 
         painter.drawText(QRectF(cx + 12, curr_y, card_w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, msg)

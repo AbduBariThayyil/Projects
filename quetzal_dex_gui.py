@@ -17,6 +17,7 @@ import sys
 import math
 import sqlite3
 import time
+import subprocess
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtWidgets import (
@@ -32,7 +33,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QTimer, Signal
 
 import quetzal_save_reader
-from regional_map_widget import RegionalMapWidget, normalize_loc
+from regional_map_widget import RegionalMapWidget, normalize_loc, REGIONAL_MAP_DATA
 
 # ==========================================
 # CONSTANTS & ASSET PATHS
@@ -42,6 +43,28 @@ DB_PATH = os.path.join(PROJECT_DIR, "quetzal_database.db")
 DEFAULT_SAV_PATH = "/home/vibecoder/Games/Console Games/GBA/Moemon Quetzal.sav"
 ASSETS_SPRITES_DIR = os.path.join(PROJECT_DIR, "assets", "sprites")
 ASSETS_SILHOUETTES_DIR = os.path.join(PROJECT_DIR, "assets", "silhouettes")
+SFX_DIR = os.path.join(PROJECT_DIR, "assets", "sfx")
+
+# Current Active Theme: "retro" (PokéNav GBA) or "modern" (Cyber Modern)
+CURRENT_THEME = "retro"
+
+def is_retro() -> bool:
+    """Return True if active theme is authentic Emerald PokéNav GBA."""
+    return CURRENT_THEME == "retro"
+
+def play_sfx(sfx_name: str):
+    """Play a retro chiptune sound effect asynchronously without blocking."""
+    fname = sfx_name if sfx_name.endswith(".wav") else f"{sfx_name}.wav"
+    path = os.path.join(SFX_DIR, fname)
+    if os.path.exists(path):
+        try:
+            # paplay is native pulse/pipewire client with zero latency and no stderr clutter
+            subprocess.Popen(["paplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            try:
+                subprocess.Popen(["pw-play", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
 TYPE_COLORS = {
     "Normal":   ("#A8A878", "#6D6D4E"),
@@ -65,6 +88,204 @@ TYPE_COLORS = {
     "Stellar":  ("#42C8D4", "#2B828A"),
     "Mystery":  ("#68A090", "#44685E"),
 }
+
+# ==========================================
+# RETRO POKéNAV GBA THEME (AUTHENTIC EMERALD)
+# ==========================================
+RETRO_POKENAV_STYLESHEET = """
+QMainWindow {
+    background-color: #0a1820;
+}
+QWidget {
+    background-color: #0a1820;
+    color: #e2f4ea;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", "Courier New", monospace;
+    font-size: 12px;
+}
+QTabWidget::pane {
+    border-top: 3px solid #58b8a8;
+    border-left: 3px solid #58b8a8;
+    border-bottom: 3px solid #081820;
+    border-right: 3px solid #081820;
+    background-color: #10262e;
+    border-radius: 4px;
+    top: -2px;
+}
+QTabBar::tab {
+    background: #0d1e24;
+    color: #6a9c90;
+    border-top: 2px solid #3d7870;
+    border-left: 2px solid #3d7870;
+    border-right: 2px solid #081820;
+    border-bottom: none;
+    padding: 8px 14px;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", "Courier New", monospace;
+    font-weight: bold;
+    font-size: 11px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    margin-right: 3px;
+}
+QTabBar::tab:selected {
+    background: #10262e;
+    color: #00ff66;
+    border-top: 3px solid #00ff66;
+    border-left: 3px solid #58b8a8;
+    border-right: 3px solid #081820;
+    border-bottom: 3px solid #10262e;
+}
+QTabBar::tab:hover:!selected {
+    background: #143038;
+    color: #a8d8c8;
+    border-top: 2px solid #58b8a8;
+}
+QLineEdit, QComboBox, QSpinBox {
+    background-color: #08151c;
+    border-top: 2px solid #050e12;
+    border-left: 2px solid #050e12;
+    border-bottom: 2px solid #58b8a8;
+    border-right: 2px solid #58b8a8;
+    border-radius: 2px;
+    padding: 5px 10px;
+    color: #00ff88;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", "Courier New", monospace;
+    font-size: 12px;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+    border-top: 2px solid #050e12;
+    border-left: 2px solid #050e12;
+    border-bottom: 2px solid #00ff66;
+    border-right: 2px solid #00ff66;
+    background-color: #0c202a;
+    color: #ffffff;
+}
+QComboBox QAbstractItemView {
+    background-color: #08151c;
+    border: 2px solid #58b8a8;
+    selection-background-color: #184452;
+    selection-color: #00ff88;
+    color: #f8f8f8;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", monospace;
+}
+QPushButton {
+    background-color: #183844;
+    border-top: 2px solid #58b8a8;
+    border-left: 2px solid #58b8a8;
+    border-bottom: 2px solid #081820;
+    border-right: 2px solid #081820;
+    border-radius: 2px;
+    color: #f8f8f8;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", "Courier New", monospace;
+    font-weight: bold;
+    font-size: 11px;
+    padding: 6px 14px;
+}
+QPushButton:hover {
+    background-color: #245060;
+    border-top: 2px solid #78d8c0;
+    border-left: 2px solid #78d8c0;
+    border-bottom: 2px solid #051015;
+    border-right: 2px solid #051015;
+    color: #00ff88;
+}
+QPushButton:pressed {
+    background-color: #0d2027;
+    border-top: 2px solid #081820;
+    border-left: 2px solid #081820;
+    border-bottom: 2px solid #58b8a8;
+    border-right: 2px solid #58b8a8;
+    color: #00e858;
+    padding-top: 8px;
+    padding-left: 16px;
+    padding-bottom: 4px;
+    padding-right: 12px;
+}
+QScrollArea {
+    border: none;
+    background: transparent;
+}
+QScrollBar:vertical {
+    border: none;
+    background: #081418;
+    width: 10px;
+    border-radius: 2px;
+}
+QScrollBar::handle:vertical {
+    background: #204654;
+    border: 1px solid #58b8a8;
+    min-height: 20px;
+    border-radius: 2px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #2d6275;
+}
+QTableWidget {
+    background-color: #08151c;
+    border-top: 2px solid #081820;
+    border-left: 2px solid #081820;
+    border-bottom: 2px solid #58b8a8;
+    border-right: 2px solid #58b8a8;
+    gridline-color: #14303c;
+    border-radius: 4px;
+    color: #f8f8f8;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", monospace;
+}
+QHeaderView::section {
+    background-color: #122c36;
+    color: #a8d8c8;
+    padding: 7px;
+    border-top: 1px solid #58b8a8;
+    border-left: 1px solid #58b8a8;
+    border-bottom: 2px solid #081820;
+    border-right: 2px solid #081820;
+    font-weight: bold;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", monospace;
+}
+QTableWidget::item:selected {
+    background-color: #1a4e5e;
+    color: #00ff88;
+}
+QListWidget {
+    background-color: #08151c;
+    border-top: 2px solid #081820;
+    border-left: 2px solid #081820;
+    border-bottom: 2px solid #58b8a8;
+    border-right: 2px solid #58b8a8;
+    border-radius: 4px;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", monospace;
+}
+QListWidget::item {
+    padding: 6px 8px;
+    border-bottom: 1px solid #132c36;
+    color: #f8f8f8;
+}
+QListWidget::item:selected {
+    background-color: #1a4e5e;
+    color: #00ff88;
+    border-left: 3px solid #00e858;
+}
+QListWidget::item:hover:!selected {
+    background-color: #102630;
+    color: #78d8c0;
+}
+QProgressBar {
+    background-color: #081418;
+    border-top: 2px solid #040a0c;
+    border-left: 2px solid #040a0c;
+    border-bottom: 2px solid #204854;
+    border-right: 2px solid #204854;
+    border-radius: 2px;
+    text-align: center;
+    color: #f8f8f8;
+    font-family: "JetBrainsMono Nerd Font", "UbuntuMono Nerd Font", monospace;
+    font-size: 9px;
+    font-weight: bold;
+}
+QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #00ff68, stop:0.5 #00e858, stop:1 #009838);
+    border-radius: 1px;
+}
+"""
 
 MODERN_STYLESHEET = """
 QMainWindow {
@@ -201,34 +422,50 @@ def get_species_pixmap(species_id: int, is_silhouette: bool = False) -> Optional
 
 
 class TypeBadge(QLabel):
-    """Clean rounded dual-type pill badge."""
+    """Clean dual-type pill badge with retro GBA styling support."""
     def __init__(self, type_name: str, parent=None):
         super().__init__(parent)
         self.type_name = type_name
         self.setText(type_name.upper())
         self.setAlignment(Qt.AlignCenter)
         self.setFixedHeight(20)
-        self.setContentsMargins(8, 2, 8, 2)
-        font = QFont("Arial", 9, QFont.Bold)
+        self.setContentsMargins(6, 2, 6, 2)
+        font = QFont("JetBrainsMono Nerd Font" if is_retro() else "Arial", 9, QFont.Bold)
         self.setFont(font)
 
         bg, border = TYPE_COLORS.get(type_name, ("#475569", "#334155"))
-        self.setStyleSheet(f"""
-            QLabel {{
-                background-color: {bg};
-                border: 1px solid {border};
-                border-radius: 4px;
-                color: #FFFFFF;
-                padding: 1px 6px;
-                font-size: 10px;
-                font-weight: bold;
-            }}
-        """)
+        if is_retro():
+            self.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {bg};
+                    border-top: 1.5px solid #ffffff;
+                    border-left: 1.5px solid #ffffff;
+                    border-bottom: 1.5px solid #000000;
+                    border-right: 1.5px solid #000000;
+                    border-radius: 2px;
+                    color: #FFFFFF;
+                    padding: 1px 5px;
+                    font-size: 9px;
+                    font-weight: bold;
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {bg};
+                    border: 1px solid {border};
+                    border-radius: 4px;
+                    color: #FFFFFF;
+                    padding: 1px 6px;
+                    font-size: 10px;
+                    font-weight: bold;
+                }}
+            """)
 
 
 class ModernEncounterCard(QFrame):
     """
-    Modern responsive encounter card.
+    Modern responsive encounter card with authentic Emerald GBA retro styling.
     Generous whitespace, large crisp sprite, dual types, level range, rate %,
     held item highlight (gold), and 1-click caught toggle.
     """
@@ -249,21 +486,14 @@ class ModernEncounterCard(QFrame):
         self.setMinimumWidth(220)
         self.setFixedHeight(120)
 
-        self.update_card_style(is_selected=False)
-
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 8, 10, 8)
         main_layout.setSpacing(10)
 
-        # Left Column: Large Pokémon Sprite in soft rounded container
-        sprite_box = QFrame()
-        sprite_box.setFixedSize(68, 68)
-        sprite_box.setStyleSheet("""
-            background-color: #0b111a;
-            border: 1px solid #1e2b3e;
-            border-radius: 8px;
-        """)
-        sb_layout = QVBoxLayout(sprite_box)
+        # Left Column: Large Pokémon Sprite in beveled/rounded container
+        self.sprite_box = QFrame()
+        self.sprite_box.setFixedSize(68, 68)
+        sb_layout = QVBoxLayout(self.sprite_box)
         sb_layout.setContentsMargins(0, 0, 0, 0)
         self.sprite_lbl = QLabel()
         self.sprite_lbl.setAlignment(Qt.AlignCenter)
@@ -273,7 +503,7 @@ class ModernEncounterCard(QFrame):
         else:
             self.sprite_lbl.setText("🐾")
         sb_layout.addWidget(self.sprite_lbl)
-        main_layout.addWidget(sprite_box, alignment=Qt.AlignVCenter)
+        main_layout.addWidget(self.sprite_box, alignment=Qt.AlignVCenter)
 
         # Center Column: Info & Details
         info_col = QVBoxLayout()
@@ -283,13 +513,11 @@ class ModernEncounterCard(QFrame):
         # Row 1: Dex # + Name
         title_box = QHBoxLayout()
         title_box.setSpacing(6)
-        dex_num = QLabel(f"#{self.species_id:04d}")
-        dex_num.setStyleSheet("color: #64748b; font-size: 11px; font-weight: bold;")
-        title_box.addWidget(dex_num)
+        self.dex_num = QLabel(f"#{self.species_id:04d}")
+        title_box.addWidget(self.dex_num)
 
-        name_lbl = QLabel(self.species_name)
-        name_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold;")
-        title_box.addWidget(name_lbl)
+        self.name_lbl = QLabel(self.species_name)
+        title_box.addWidget(self.name_lbl)
         title_box.addStretch()
         info_col.addLayout(title_box)
 
@@ -327,9 +555,8 @@ class ModernEncounterCard(QFrame):
         else:
             meth_icon = "📍"
 
-        rate_lbl = QLabel(f"{meth_icon} {meth} ({chance}%) • Lv.{min_l}–{max_l}")
-        rate_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
-        meta_box.addWidget(rate_lbl)
+        self.rate_lbl = QLabel(f"{meth_icon} {meth} ({chance}%) • Lv.{min_l}–{max_l}")
+        meta_box.addWidget(self.rate_lbl)
         meta_box.addStretch()
         info_col.addLayout(meta_box)
 
@@ -369,63 +596,195 @@ class ModernEncounterCard(QFrame):
         btn_col.addWidget(self.caught_btn, alignment=Qt.AlignVCenter)
         main_layout.addLayout(btn_col)
 
-    def update_card_style(self, is_selected: bool = False):
-        if is_selected:
-            border = "2px solid #38bdf8"
-            bg = "#192538"
-        elif self.is_caught:
-            border = "1px solid #166534"
-            bg = "#121d28"
-        else:
-            border = "1px solid #27354a"
-            bg = "#141c2b"
+        self.update_card_style(is_selected=False)
 
-        self.setStyleSheet(f"""
-            ModernEncounterCard {{
-                background-color: {bg};
-                border: {border};
-                border-radius: 8px;
-            }}
-            ModernEncounterCard:hover {{
-                border: 1px solid #38bdf8;
-                background-color: #172437;
-            }}
-        """)
+    def update_card_style(self, is_selected: bool = False):
+        if is_retro():
+            if is_selected:
+                self.setStyleSheet("""
+                    ModernEncounterCard {
+                        background-color: #173b44;
+                        border-top: 2px solid #00ff88;
+                        border-left: 2px solid #00ff88;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        border-radius: 4px;
+                    }
+                """)
+            elif self.is_caught:
+                self.setStyleSheet("""
+                    ModernEncounterCard {
+                        background-color: #0d2820;
+                        border-top: 2px solid #00e858;
+                        border-left: 2px solid #00e858;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        border-radius: 4px;
+                    }
+                    ModernEncounterCard:hover {
+                        background-color: #14382e;
+                        border-top: 2px solid #34d399;
+                        border-left: 2px solid #34d399;
+                    }
+                """)
+            else:
+                self.setStyleSheet("""
+                    ModernEncounterCard {
+                        background-color: #10262e;
+                        border-top: 2px solid #58b8a8;
+                        border-left: 2px solid #58b8a8;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        border-radius: 4px;
+                    }
+                    ModernEncounterCard:hover {
+                        background-color: #15323c;
+                        border-top: 2px solid #78d8c0;
+                        border-left: 2px solid #78d8c0;
+                    }
+                """)
+            if hasattr(self, 'sprite_box'):
+                self.sprite_box.setStyleSheet("""
+                    background-color: #081418;
+                    border-top: 2px solid #040a0c;
+                    border-left: 2px solid #040a0c;
+                    border-bottom: 2px solid #285462;
+                    border-right: 2px solid #285462;
+                    border-radius: 3px;
+                """)
+            if hasattr(self, 'dex_num'):
+                self.dex_num.setStyleSheet("color: #58b8a8; font-family: monospace; font-size: 11px; font-weight: bold;")
+            if hasattr(self, 'name_lbl'):
+                self.name_lbl.setStyleSheet("color: #f8f8f8; font-family: monospace; font-size: 13px; font-weight: bold;")
+            if hasattr(self, 'rate_lbl'):
+                self.rate_lbl.setStyleSheet("color: #a8d8c8; font-family: monospace; font-size: 10px;")
+        else:
+            if is_selected:
+                border = "2px solid #38bdf8"
+                bg = "#192538"
+            elif self.is_caught:
+                border = "1px solid #166534"
+                bg = "#121d28"
+            else:
+                border = "1px solid #27354a"
+                bg = "#141c2b"
+
+            self.setStyleSheet(f"""
+                ModernEncounterCard {{
+                    background-color: {bg};
+                    border: {border};
+                    border-radius: 8px;
+                }}
+                ModernEncounterCard:hover {{
+                    border: 1px solid #38bdf8;
+                    background-color: #172437;
+                }}
+            """)
+            if hasattr(self, 'sprite_box'):
+                self.sprite_box.setStyleSheet("""
+                    background-color: #0b111a;
+                    border: 1px solid #1e2b3e;
+                    border-radius: 8px;
+                """)
+            if hasattr(self, 'dex_num'):
+                self.dex_num.setStyleSheet("color: #64748b; font-size: 11px; font-weight: bold;")
+            if hasattr(self, 'name_lbl'):
+                self.name_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold;")
+            if hasattr(self, 'rate_lbl'):
+                self.rate_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
 
     def update_caught_button_state(self):
-        if self.is_caught:
-            self.caught_btn.setText("✓ CAUGHT")
-            self.caught_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #065f46;
-                    border: 1px solid #10b981;
-                    color: #FFFFFF;
-                    font-size: 11px;
-                    font-weight: bold;
-                    border-radius: 4px;
-                    padding: 2px 4px;
-                }
-                QPushButton:hover {
-                    background-color: #047857;
-                }
-            """)
+        if is_retro():
+            if self.is_caught:
+                self.caught_btn.setText("✓ CAUGHT")
+                self.caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #0a301c;
+                        border-top: 2px solid #00e858;
+                        border-left: 2px solid #00e858;
+                        border-bottom: 2px solid #04140c;
+                        border-right: 2px solid #04140c;
+                        color: #00ff88;
+                        font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border-radius: 2px;
+                        padding: 2px 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #104228;
+                        color: #ffffff;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #04140c;
+                        border-left: 2px solid #04140c;
+                        border-bottom: 2px solid #00e858;
+                        border-right: 2px solid #00e858;
+                        padding-top: 4px; padding-left: 6px;
+                    }
+                """)
+            else:
+                self.caught_btn.setText("○ MISSING")
+                self.caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #321c04;
+                        border-top: 2px solid #f8b800;
+                        border-left: 2px solid #f8b800;
+                        border-bottom: 2px solid #140c02;
+                        border-right: 2px solid #140c02;
+                        color: #f8b800;
+                        font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border-radius: 2px;
+                        padding: 2px 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #482a08;
+                        color: #ffffff;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #140c02;
+                        border-left: 2px solid #140c02;
+                        border-bottom: 2px solid #f8b800;
+                        border-right: 2px solid #f8b800;
+                        padding-top: 4px; padding-left: 6px;
+                    }
+                """)
         else:
-            self.caught_btn.setText("○ MISSING")
-            self.caught_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #451a03;
-                    border: 1px solid #d97706;
-                    color: #fbbf24;
-                    font-size: 11px;
-                    font-weight: bold;
-                    border-radius: 4px;
-                    padding: 2px 4px;
-                }
-                QPushButton:hover {
-                    background-color: #78350f;
-                    color: #FFFFFF;
-                }
-            """)
+            if self.is_caught:
+                self.caught_btn.setText("✓ CAUGHT")
+                self.caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #065f46;
+                        border: 1px solid #10b981;
+                        color: #FFFFFF;
+                        font-size: 11px;
+                        font-weight: bold;
+                        border-radius: 4px;
+                        padding: 2px 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #047857;
+                    }
+                """)
+            else:
+                self.caught_btn.setText("○ MISSING")
+                self.caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #451a03;
+                        border: 1px solid #d97706;
+                        color: #fbbf24;
+                        font-size: 11px;
+                        font-weight: bold;
+                        border-radius: 4px;
+                        padding: 2px 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #78350f;
+                        color: #FFFFFF;
+                    }
+                """)
 
     def on_caught_button_clicked(self):
         self.is_caught = not self.is_caught
@@ -436,13 +795,14 @@ class ModernEncounterCard(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            play_sfx("menu_move.wav")
             self.clicked.emit(self.mon_data)
         super().mousePressEvent(event)
 
 
 class SpeciesInspectorDrawer(QFrame):
     """
-    Sleek right-side species telemetry panel.
+    Sleek right-side species telemetry panel with authentic Emerald GBA Pokénav styling.
     Displays base stats bars, catch probabilities, abilities, held items,
     evolution chain, and jump-to-pokedex button.
     """
@@ -455,13 +815,6 @@ class SpeciesInspectorDrawer(QFrame):
 
     def init_ui(self):
         self.setFixedWidth(340)
-        self.setStyleSheet("""
-            SpeciesInspectorDrawer {
-                background-color: #101726;
-                border: 1px solid #1e293b;
-                border-radius: 8px;
-            }
-        """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -469,28 +822,16 @@ class SpeciesInspectorDrawer(QFrame):
 
         # Header Title
         title_box = QHBoxLayout()
-        header_title = QLabel("🔍 SPECIES TELEMETRY")
-        header_title.setFont(QFont("Arial", 11, QFont.Bold))
-        header_title.setStyleSheet("color: #38bdf8; letter-spacing: 1px;")
-        title_box.addWidget(header_title)
+        self.header_title = QLabel("🔍 SPECIES TELEMETRY")
+        self.header_title.setFont(QFont("Arial", 11, QFont.Bold))
+        self.header_title.setStyleSheet("color: #38bdf8; letter-spacing: 1px;")
+        title_box.addWidget(self.header_title)
         layout.addLayout(title_box)
 
         # Sprite + Name banner
-        banner = QFrame()
-        banner.setObjectName("banner_frame")
-        banner.setStyleSheet("""
-            QFrame#banner_frame {
-                background-color: #0c121d;
-                border: 1px solid #1e293b;
-                border-radius: 6px;
-            }
-            QLabel {
-                border: none;
-                background: transparent;
-                padding: 0px;
-            }
-        """)
-        b_layout = QHBoxLayout(banner)
+        self.banner = QFrame()
+        self.banner.setObjectName("banner_frame")
+        b_layout = QHBoxLayout(self.banner)
         b_layout.setContentsMargins(8, 8, 8, 8)
         b_layout.setSpacing(10)
 
@@ -514,30 +855,18 @@ class SpeciesInspectorDrawer(QFrame):
         info_box.addWidget(self.bst_lbl)
 
         b_layout.addLayout(info_box, 1)
-        layout.addWidget(banner)
+        layout.addWidget(self.banner)
 
         # Catch Probability Box
-        prob_frame = QFrame()
-        prob_frame.setObjectName("prob_frame")
-        prob_frame.setStyleSheet("""
-            QFrame#prob_frame {
-                background-color: #0c121d;
-                border: 1px solid #1e293b;
-                border-radius: 6px;
-            }
-            QLabel {
-                border: none;
-                background: transparent;
-                padding: 0px;
-            }
-        """)
-        pf_layout = QVBoxLayout(prob_frame)
+        self.prob_frame = QFrame()
+        self.prob_frame.setObjectName("prob_frame")
+        pf_layout = QVBoxLayout(self.prob_frame)
         pf_layout.setContentsMargins(10, 8, 10, 8)
         pf_layout.setSpacing(4)
 
-        pf_title = QLabel("🎯 CATCH PROBABILITY")
-        pf_title.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
-        pf_layout.addWidget(pf_title)
+        self.pf_title = QLabel("🎯 CATCH PROBABILITY")
+        self.pf_title.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        pf_layout.addWidget(self.pf_title)
 
         self.quick_ball_lbl = QLabel("⚡ Quick Ball (Turn 1): ---")
         self.quick_ball_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
@@ -550,30 +879,18 @@ class SpeciesInspectorDrawer(QFrame):
         self.timer_ball_lbl = QLabel("⏱️ Timer Ball (Turn 5+): ---")
         self.timer_ball_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
         pf_layout.addWidget(self.timer_ball_lbl)
-        layout.addWidget(prob_frame)
+        layout.addWidget(self.prob_frame)
 
         # Base Stats Bars Container
-        stats_frame = QFrame()
-        stats_frame.setObjectName("stats_frame")
-        stats_frame.setStyleSheet("""
-            QFrame#stats_frame {
-                background-color: #0c121d;
-                border: 1px solid #1e293b;
-                border-radius: 6px;
-            }
-            QLabel {
-                border: none;
-                background: transparent;
-                padding: 0px;
-            }
-        """)
-        sf_layout = QVBoxLayout(stats_frame)
+        self.stats_frame = QFrame()
+        self.stats_frame.setObjectName("stats_frame")
+        sf_layout = QVBoxLayout(self.stats_frame)
         sf_layout.setContentsMargins(10, 8, 10, 8)
         sf_layout.setSpacing(4)
 
-        sf_title = QLabel("📊 BASE STATS")
-        sf_title.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
-        sf_layout.addWidget(sf_title)
+        self.sf_title = QLabel("📊 BASE STATS")
+        self.sf_title.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        sf_layout.addWidget(self.sf_title)
 
         self.stat_bars = {}
         for stat in ["HP", "Atk", "Def", "SpA", "SpD", "Spe"]:
@@ -588,16 +905,6 @@ class SpeciesInspectorDrawer(QFrame):
             bar.setFixedHeight(8)
             bar.setMaximum(255)
             bar.setTextVisible(False)
-            bar.setStyleSheet("""
-                QProgressBar {
-                    background-color: #1e293b;
-                    border-radius: 4px;
-                }
-                QProgressBar::chunk {
-                    background-color: #3b82f6;
-                    border-radius: 4px;
-                }
-            """)
             row.addWidget(bar, 1)
 
             val_lbl = QLabel("---")
@@ -609,24 +916,12 @@ class SpeciesInspectorDrawer(QFrame):
             self.stat_bars[stat] = (bar, val_lbl)
             sf_layout.addLayout(row)
 
-        layout.addWidget(stats_frame)
+        layout.addWidget(self.stats_frame)
 
         # Abilities & Held Items
-        extra_frame = QFrame()
-        extra_frame.setObjectName("extra_frame")
-        extra_frame.setStyleSheet("""
-            QFrame#extra_frame {
-                background-color: #0c121d;
-                border: 1px solid #1e293b;
-                border-radius: 6px;
-            }
-            QLabel {
-                border: none;
-                background: transparent;
-                padding: 0px;
-            }
-        """)
-        ef_layout = QVBoxLayout(extra_frame)
+        self.extra_frame = QFrame()
+        self.extra_frame.setObjectName("extra_frame")
+        ef_layout = QVBoxLayout(self.extra_frame)
         ef_layout.setContentsMargins(10, 8, 10, 8)
         ef_layout.setSpacing(4)
 
@@ -644,27 +939,136 @@ class SpeciesInspectorDrawer(QFrame):
         self.items_lbl.setStyleSheet("color: #facc15; font-size: 11px;")
         ef_layout.addWidget(self.items_lbl)
 
-        layout.addWidget(extra_frame)
+        layout.addWidget(self.extra_frame)
         layout.addStretch()
 
         # Jump to Pokédex Full View Button
         self.open_pokedex_btn = QPushButton("📖 View Learnset & Evolution in Pokédex")
         self.open_pokedex_btn.setFixedHeight(34)
         self.open_pokedex_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.open_pokedex_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1e3a8a;
-                border: 1px solid #3b82f6;
-                color: #FFFFFF;
-                font-weight: bold;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-        """)
         self.open_pokedex_btn.clicked.connect(self.on_open_pokedex_clicked)
         layout.addWidget(self.open_pokedex_btn)
+
+        self.apply_theme(CURRENT_THEME)
+
+    def apply_theme(self, theme_mode: str):
+        if theme_mode == "retro":
+            self.setStyleSheet("""
+                SpeciesInspectorDrawer {
+                    background-color: #10262e;
+                    border-top: 3px solid #58b8a8;
+                    border-left: 3px solid #58b8a8;
+                    border-bottom: 3px solid #081820;
+                    border-right: 3px solid #081820;
+                    border-radius: 4px;
+                }
+            """)
+            self.header_title.setText("🔍 SPECIES TELEMETRY // POKéNAV")
+            self.header_title.setStyleSheet("color: #00ff88; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 11px; font-weight: bold; letter-spacing: 1px;")
+            box_style = """
+                background-color: #09171e;
+                border-top: 2px solid #040a0c;
+                border-left: 2px solid #040a0c;
+                border-bottom: 2px solid #387068;
+                border-right: 2px solid #387068;
+                border-radius: 3px;
+            """
+            self.banner.setStyleSheet(box_style)
+            self.prob_frame.setStyleSheet(box_style)
+            self.stats_frame.setStyleSheet(box_style)
+            self.extra_frame.setStyleSheet(box_style)
+            for stat, (bar, val_lbl) in self.stat_bars.items():
+                bar.setStyleSheet("""
+                    QProgressBar {
+                        background-color: #081418;
+                        border-top: 1px solid #040a0c;
+                        border-left: 1px solid #040a0c;
+                        border-bottom: 1px solid #285462;
+                        border-right: 1px solid #285462;
+                        border-radius: 2px;
+                    }
+                    QProgressBar::chunk {
+                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #00ff68, stop:0.5 #00e858, stop:1 #009838);
+                        border-radius: 1px;
+                    }
+                """)
+                val_lbl.setStyleSheet("color: #00ff88; font-family: monospace; font-size: 10px; font-weight: bold;")
+            self.open_pokedex_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #183844;
+                    border-top: 2px solid #58b8a8;
+                    border-left: 2px solid #58b8a8;
+                    border-bottom: 2px solid #081820;
+                    border-right: 2px solid #081820;
+                    color: #00ff88;
+                    font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border-radius: 2px;
+                    padding: 5px 8px;
+                }
+                QPushButton:hover {
+                    background-color: #245060;
+                    border-top: 2px solid #78d8c0;
+                    border-left: 2px solid #78d8c0;
+                    color: #ffffff;
+                }
+                QPushButton:pressed {
+                    border-top: 2px solid #081820;
+                    border-left: 2px solid #081820;
+                    border-bottom: 2px solid #58b8a8;
+                    border-right: 2px solid #58b8a8;
+                    padding-top: 7px; padding-left: 10px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                SpeciesInspectorDrawer {
+                    background-color: #101726;
+                    border: 1px solid #1e293b;
+                    border-radius: 8px;
+                }
+            """)
+            self.header_title.setText("🔍 SPECIES TELEMETRY")
+            self.header_title.setStyleSheet("color: #38bdf8; letter-spacing: 1px;")
+            box_style = """
+                background-color: #0c121d;
+                border: 1px solid #1e293b;
+                border-radius: 6px;
+            """
+            self.banner.setStyleSheet(box_style)
+            self.prob_frame.setStyleSheet(box_style)
+            self.stats_frame.setStyleSheet(box_style)
+            self.extra_frame.setStyleSheet(box_style)
+            for stat, (bar, val_lbl) in self.stat_bars.items():
+                bar.setStyleSheet("""
+                    QProgressBar {
+                        background-color: #1e293b;
+                        border-radius: 4px;
+                    }
+                    QProgressBar::chunk {
+                        background-color: #3b82f6;
+                        border-radius: 4px;
+                    }
+                """)
+                val_lbl.setStyleSheet("color: #f1f5f9; font-size: 10px; font-weight: bold;")
+            self.open_pokedex_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1e3a8a;
+                    border: 1px solid #3b82f6;
+                    color: #FFFFFF;
+                    font-weight: bold;
+                    border-radius: 6px;
+                }
+                QPushButton:hover {
+                    background-color: #2563eb;
+                }
+            """)
+
+    def on_open_pokedex_clicked(self):
+        play_sfx("menu_select.wav")
+        if self.current_species_id:
+            self.open_in_pokedex.emit(self.current_species_id)
 
     def populate(self, data: dict):
         self.current_species_id = data["species_id"]
@@ -733,6 +1137,28 @@ class SpeciesInspectorDrawer(QFrame):
         else:
             self.items_lbl.setText("Wild Held Items: None")
 
+    def clear(self):
+        self.current_species_id = None
+        self.name_lbl.setText("No Pokémon Selected")
+        self.sprite_lbl.clear()
+        self.sprite_lbl.setText("—")
+        while self.type_row.count():
+            item = self.type_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.bst_lbl.setText("Total BST: —")
+        self.quick_ball_lbl.setText("⚡ Quick Ball (Turn 1): —")
+        self.false_swipe_lbl.setText("⚔️ False Swipe + Ultra: —")
+        self.timer_ball_lbl.setText("⏱️ Timer Ball (Turn 5+): —")
+        for stat in ["HP", "Atk", "Def", "SpA", "SpD", "Spe"]:
+            if stat in self.stat_bars:
+                bar, lbl = self.stat_bars[stat]
+                bar.setValue(0)
+                lbl.setText("0")
+        self.ability_lbl.setText("Abilities: —")
+        self.hidden_ability_lbl.setText("Hidden Ability: —")
+        self.items_lbl.setText("Wild Held Items: —")
+
     def on_open_pokedex_clicked(self):
         if self.current_species_id:
             self.open_in_pokedex.emit(self.current_species_id)
@@ -740,8 +1166,8 @@ class SpeciesInspectorDrawer(QFrame):
 
 class ModernLegendaryCard(QFrame):
     """
-    Polished graphical card for Legendary & Mythical Pokémon.
-    Features 68x68 sprite, glowing gold/purple border, type pills, location,
+    Polished graphical card for Legendary & Mythical Pokémon with authentic Emerald GBA styling.
+    Features 68x68 sprite, beveled frame, type pills, location,
     generation badge, unlock preview, and 1-click caught toggle button.
     """
     clicked = Signal(dict)
@@ -759,23 +1185,15 @@ class ModernLegendaryCard(QFrame):
     def init_ui(self):
         self.setMinimumWidth(240)
         self.setFixedHeight(125)
-        self.update_card_style(is_selected=False)
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 8, 10, 8)
         main_layout.setSpacing(10)
 
         # Left Column: Large Sprite Box with Gold/Purple Legendary styling
-        sprite_box = QFrame()
-        sprite_box.setFixedSize(68, 68)
-        border_col = "#eab308" if self.is_caught else "#6366f1"
-        bg_col = "#1c1917" if self.is_caught else "#1e1b4b"
-        sprite_box.setStyleSheet(f"""
-            background-color: {bg_col};
-            border: 1.5px solid {border_col};
-            border-radius: 8px;
-        """)
-        sb_layout = QVBoxLayout(sprite_box)
+        self.sprite_box = QFrame()
+        self.sprite_box.setFixedSize(68, 68)
+        sb_layout = QVBoxLayout(self.sprite_box)
         sb_layout.setContentsMargins(0, 0, 0, 0)
         self.sprite_lbl = QLabel()
         self.sprite_lbl.setAlignment(Qt.AlignCenter)
@@ -787,7 +1205,7 @@ class ModernLegendaryCard(QFrame):
         else:
             self.sprite_lbl.setText("👑")
         sb_layout.addWidget(self.sprite_lbl)
-        main_layout.addWidget(sprite_box, alignment=Qt.AlignVCenter)
+        main_layout.addWidget(self.sprite_box, alignment=Qt.AlignVCenter)
 
         # Center Column: Info & Unlock Details
         info_col = QVBoxLayout()
@@ -798,19 +1216,19 @@ class ModernLegendaryCard(QFrame):
         title_box = QHBoxLayout()
         title_box.setSpacing(6)
         if self.species_id > 0:
-            dex_num = QLabel(f"#{self.species_id:04d}")
-            dex_num.setStyleSheet("color: #facc15; font-size: 11px; font-weight: bold;")
-            title_box.addWidget(dex_num)
+            self.dex_num = QLabel(f"#{self.species_id:04d}")
+            self.dex_num.setStyleSheet("color: #facc15; font-size: 11px; font-weight: bold;")
+            title_box.addWidget(self.dex_num)
 
-        name_lbl = QLabel(f"⭐ {self.name}")
-        name_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold;")
-        title_box.addWidget(name_lbl)
+        self.name_lbl = QLabel(f"⭐ {self.name}")
+        self.name_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold;")
+        title_box.addWidget(self.name_lbl)
 
         gen = self.leg_data.get("generation", "")
         if gen:
             gen_clean = gen.replace("Generation ", "Gen ").replace("Native", "").strip()
-            gen_lbl = QLabel(gen_clean)
-            gen_lbl.setStyleSheet("""
+            self.gen_lbl = QLabel(gen_clean)
+            self.gen_lbl.setStyleSheet("""
                 background-color: #312e81;
                 color: #c7d2fe;
                 border: 1px solid #4338ca;
@@ -819,7 +1237,7 @@ class ModernLegendaryCard(QFrame):
                 font-size: 9px;
                 font-weight: bold;
             """)
-            title_box.addWidget(gen_lbl)
+            title_box.addWidget(self.gen_lbl)
 
         title_box.addStretch()
         info_col.addLayout(title_box)
@@ -840,17 +1258,17 @@ class ModernLegendaryCard(QFrame):
         loc = self.leg_data.get("location", "Unknown Location")
         loc_box = QHBoxLayout()
         loc_box.setSpacing(4)
-        loc_tag = QLabel(f"📍 {loc}")
-        loc_tag.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 500;")
-        loc_box.addWidget(loc_tag)
+        self.loc_tag = QLabel(f"📍 {loc}")
+        self.loc_tag.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 500;")
+        loc_box.addWidget(self.loc_tag)
         loc_box.addStretch()
         info_col.addLayout(loc_box)
 
         # Row 4: Unlock Requirements Preview
         req = self.leg_data.get("requirements", "")
-        req_lbl = QLabel(f"🔓 {req[:46]}..." if len(req) > 46 else f"🔓 {req}")
-        req_lbl.setStyleSheet("color: #94a3b8; font-size: 10px;")
-        info_col.addWidget(req_lbl)
+        self.req_lbl = QLabel(f"🔓 {req[:46]}..." if len(req) > 46 else f"🔓 {req}")
+        self.req_lbl.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        info_col.addWidget(self.req_lbl)
 
         main_layout.addLayout(info_col, 1)
 
@@ -865,72 +1283,199 @@ class ModernLegendaryCard(QFrame):
         btn_col.addWidget(self.caught_btn, alignment=Qt.AlignVCenter)
         main_layout.addLayout(btn_col)
 
+        self.update_card_style(is_selected=False)
+
     def update_card_style(self, is_selected=False):
-        if is_selected:
-            self.setStyleSheet("""
-                ModernLegendaryCard {
-                    background-color: #1e1b4b;
-                    border: 2px solid #818cf8;
-                    border-radius: 8px;
-                }
-            """)
-        elif self.is_caught:
-            self.setStyleSheet("""
-                ModernLegendaryCard {
-                    background-color: #062b1f;
-                    border: 1px solid #059669;
-                    border-radius: 8px;
-                }
-                ModernLegendaryCard:hover {
-                    background-color: #0c3e2e;
-                    border: 1px solid #10b981;
-                }
-            """)
+        if is_retro():
+            if is_selected:
+                self.setStyleSheet("""
+                    ModernLegendaryCard {
+                        background-color: #173b44;
+                        border-top: 2px solid #00ff88;
+                        border-left: 2px solid #00ff88;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        border-radius: 4px;
+                    }
+                """)
+            elif self.is_caught:
+                self.setStyleSheet("""
+                    ModernLegendaryCard {
+                        background-color: #0d2820;
+                        border-top: 2px solid #00e858;
+                        border-left: 2px solid #00e858;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        border-radius: 4px;
+                    }
+                    ModernLegendaryCard:hover {
+                        background-color: #14382e;
+                        border-top: 2px solid #34d399;
+                        border-left: 2px solid #34d399;
+                    }
+                """)
+            else:
+                self.setStyleSheet("""
+                    ModernLegendaryCard {
+                        background-color: #12242a;
+                        border-top: 2px solid #f8b800;
+                        border-left: 2px solid #f8b800;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        border-radius: 4px;
+                    }
+                    ModernLegendaryCard:hover {
+                        background-color: #182e36;
+                        border-top: 2px solid #ffd700;
+                        border-left: 2px solid #ffd700;
+                    }
+                """)
+            if hasattr(self, 'sprite_box'):
+                border_c = "#00e858" if self.is_caught else "#f8b800"
+                self.sprite_box.setStyleSheet(f"""
+                    background-color: #081418;
+                    border-top: 2px solid #040a0c;
+                    border-left: 2px solid #040a0c;
+                    border-bottom: 2px solid {border_c};
+                    border-right: 2px solid {border_c};
+                    border-radius: 3px;
+                """)
+            if hasattr(self, 'name_lbl'):
+                self.name_lbl.setStyleSheet("color: #f8f8f8; font-family: monospace; font-size: 13px; font-weight: bold;")
         else:
-            self.setStyleSheet("""
-                ModernLegendaryCard {
-                    background-color: #0f172a;
-                    border: 1px solid #1e293b;
+            if is_selected:
+                self.setStyleSheet("""
+                    ModernLegendaryCard {
+                        background-color: #1e1b4b;
+                        border: 2px solid #818cf8;
+                        border-radius: 8px;
+                    }
+                """)
+            elif self.is_caught:
+                self.setStyleSheet("""
+                    ModernLegendaryCard {
+                        background-color: #062b1f;
+                        border: 1px solid #059669;
+                        border-radius: 8px;
+                    }
+                    ModernLegendaryCard:hover {
+                        background-color: #0c3e2e;
+                        border: 1px solid #10b981;
+                    }
+                """)
+            else:
+                self.setStyleSheet("""
+                    ModernLegendaryCard {
+                        background-color: #0f172a;
+                        border: 1px solid #1e293b;
+                        border-radius: 8px;
+                    }
+                    ModernLegendaryCard:hover {
+                        background-color: #1e293b;
+                        border: 1px solid #6366f1;
+                    }
+                """)
+            if hasattr(self, 'sprite_box'):
+                border_col = "#eab308" if self.is_caught else "#6366f1"
+                bg_col = "#1c1917" if self.is_caught else "#1e1b4b"
+                self.sprite_box.setStyleSheet(f"""
+                    background-color: {bg_col};
+                    border: 1.5px solid {border_col};
                     border-radius: 8px;
-                }
-                ModernLegendaryCard:hover {
-                    background-color: #1e293b;
-                    border: 1px solid #6366f1;
-                }
-            """)
+                """)
+            if hasattr(self, 'name_lbl'):
+                self.name_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold;")
 
     def update_caught_button_state(self):
-        if self.is_caught:
-            self.caught_btn.setText("✓ CAUGHT")
-            self.caught_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #059669;
-                    color: #FFFFFF;
-                    font-size: 11px;
-                    font-weight: bold;
-                    border-radius: 4px;
-                    border: 1px solid #10b981;
-                }
-                QPushButton:hover {
-                    background-color: #047857;
-                }
-            """)
+        if is_retro():
+            if self.is_caught:
+                self.caught_btn.setText("✓ CAUGHT")
+                self.caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #0a301c;
+                        border-top: 2px solid #00e858;
+                        border-left: 2px solid #00e858;
+                        border-bottom: 2px solid #04140c;
+                        border-right: 2px solid #04140c;
+                        color: #00ff88;
+                        font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border-radius: 2px;
+                        padding: 2px 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #104228;
+                        color: #ffffff;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #04140c;
+                        border-left: 2px solid #04140c;
+                        border-bottom: 2px solid #00e858;
+                        border-right: 2px solid #00e858;
+                        padding-top: 4px; padding-left: 6px;
+                    }
+                """)
+            else:
+                self.caught_btn.setText("○ MISSING")
+                self.caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #321c04;
+                        border-top: 2px solid #f8b800;
+                        border-left: 2px solid #f8b800;
+                        border-bottom: 2px solid #140c02;
+                        border-right: 2px solid #140c02;
+                        color: #f8b800;
+                        font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border-radius: 2px;
+                        padding: 2px 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #482a08;
+                        color: #ffffff;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #140c02;
+                        border-left: 2px solid #140c02;
+                        border-bottom: 2px solid #f8b800;
+                        border-right: 2px solid #f8b800;
+                        padding-top: 4px; padding-left: 6px;
+                    }
+                """)
         else:
-            self.caught_btn.setText("○ MISSING")
-            self.caught_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #1e293b;
-                    color: #facc15;
-                    font-size: 11px;
-                    font-weight: bold;
-                    border-radius: 4px;
-                    border: 1px solid #eab308;
-                }
-                QPushButton:hover {
-                    background-color: #334155;
-                    color: #fef08a;
-                }
-            """)
+            if self.is_caught:
+                self.caught_btn.setText("✓ CAUGHT")
+                self.caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #059669;
+                        color: #FFFFFF;
+                        font-size: 11px;
+                        font-weight: bold;
+                        border-radius: 4px;
+                        border: 1px solid #10b981;
+                    }
+                    QPushButton:hover {
+                        background-color: #047857;
+                    }
+                """)
+            else:
+                self.caught_btn.setText("○ MISSING")
+                self.caught_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1e293b;
+                        color: #facc15;
+                        font-size: 11px;
+                        font-weight: bold;
+                        border-radius: 4px;
+                        border: 1px solid #eab308;
+                    }
+                    QPushButton:hover {
+                        background-color: #334155;
+                        color: #fef08a;
+                    }
+                """)
 
     def on_caught_button_clicked(self):
         self.is_caught = not self.is_caught
@@ -943,6 +1488,7 @@ class ModernLegendaryCard(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            play_sfx("menu_move.wav")
             self.clicked.emit(self.leg_data)
         super().mousePressEvent(event)
 
@@ -962,13 +1508,6 @@ class LegendaryInspectorDrawer(QFrame):
     def init_ui(self):
         self.setMinimumWidth(320)
         self.setMaximumWidth(420)
-        self.setStyleSheet("""
-            LegendaryInspectorDrawer {
-                background-color: #0a0f1d;
-                border: 1px solid #1e293b;
-                border-radius: 8px;
-            }
-        """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -987,20 +1526,13 @@ class LegendaryInspectorDrawer(QFrame):
         layout.addLayout(title_box)
 
         # Hero Profile Frame
-        profile_frame = QFrame()
-        profile_frame.setStyleSheet("""
-            background-color: #0f172a;
-            border: 1px solid #312e81;
-            border-radius: 8px;
-            padding: 8px;
-        """)
-        pf_layout = QHBoxLayout(profile_frame)
+        self.profile_frame = QFrame()
+        pf_layout = QHBoxLayout(self.profile_frame)
         pf_layout.setSpacing(12)
 
         self.sprite_lbl = QLabel()
         self.sprite_lbl.setFixedSize(88, 88)
         self.sprite_lbl.setAlignment(Qt.AlignCenter)
-        self.sprite_lbl.setStyleSheet("background-color: #0b111a; border: 1px solid #4338ca; border-radius: 8px;")
         pf_layout.addWidget(self.sprite_lbl)
 
         info_col = QVBoxLayout()
@@ -1022,7 +1554,7 @@ class LegendaryInspectorDrawer(QFrame):
         self.bst_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
         info_col.addWidget(self.bst_lbl)
         pf_layout.addLayout(info_col, 1)
-        layout.addWidget(profile_frame)
+        layout.addWidget(self.profile_frame)
 
         # Scrollable Content Area for Requirements & Lore
         content_scroll = QScrollArea()
@@ -1034,59 +1566,41 @@ class LegendaryInspectorDrawer(QFrame):
         scroll_layout.setSpacing(10)
 
         # Unlock Requirements Box
-        req_frame = QFrame()
-        req_frame.setStyleSheet("""
-            background-color: #0c121d;
-            border: 1px solid #e11d48;
-            border-radius: 6px;
-            padding: 8px 10px;
-        """)
-        rf_layout = QVBoxLayout(req_frame)
-        rf_layout.setContentsMargins(4, 4, 4, 4)
+        self.req_frame = QFrame()
+        rf_layout = QVBoxLayout(self.req_frame)
+        rf_layout.setContentsMargins(8, 8, 8, 8)
         rf_layout.setSpacing(4)
-        rf_title = QLabel("🔓 UNLOCK REQUIREMENTS & ACCESS")
-        rf_title.setStyleSheet("color: #fb7185; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
-        rf_layout.addWidget(rf_title)
+        self.rf_title = QLabel("🔓 UNLOCK REQUIREMENTS & ACCESS")
+        self.rf_title.setStyleSheet("color: #fb7185; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        rf_layout.addWidget(self.rf_title)
         self.req_lbl = QLabel("---")
         self.req_lbl.setWordWrap(True)
         self.req_lbl.setStyleSheet("color: #f1f5f9; font-size: 11px; line-height: 1.4;")
         rf_layout.addWidget(self.req_lbl)
-        scroll_layout.addWidget(req_frame)
+        scroll_layout.addWidget(self.req_frame)
 
         # Party Synergy / Multi-Use Squad Box
-        syn_frame = QFrame()
-        syn_frame.setStyleSheet("""
-            background-color: #0c121d;
-            border: 1px solid #0284c7;
-            border-radius: 6px;
-            padding: 8px 10px;
-        """)
-        sf_layout = QVBoxLayout(syn_frame)
-        sf_layout.setContentsMargins(4, 4, 4, 4)
+        self.syn_frame = QFrame()
+        sf_layout = QVBoxLayout(self.syn_frame)
+        sf_layout.setContentsMargins(8, 8, 8, 8)
         sf_layout.setSpacing(4)
-        sf_title = QLabel("🧭 RECOMMENDED PARTY SYNERGY")
-        sf_title.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
-        sf_layout.addWidget(sf_title)
+        self.sf_title = QLabel("🧭 RECOMMENDED PARTY SYNERGY")
+        self.sf_title.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        sf_layout.addWidget(self.sf_title)
         self.syn_lbl = QLabel("---")
         self.syn_lbl.setWordWrap(True)
         self.syn_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
         sf_layout.addWidget(self.syn_lbl)
-        scroll_layout.addWidget(syn_frame)
+        scroll_layout.addWidget(self.syn_frame)
 
         # Base Stats Bars Container
-        stats_frame = QFrame()
-        stats_frame.setStyleSheet("""
-            background-color: #0c121d;
-            border: 1px solid #1e293b;
-            border-radius: 6px;
-            padding: 8px 10px;
-        """)
-        st_layout = QVBoxLayout(stats_frame)
-        st_layout.setContentsMargins(4, 4, 4, 4)
+        self.stats_frame = QFrame()
+        st_layout = QVBoxLayout(self.stats_frame)
+        st_layout.setContentsMargins(8, 8, 8, 8)
         st_layout.setSpacing(4)
-        st_title = QLabel("📊 BASE STATS")
-        st_title.setStyleSheet("color: #facc15; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
-        st_layout.addWidget(st_title)
+        self.st_title = QLabel("📊 BASE STATS")
+        self.st_title.setStyleSheet("color: #facc15; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        st_layout.addWidget(self.st_title)
 
         self.stat_bars = {}
         for stat in ["HP", "Atk", "Def", "SpA", "SpD", "Spe"]:
@@ -1101,16 +1615,6 @@ class LegendaryInspectorDrawer(QFrame):
             bar.setFixedHeight(8)
             bar.setMaximum(255)
             bar.setTextVisible(False)
-            bar.setStyleSheet("""
-                QProgressBar {
-                    background-color: #1e293b;
-                    border-radius: 4px;
-                }
-                QProgressBar::chunk {
-                    background-color: #eab308;
-                    border-radius: 4px;
-                }
-            """)
             row.addWidget(bar, 1)
 
             val_lbl = QLabel("0")
@@ -1122,22 +1626,16 @@ class LegendaryInspectorDrawer(QFrame):
             st_layout.addLayout(row)
             self.stat_bars[stat] = (bar, val_lbl)
 
-        scroll_layout.addWidget(stats_frame)
+        scroll_layout.addWidget(self.stats_frame)
 
         # Catch Probability Box
-        prob_frame = QFrame()
-        prob_frame.setStyleSheet("""
-            background-color: #0c121d;
-            border: 1px solid #1e293b;
-            border-radius: 6px;
-            padding: 8px 10px;
-        """)
-        pf2_layout = QVBoxLayout(prob_frame)
-        pf2_layout.setContentsMargins(4, 4, 4, 4)
+        self.prob_frame = QFrame()
+        pf2_layout = QVBoxLayout(self.prob_frame)
+        pf2_layout.setContentsMargins(8, 8, 8, 8)
         pf2_layout.setSpacing(4)
-        pf2_title = QLabel("🎯 CATCH PROBABILITY")
-        pf2_title.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
-        pf2_layout.addWidget(pf2_title)
+        self.pf2_title = QLabel("🎯 CATCH PROBABILITY")
+        self.pf2_title.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        pf2_layout.addWidget(self.pf2_title)
 
         self.quick_ball_lbl = QLabel("⚡ Quick Ball (Turn 1): ---")
         self.quick_ball_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
@@ -1150,7 +1648,7 @@ class LegendaryInspectorDrawer(QFrame):
         self.timer_ball_lbl = QLabel("⏱️ Timer Ball (Turn 5+): ---")
         self.timer_ball_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
         pf2_layout.addWidget(self.timer_ball_lbl)
-        scroll_layout.addWidget(prob_frame)
+        scroll_layout.addWidget(self.prob_frame)
 
         content_scroll.setWidget(scroll_widget)
         layout.addWidget(content_scroll, 1)
@@ -1159,86 +1657,243 @@ class LegendaryInspectorDrawer(QFrame):
         self.btn_open_pokedex = QPushButton("📖 View Learnset & Stats in Pokédex")
         self.btn_open_pokedex.setFixedHeight(34)
         self.btn_open_pokedex.setCursor(QCursor(Qt.PointingHandCursor))
-        self.btn_open_pokedex.setStyleSheet("""
-            QPushButton {
-                background-color: #2563eb;
-                color: #FFFFFF;
-                font-size: 12px;
-                font-weight: bold;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #3b82f6;
-            }
-        """)
         self.btn_open_pokedex.clicked.connect(self.on_open_pokedex_clicked)
         layout.addWidget(self.btn_open_pokedex)
 
-    def populate(self, leg_data: dict):
-        self.current_species_id = leg_data.get("species_id", 0)
-        self.dex_lbl.setText(f"#{self.current_species_id:04d}" if self.current_species_id > 0 else "")
-        self.name_lbl.setText(leg_data.get("name", "Unknown"))
-        self.bst_lbl.setText(f"Total BST: {leg_data.get('bst', '---')}")
+        self.apply_theme(CURRENT_THEME)
 
-        # Update sprite
-        pm = get_species_pixmap(self.current_species_id, is_silhouette=False)
+    def apply_theme(self, theme_mode: str):
+        if theme_mode == "retro":
+            self.setStyleSheet("""
+                LegendaryInspectorDrawer {
+                    background-color: #10262e;
+                    border-top: 3px solid #58b8a8;
+                    border-left: 3px solid #58b8a8;
+                    border-bottom: 3px solid #081820;
+                    border-right: 3px solid #081820;
+                    border-radius: 4px;
+                }
+            """)
+            self.title_lbl.setText("LEGENDARY SANCTUM // POKéNAV")
+            self.title_lbl.setStyleSheet("color: #f8b800; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 11px; font-weight: bold; letter-spacing: 1px;")
+            box_style = """
+                background-color: #09171e;
+                border-top: 2px solid #040a0c;
+                border-left: 2px solid #040a0c;
+                border-bottom: 2px solid #387068;
+                border-right: 2px solid #387068;
+                border-radius: 3px;
+                padding: 6px;
+            """
+            self.profile_frame.setStyleSheet(box_style)
+            self.req_frame.setStyleSheet(box_style)
+            self.syn_frame.setStyleSheet(box_style)
+            self.stats_frame.setStyleSheet(box_style)
+            self.prob_frame.setStyleSheet(box_style)
+            for stat, (bar, val_lbl) in self.stat_bars.items():
+                bar.setStyleSheet("""
+                    QProgressBar {
+                        background-color: #081418;
+                        border-top: 1px solid #040a0c;
+                        border-left: 1px solid #040a0c;
+                        border-bottom: 1px solid #285462;
+                        border-right: 1px solid #285462;
+                        border-radius: 2px;
+                    }
+                    QProgressBar::chunk {
+                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8b800, stop:1 #c08000);
+                        border-radius: 1px;
+                    }
+                """)
+                val_lbl.setStyleSheet("color: #f8b800; font-family: monospace; font-size: 10px; font-weight: bold;")
+            self.btn_open_pokedex.setStyleSheet("""
+                QPushButton {
+                    background-color: #183844;
+                    border-top: 2px solid #58b8a8;
+                    border-left: 2px solid #58b8a8;
+                    border-bottom: 2px solid #081820;
+                    border-right: 2px solid #081820;
+                    color: #00ff88;
+                    font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+                    font-size: 11px;
+                    font-weight: bold;
+                    border-radius: 2px;
+                    padding: 5px 8px;
+                }
+                QPushButton:hover {
+                    background-color: #245060;
+                    border-top: 2px solid #78d8c0;
+                    border-left: 2px solid #78d8c0;
+                    color: #ffffff;
+                }
+                QPushButton:pressed {
+                    border-top: 2px solid #081820;
+                    border-left: 2px solid #081820;
+                    border-bottom: 2px solid #58b8a8;
+                    border-right: 2px solid #58b8a8;
+                    padding-top: 7px; padding-left: 10px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                LegendaryInspectorDrawer {
+                    background-color: #0a0f1d;
+                    border: 1px solid #1e293b;
+                    border-radius: 8px;
+                }
+            """)
+            self.title_lbl.setText("LEGENDARY SANCTUM")
+            self.title_lbl.setStyleSheet("color: #facc15; letter-spacing: 1px;")
+            box_style = """
+                background-color: #0f172a;
+                border: 1px solid #312e81;
+                border-radius: 8px;
+                padding: 8px;
+            """
+            self.profile_frame.setStyleSheet(box_style)
+            self.req_frame.setStyleSheet("""
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+                padding: 10px;
+            """)
+            self.syn_frame.setStyleSheet("""
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+                padding: 10px;
+            """)
+            self.stats_frame.setStyleSheet("""
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+                padding: 10px;
+            """)
+            self.prob_frame.setStyleSheet("""
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+                padding: 10px;
+            """)
+            for stat, (bar, val_lbl) in self.stat_bars.items():
+                bar.setStyleSheet("""
+                    QProgressBar {
+                        background-color: #1e293b;
+                        border-radius: 4px;
+                    }
+                    QProgressBar::chunk {
+                        background-color: #3b82f6;
+                        border-radius: 4px;
+                    }
+                """)
+                val_lbl.setStyleSheet("color: #f8fafc; font-size: 10px;")
+            self.btn_open_pokedex.setStyleSheet("""
+                QPushButton {
+                    background-color: #2563eb;
+                    color: #FFFFFF;
+                    font-size: 12px;
+                    font-weight: bold;
+                    border-radius: 6px;
+                }
+                QPushButton:hover {
+                    background-color: #3b82f6;
+                }
+            """)
+
+    def on_open_pokedex_clicked(self):
+        play_sfx("menu_select.wav")
+        if self.current_species_id > 0:
+            self.open_in_pokedex.emit(self.current_species_id)
+
+    def populate(self, data: dict):
+        self.current_species_id = data.get("species_id", 0)
+        pid = self.current_species_id
+        name = data.get("name", "Unknown")
+        is_caught = data.get("is_caught", False)
+
+        if pid > 0:
+            self.dex_lbl.setText(f"#{pid:04d}")
+        else:
+            self.dex_lbl.setText("SPECIAL")
+        self.name_lbl.setText(f"⭐ {name}")
+
+        pm = get_species_pixmap(pid, is_silhouette=(not is_caught))
         if pm:
             self.sprite_lbl.setPixmap(pm.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
             self.sprite_lbl.setText("👑")
 
-        # Types
         while self.types_layout.count():
             item = self.types_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        t1 = leg_data.get("type1")
-        t2 = leg_data.get("type2")
+        t1 = data.get("type1")
+        t2 = data.get("type2")
         if t1 and t1 != "None":
             self.types_layout.addWidget(TypeBadge(t1))
         if t2 and t2 != "None" and t2 != t1:
             self.types_layout.addWidget(TypeBadge(t2))
         self.types_layout.addStretch()
 
-        # Requirements and Synergy
-        self.req_lbl.setText(leg_data.get("requirements", "No special unlock requirements reported."))
-        syn = leg_data.get("synergy", "")
-        if not syn or syn == "None":
-            syn = "Standard High-Level Battle (False Swipe + Spore/Sleep recommended)."
-        self.syn_lbl.setText(syn)
+        bst = data.get("bst", 0)
+        self.bst_lbl.setText(f"Total BST: {bst}" if bst else "Total BST: ---")
 
-        # Base stats
-        for stat, (bar, lbl) in self.stat_bars.items():
-            val = leg_data.get(stat.lower(), 0)
-            bar.setValue(val)
-            lbl.setText(str(val))
+        self.req_lbl.setText(data.get("requirements", "No special unlock requirements."))
+        self.syn_lbl.setText(data.get("synergy", "Standard high-level party setup recommended."))
 
-        # Catch calculations
-        cr = leg_data.get("catch_rate", 3)
-        if cr <= 0:
-            cr = 3
-        qb_pct = min(99.0, max(1.0, (cr * 5.0 / 3.0 / 255.0) * 100))
-        fs_pct = min(99.0, max(1.0, (cr * 2.0 * 2.5 / 255.0) * 100))
-        tb_pct = min(99.0, max(1.0, (cr * 4.0 * 2.5 / 255.0) * 100))
+        # Stats
+        stat_keys = [("HP", "hp"), ("Atk", "atk"), ("Def", "def"), ("SpA", "spa"), ("SpD", "spd"), ("Spe", "spe")]
+        for stat_name, k in stat_keys:
+            if stat_name in self.stat_bars:
+                val = data.get(k, 0) or 0
+                bar, val_lbl = self.stat_bars[stat_name]
+                bar.setValue(val)
+                val_lbl.setText(str(val))
+
+        # Catch Probabilities
+        cr = data.get("catch_rate", 3) or 3
+        qb_pct = min(100.0, (cr * 5.0 / (3 * 255)) * 100.0)
+        fs_pct = min(100.0, (cr * 2.0 / 255) * 100.0)
+        tb_pct = min(100.0, (cr * 4.0 / (3 * 255)) * 100.0)
 
         self.quick_ball_lbl.setText(f"⚡ Quick Ball (Turn 1): ~{qb_pct:.1f}%")
-        self.false_swipe_lbl.setText(f"⚔️ False Swipe + Ultra (1 HP + Sleep): ~{fs_pct:.1f}%")
-        self.timer_ball_lbl.setText(f"⏱️ Timer Ball (Turn 5+ & 1 HP): ~{tb_pct:.1f}%")
+        self.false_swipe_lbl.setText(f"⚔️ False Swipe (1 HP) + Ultra: ~{fs_pct:.1f}%")
+        self.timer_ball_lbl.setText(f"⏱️ Timer Ball (Turn 5+): ~{tb_pct:.1f}%")
 
-    def on_open_pokedex_clicked(self):
-        if self.current_species_id > 0:
-            self.open_in_pokedex.emit(self.current_species_id)
+    def clear(self):
+        self.current_species_id = 0
+        self.dex_lbl.setText("#0000")
+        self.name_lbl.setText("Select a Legendary")
+        self.sprite_lbl.clear()
+        self.sprite_lbl.setText("👑")
+        while self.types_layout.count():
+            item = self.types_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.bst_lbl.setText("Total BST: ---")
+        self.req_lbl.setText("---")
+        self.syn_lbl.setText("---")
+        for stat, (bar, val_lbl) in self.stat_bars.items():
+            bar.setValue(0)
+            val_lbl.setText("0")
+        self.quick_ball_lbl.setText("⚡ Quick Ball (Turn 1): ---")
+        self.false_swipe_lbl.setText("⚔️ False Swipe + Ultra: ---")
+        self.timer_ball_lbl.setText("⏱️ Timer Ball (Turn 5+): ---")
 
 
 class QuetzalMasterApp(QMainWindow):
     """Lead Orchestrator Window for Pokémon Quetzal Companion."""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("⚡ Pokémon Quetzal Master Companion & Strategy Hub")
+        self.current_theme = "retro"
+        global CURRENT_THEME
+        CURRENT_THEME = "retro"
+
+        self.setWindowTitle("🎮 Pokémon Quetzal // PokéNav Advance Companion")
         self.resize(1380, 890)
         self.setMinimumSize(1220, 780)
-        self.setStyleSheet(MODERN_STYLESHEET)
+        self.setStyleSheet(RETRO_POKENAV_STYLESHEET)
 
         self.conn = sqlite3.connect(DB_PATH, timeout=15.0)
         self.cur = self.conn.cursor()
@@ -1253,6 +1908,8 @@ class QuetzalMasterApp(QMainWindow):
         self.current_route_name = "ROUTE 101"
         self.filter_mode = "Show All"
         self.habitat_filter = "All"
+        self.all_rendered_cards = []
+        self.rendered_leg_cards = []
 
         # Save file monitoring
         self.save_path = DEFAULT_SAV_PATH
@@ -1273,31 +1930,35 @@ class QuetzalMasterApp(QMainWindow):
         # ==========================================
         # TOP HEADER & REAL-TIME SAVE STATUS
         # ==========================================
-        header = QFrame()
-        header.setStyleSheet("""
-            QFrame {
-                background-color: #0f172a;
-                border: 1px solid #1e293b;
-                border-radius: 8px;
-                padding: 6px 14px;
-            }
-        """)
-        h_layout = QHBoxLayout(header)
-        h_layout.setContentsMargins(8, 4, 8, 4)
+        self.header_frame = QFrame()
+        self.header_frame.setObjectName("top_header_bar")
+        h_layout = QHBoxLayout(self.header_frame)
+        h_layout.setContentsMargins(10, 6, 10, 6)
         h_layout.setSpacing(12)
 
-        # Title
+        # Title & Subtitle Column
         title_col = QVBoxLayout()
-        title_col.setSpacing(1)
-        app_title = QLabel("⚡ QUETZAL MASTER COMPANION")
-        app_title.setFont(QFont("Arial", 15, QFont.Bold))
-        app_title.setStyleSheet("color: #38bdf8; letter-spacing: 0.5px;")
-        title_col.addWidget(app_title)
+        title_col.setSpacing(2)
+        self.app_title = QLabel("🎮 POKéNAV ADVANCE // QUETZAL COMPANION")
+        title_col.addWidget(self.app_title)
 
-        subtitle = QLabel("Gen 1–9 Multi-Region DexNav & Strategic Guide")
-        subtitle.setStyleSheet("color: #64748b; font-size: 11px;")
-        title_col.addWidget(subtitle)
+        self.subtitle = QLabel("DEVON CORP. POKéNAV EMERALD OS // HOENN DUAL-DEX SYSTEM")
+        title_col.addWidget(self.subtitle)
         h_layout.addLayout(title_col)
+
+        # Retro GBA Hardware Telemetry: Glowing Green Power LED & Retro Battery Badge
+        self.telemetry_col = QHBoxLayout()
+        self.telemetry_col.setSpacing(8)
+
+        self.power_led = QLabel("● POWER")
+        self.power_led.setAlignment(Qt.AlignCenter)
+        self.telemetry_col.addWidget(self.power_led)
+
+        self.battery_badge = QLabel("🔋 BATTERY: FULL [■■■]")
+        self.battery_badge.setAlignment(Qt.AlignCenter)
+        self.telemetry_col.addWidget(self.battery_badge)
+
+        h_layout.addLayout(self.telemetry_col)
 
         h_layout.addStretch()
 
@@ -1307,39 +1968,34 @@ class QuetzalMasterApp(QMainWindow):
         save_col.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.save_status_lbl = QLabel(f"💾 Player: NIG • Caught: {len(self.caught_species)} / 1,499 ({len(self.caught_species)/1499*100:.1f}%)")
-        self.save_status_lbl.setStyleSheet("color: #f1f5f9; font-size: 12px; font-weight: bold;")
         save_col.addWidget(self.save_status_lbl, alignment=Qt.AlignRight)
 
         self.live_watcher_badge = QLabel("🟢 Live Save Sync Active (Auto-Refreshes On In-Game Save)")
-        self.live_watcher_badge.setStyleSheet("color: #10b981; font-size: 10px; font-weight: bold;")
         save_col.addWidget(self.live_watcher_badge, alignment=Qt.AlignRight)
 
         h_layout.addLayout(save_col)
 
+        # Theme Toggle Button: [🎮 PokéNav GBA] ↔ [⚡ Cyber Modern]
+        self.theme_btn = QPushButton("🎮 PokéNav GBA")
+        self.theme_btn.setFixedHeight(32)
+        self.theme_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.theme_btn.clicked.connect(self.toggle_theme)
+        h_layout.addWidget(self.theme_btn)
+
         # Manual Sync Button
         self.sync_btn = QPushButton("↻ Resync .SAV")
-        self.sync_btn.setFixedHeight(30)
+        self.sync_btn.setFixedHeight(32)
         self.sync_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.sync_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1e3a8a;
-                border: 1px solid #3b82f6;
-                color: #FFFFFF;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 4px 12px;
-            }
-            QPushButton:hover { background-color: #2563eb; }
-        """)
         self.sync_btn.clicked.connect(self.sync_save_file)
         h_layout.addWidget(self.sync_btn)
 
-        main_layout.addWidget(header)
+        main_layout.addWidget(self.header_frame)
 
         # ==========================================
         # TABS CONTAINER
         # ==========================================
         self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         main_layout.addWidget(self.tabs, 1)
 
         self.create_encounter_tab()
@@ -1349,6 +2005,421 @@ class QuetzalMasterApp(QMainWindow):
         self.create_legendaries_tab()
         self.create_legendary_roadmap_tab()
         self.create_calculator_tab()
+
+        self.apply_theme()
+
+    def on_tab_changed(self, index: int):
+        play_sfx("pokenav_chirp.wav")
+
+    def toggle_theme(self):
+        play_sfx("menu_select.wav")
+        if self.current_theme == "retro":
+            self.current_theme = "modern"
+        else:
+            self.current_theme = "retro"
+        global CURRENT_THEME
+        CURRENT_THEME = self.current_theme
+        self.apply_theme()
+
+    def apply_theme(self):
+        global CURRENT_THEME
+        CURRENT_THEME = self.current_theme
+
+        if self.current_theme == "retro":
+            self.setStyleSheet(RETRO_POKENAV_STYLESHEET)
+            self.setWindowTitle("🎮 Pokémon Quetzal // PokéNav Advance Companion")
+
+            if hasattr(self, 'header_frame'):
+                self.header_frame.setStyleSheet("""
+                    QFrame#top_header_bar {
+                        background-color: #10262e;
+                        border-top: 3px solid #58b8a8;
+                        border-left: 3px solid #58b8a8;
+                        border-bottom: 3px solid #081820;
+                        border-right: 3px solid #081820;
+                        border-radius: 4px;
+                        padding: 6px 14px;
+                    }
+                """)
+                self.app_title.setText("🎮 POKéNAV ADVANCE // QUETZAL COMPANION")
+                self.app_title.setStyleSheet("color: #00ff88; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 14px; font-weight: bold; letter-spacing: 1px;")
+                self.subtitle.setText("DEVON CORP. POKéNAV EMERALD OS // HOENN DUAL-DEX SYSTEM")
+                self.subtitle.setStyleSheet("color: #58b8a8; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 10px; font-weight: bold;")
+
+                self.power_led.setVisible(True)
+                self.power_led.setStyleSheet("color: #00ff66; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 11px; font-weight: bold; background: #062214; border: 1.5px solid #00e858; border-radius: 3px; padding: 2px 7px;")
+
+                self.battery_badge.setVisible(True)
+                self.battery_badge.setText("🔋 BATTERY: FULL [■■■]")
+                self.battery_badge.setStyleSheet("color: #f8b800; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 11px; font-weight: bold; background: #261c06; border: 1.5px solid #f8b800; border-radius: 3px; padding: 2px 7px;")
+
+                self.save_status_lbl.setStyleSheet("color: #f8f8f8; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 11px; font-weight: bold;")
+                self.live_watcher_badge.setStyleSheet("color: #00ff88; font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace; font-size: 10px; font-weight: bold;")
+
+                self.theme_btn.setText("🎮 PokéNav GBA")
+                self.theme_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #0d3824;
+                        border-top: 2px solid #00ff88;
+                        border-left: 2px solid #00ff88;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        color: #00ff88;
+                        font-family: 'JetBrainsMono Nerd Font', 'UbuntuMono Nerd Font', monospace;
+                        font-weight: bold;
+                        font-size: 11px;
+                        padding: 4px 12px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #124d32;
+                        color: #ffffff;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #081820;
+                        border-left: 2px solid #081820;
+                        border-bottom: 2px solid #00ff88;
+                        border-right: 2px solid #00ff88;
+                        padding-top: 6px; padding-left: 14px;
+                    }
+                """)
+                self.sync_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #183844;
+                        border-top: 2px solid #58b8a8;
+                        border-left: 2px solid #58b8a8;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        color: #f8f8f8;
+                        font-family: monospace;
+                        font-weight: bold;
+                        font-size: 11px;
+                        padding: 4px 12px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #245060;
+                        color: #00ff88;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #081820;
+                        border-left: 2px solid #081820;
+                        border-bottom: 2px solid #58b8a8;
+                        border-right: 2px solid #58b8a8;
+                        padding-top: 6px; padding-left: 14px;
+                    }
+                """)
+
+            if hasattr(self, 'controls'):
+                self.controls.setStyleSheet("""
+                    QFrame#top_controls {
+                        background-color: #10262e;
+                        border-top: 2px solid #58b8a8;
+                        border-left: 2px solid #58b8a8;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        border-radius: 4px;
+                    }
+                """)
+            if hasattr(self, 'prev_route_btn'):
+                arrow_style = """
+                    QPushButton {
+                        background-color: #183844;
+                        border-top: 2px solid #58b8a8;
+                        border-left: 2px solid #58b8a8;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        color: #00ff88;
+                        font-size: 12px;
+                        font-weight: bold;
+                        border-radius: 2px;
+                    }
+                    QPushButton:hover {
+                        background-color: #245060;
+                        color: #ffffff;
+                    }
+                """
+                self.prev_route_btn.setStyleSheet(arrow_style)
+                self.next_route_btn.setStyleSheet(arrow_style)
+
+            if hasattr(self, 'p_header'):
+                self.p_header.setStyleSheet("""
+                    background-color: #10262e;
+                    border-top: 2px solid #58b8a8;
+                    border-left: 2px solid #58b8a8;
+                    border-bottom: 2px solid #081820;
+                    border-right: 2px solid #081820;
+                    border-radius: 4px;
+                    padding: 8px 14px;
+                """)
+
+            if hasattr(self, 'leg_cards_scroll'):
+                self.leg_cards_scroll.setStyleSheet("""
+                    background-color: #08151c;
+                    border-top: 2px solid #58b8a8;
+                    border-left: 2px solid #58b8a8;
+                    border-bottom: 2px solid #081820;
+                    border-right: 2px solid #081820;
+                    border-radius: 4px;
+                """)
+
+            if hasattr(self, 'hero_card'):
+                self.hero_card.setStyleSheet("""
+                    background-color: #10262e;
+                    border-top: 2px solid #58b8a8;
+                    border-left: 2px solid #58b8a8;
+                    border-bottom: 2px solid #081820;
+                    border-right: 2px solid #081820;
+                    border-radius: 4px;
+                    padding: 10px 14px;
+                """)
+            if hasattr(self, 'bp_frame'):
+                self.bp_frame.setStyleSheet("""
+                    background-color: #09171e;
+                    border-top: 2px solid #040a0c;
+                    border-left: 2px solid #040a0c;
+                    border-bottom: 2px solid #387068;
+                    border-right: 2px solid #387068;
+                    border-radius: 3px;
+                    padding: 12px;
+                """)
+            if hasattr(self, 'calc_card'):
+                self.calc_card.setStyleSheet("""
+                    QFrame#calc_card {
+                        background-color: #10262e;
+                        border-top: 2px solid #58b8a8;
+                        border-left: 2px solid #58b8a8;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        border-radius: 4px;
+                    }
+                """)
+            if hasattr(self, 'calc_btn'):
+                self.calc_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #183844;
+                        border-top: 2px solid #58b8a8;
+                        border-left: 2px solid #58b8a8;
+                        border-bottom: 2px solid #081820;
+                        border-right: 2px solid #081820;
+                        color: #00ff88;
+                        font-family: monospace;
+                        font-weight: bold;
+                        font-size: 12px;
+                        border-radius: 2px;
+                        padding: 6px 14px;
+                    }
+                    QPushButton:hover {
+                        background-color: #245060;
+                        color: #ffffff;
+                    }
+                    QPushButton:pressed {
+                        border-top: 2px solid #081820;
+                        border-left: 2px solid #081820;
+                        border-bottom: 2px solid #58b8a8;
+                        border-right: 2px solid #58b8a8;
+                        padding-top: 8px; padding-left: 16px;
+                    }
+                """)
+        else:
+            self.setStyleSheet(MODERN_STYLESHEET)
+            self.setWindowTitle("⚡ Pokémon Quetzal Master Companion & Strategy Hub")
+
+            if hasattr(self, 'header_frame'):
+                self.header_frame.setStyleSheet("""
+                    QFrame#top_header_bar {
+                        background-color: #0f172a;
+                        border: 1px solid #1e293b;
+                        border-radius: 8px;
+                        padding: 6px 14px;
+                    }
+                """)
+                self.app_title.setText("⚡ QUETZAL MASTER COMPANION")
+                self.app_title.setStyleSheet("color: #38bdf8; font-family: sans-serif; font-size: 15px; font-weight: bold; letter-spacing: 0.5px;")
+                self.subtitle.setText("Gen 1–9 Multi-Region DexNav & Strategic Guide")
+                self.subtitle.setStyleSheet("color: #64748b; font-size: 11px; font-family: sans-serif;")
+
+                self.power_led.setVisible(False)
+                self.battery_badge.setVisible(False)
+
+                self.save_status_lbl.setStyleSheet("color: #f1f5f9; font-family: sans-serif; font-size: 12px; font-weight: bold;")
+                self.live_watcher_badge.setStyleSheet("color: #10b981; font-family: sans-serif; font-size: 10px; font-weight: bold;")
+
+                self.theme_btn.setText("⚡ Cyber Modern")
+                self.theme_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1e293b;
+                        border: 1px solid #38bdf8;
+                        color: #38bdf8;
+                        font-family: sans-serif;
+                        font-weight: bold;
+                        font-size: 11px;
+                        border-radius: 4px;
+                        padding: 4px 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #253550;
+                    }
+                """)
+                self.sync_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1e3a8a;
+                        border: 1px solid #3b82f6;
+                        color: #FFFFFF;
+                        font-weight: bold;
+                        border-radius: 4px;
+                        padding: 4px 12px;
+                    }
+                    QPushButton:hover { background-color: #2563eb; }
+                """)
+
+            if hasattr(self, 'controls'):
+                self.controls.setStyleSheet("""
+                    QFrame#top_controls {
+                        background-color: #0f172a;
+                        border: 1px solid #1e293b;
+                        border-radius: 6px;
+                    }
+                """)
+            if hasattr(self, 'prev_route_btn'):
+                arrow_style = """
+                    QPushButton {
+                        background-color: #1e293b;
+                        color: #f1f5f9;
+                        font-size: 13px;
+                        font-weight: bold;
+                        border: 1px solid #334155;
+                        border-radius: 4px;
+                        padding: 0px;
+                    }
+                    QPushButton:hover {
+                        background-color: #334155;
+                        color: #38bdf8;
+                    }
+                """
+                self.prev_route_btn.setStyleSheet(arrow_style)
+                self.next_route_btn.setStyleSheet(arrow_style)
+
+            if hasattr(self, 'p_header'):
+                self.p_header.setStyleSheet("""
+                    background-color: #0f172a;
+                    border: 1px solid #1e293b;
+                    border-radius: 8px;
+                    padding: 8px 14px;
+                """)
+
+            if hasattr(self, 'leg_cards_scroll'):
+                self.leg_cards_scroll.setStyleSheet("""
+                    background-color: #0b0f17;
+                    border: 1px solid #1e293b;
+                    border-radius: 8px;
+                """)
+
+            if hasattr(self, 'hero_card'):
+                self.hero_card.setStyleSheet("""
+                    background-color: #0f172a;
+                    border: 1px solid #1e293b;
+                    border-radius: 8px;
+                    padding: 10px 14px;
+                """)
+            if hasattr(self, 'bp_frame'):
+                self.bp_frame.setStyleSheet("""
+                    background-color: #0c121d;
+                    border: 1.5px solid #0284c7;
+                    border-radius: 8px;
+                    padding: 12px;
+                """)
+            if hasattr(self, 'calc_card'):
+                self.calc_card.setStyleSheet("""
+                    QFrame#calc_card {
+                        background-color: #0f172a;
+                        border: 1px solid #1e293b;
+                        border-radius: 8px;
+                    }
+                """)
+            if hasattr(self, 'calc_btn'):
+                self.calc_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #2563eb;
+                        color: #FFFFFF;
+                        font-weight: bold;
+                        border-radius: 6px;
+                    }
+                    QPushButton:hover {
+                        background-color: #3b82f6;
+                    }
+                """)
+
+        self.update_filter_button_styles()
+        self.update_habitat_button_styles()
+        self.update_route_completion_badge()
+        if hasattr(self, 'update_leg_filter_button_styles'):
+            self.update_leg_filter_button_styles()
+        if hasattr(self, 'pokedex_caught_btn'):
+            pid = getattr(self, 'current_pokedex_mon_id', 1)
+            self.update_pokedex_caught_btn(pid in self.caught_species)
+        if hasattr(self, 'pk_stat_bars'):
+            for stat, (bar, val) in self.pk_stat_bars.items():
+                if self.current_theme == "retro":
+                    bar.setStyleSheet("""
+                        QProgressBar {
+                            background-color: #081418;
+                            border-top: 1px solid #040a0c;
+                            border-left: 1px solid #040a0c;
+                            border-bottom: 1px solid #285462;
+                            border-right: 1px solid #285462;
+                            border-radius: 2px;
+                        }
+                        QProgressBar::chunk {
+                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #00ff68, stop:0.5 #00e858, stop:1 #009838);
+                            border-radius: 1px;
+                        }
+                    """)
+                    val.setStyleSheet("color: #00ff88; font-family: monospace; font-size: 11px; font-weight: bold;")
+                else:
+                    bar.setStyleSheet("""
+                        QProgressBar { background-color: #1e293b; border-radius: 6px; }
+                        QProgressBar::chunk { background-color: #3b82f6; border-radius: 6px; }
+                    """)
+                    val.setStyleSheet("color: #f8fafc; font-weight: bold;")
+
+        if hasattr(self, 'inspector_drawer'):
+            self.inspector_drawer.apply_theme(self.current_theme)
+        if hasattr(self, 'leg_inspector_drawer'):
+            self.leg_inspector_drawer.apply_theme(self.current_theme)
+        for c in getattr(self, 'all_rendered_cards', []):
+            c.update_card_style()
+            c.update_caught_button_state()
+        for c in getattr(self, 'rendered_leg_cards', []):
+            c.update_card_style()
+            c.update_caught_button_state()
+
+    def update_route_completion_badge(self):
+        if not hasattr(self, 'route_progress_badge'):
+            return
+        total_unique = len(set(d["species_id"] for d in getattr(self, 'current_route_data', [])))
+        caught_unique = len(set(d["species_id"] for d in getattr(self, 'current_route_data', []) if d.get("is_caught", False)))
+        pct = (caught_unique / total_unique * 100) if total_unique > 0 else 0
+        route = getattr(self, 'current_route_name', 'Current Route')
+
+        if total_unique == 0:
+            self.route_progress_badge.setText(f"{route}: Safe Town (No Wild Encounters)")
+            if is_retro():
+                self.route_progress_badge.setStyleSheet("background-color: #0d1e24; color: #6a9c90; border-top: 2px solid #3d7870; border-left: 2px solid #3d7870; border-bottom: 2px solid #081820; border-right: 2px solid #081820; border-radius: 2px; padding: 4px 10px; font-weight: bold; font-family: monospace;")
+            else:
+                self.route_progress_badge.setStyleSheet("background-color: #0f172a; color: #94a3b8; border: 1px solid #334155; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
+        else:
+            self.route_progress_badge.setText(f"{route}: {caught_unique} / {total_unique} Caught ({pct:.1f}%)")
+            if is_retro():
+                if total_unique > 0 and caught_unique >= total_unique:
+                    self.route_progress_badge.setStyleSheet("background-color: #0d3824; color: #00ff88; border-top: 2px solid #00ff88; border-left: 2px solid #00ff88; border-bottom: 2px solid #081820; border-right: 2px solid #081820; border-radius: 2px; padding: 4px 10px; font-weight: bold; font-family: monospace;")
+                else:
+                    self.route_progress_badge.setStyleSheet("background-color: #261c06; color: #f8b800; border-top: 2px solid #f8b800; border-left: 2px solid #f8b800; border-bottom: 2px solid #081820; border-right: 2px solid #081820; border-radius: 2px; padding: 4px 10px; font-weight: bold; font-family: monospace;")
+            else:
+                if total_unique > 0 and caught_unique >= total_unique:
+                    self.route_progress_badge.setStyleSheet("background-color: #064e3b; color: #34d399; border: 1px solid #10b981; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
+                else:
+                    self.route_progress_badge.setStyleSheet("background-color: #1e293b; color: #facc15; border: 1px solid #eab308; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
 
     # ==========================================
     # TAB 0: ROUTE ENCOUNTER EXPLORER
@@ -1360,16 +2431,9 @@ class QuetzalMasterApp(QMainWindow):
         layout.setSpacing(8)
 
         # Top Controls Bar
-        controls = QFrame()
-        controls.setObjectName("top_controls")
-        controls.setStyleSheet("""
-            QFrame#top_controls {
-                background-color: #0f172a;
-                border: 1px solid #1e293b;
-                border-radius: 6px;
-            }
-        """)
-        c_layout = QHBoxLayout(controls)
+        self.controls = QFrame()
+        self.controls.setObjectName("top_controls")
+        c_layout = QHBoxLayout(self.controls)
         c_layout.setContentsMargins(10, 6, 10, 6)
         c_layout.setSpacing(10)
 
@@ -1447,7 +2511,7 @@ class QuetzalMasterApp(QMainWindow):
 
         self.update_filter_button_styles()
 
-        layout.addWidget(controls)
+        layout.addWidget(self.controls)
 
         # Habitat Filter Pills
         habitat_bar = QHBoxLayout()
@@ -1503,6 +2567,7 @@ class QuetzalMasterApp(QMainWindow):
         self.populate_route_list()
 
     def set_caught_filter(self, mode: str):
+        play_sfx("menu_select.wav")
         self.filter_mode = mode
         self.update_filter_button_styles()
         self.filter_route_cards()
@@ -1511,30 +2576,69 @@ class QuetzalMasterApp(QMainWindow):
         for btn, mode in zip(self.filter_buttons, ["Show All", "Missing Only", "Caught Only"]):
             active = (mode == self.filter_mode)
             btn.setChecked(active)
-            if active:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #2563eb;
-                        border: 1px solid #60a5fa;
-                        color: #FFFFFF;
-                        font-weight: bold;
-                        border-radius: 4px;
-                        padding: 3px 10px;
-                    }
-                """)
+            if is_retro():
+                if active:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #008850;
+                            border-top: 2px solid #00ff88;
+                            border-left: 2px solid #00ff88;
+                            border-bottom: 2px solid #042010;
+                            border-right: 2px solid #042010;
+                            color: #ffffff;
+                            font-weight: bold;
+                            font-family: monospace;
+                            border-radius: 2px;
+                            padding: 3px 10px;
+                        }
+                    """)
+                else:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #0c1c22;
+                            border-top: 2px solid #306056;
+                            border-left: 2px solid #306056;
+                            border-bottom: 2px solid #050e12;
+                            border-right: 2px solid #050e12;
+                            color: #6a9c90;
+                            font-family: monospace;
+                            border-radius: 2px;
+                            padding: 3px 10px;
+                        }
+                        QPushButton:hover { background-color: #143038; color: #a8d8c8; }
+                        QPushButton:pressed {
+                            border-top: 2px solid #050e12;
+                            border-left: 2px solid #050e12;
+                            border-bottom: 2px solid #306056;
+                            border-right: 2px solid #306056;
+                        }
+                    """)
             else:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #1e293b;
-                        border: 1px solid #334155;
-                        color: #94a3b8;
-                        border-radius: 4px;
-                        padding: 3px 10px;
-                    }
-                    QPushButton:hover { background-color: #334155; color: #FFFFFF; }
-                """)
+                if active:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #2563eb;
+                            border: 1px solid #60a5fa;
+                            color: #FFFFFF;
+                            font-weight: bold;
+                            border-radius: 4px;
+                            padding: 3px 10px;
+                        }
+                    """)
+                else:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #1e293b;
+                            border: 1px solid #334155;
+                            color: #94a3b8;
+                            border-radius: 4px;
+                            padding: 3px 10px;
+                        }
+                        QPushButton:hover { background-color: #334155; color: #FFFFFF; }
+                    """)
 
     def set_habitat_filter(self, hab: str):
+        play_sfx("menu_select.wav")
         self.habitat_filter = hab
         self.update_habitat_button_styles()
         self.filter_route_cards()
@@ -1543,30 +2647,70 @@ class QuetzalMasterApp(QMainWindow):
         for hab, btn in self.hab_buttons.items():
             active = (hab == self.habitat_filter)
             btn.setChecked(active)
-            if active:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #0284c7;
-                        border: 1px solid #38bdf8;
-                        color: #FFFFFF;
-                        font-weight: bold;
-                        border-radius: 4px;
-                        padding: 2px 8px;
-                        font-size: 11px;
-                    }
-                """)
+            if is_retro():
+                if active:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #185468;
+                            border-top: 2px solid #58f8e8;
+                            border-left: 2px solid #58f8e8;
+                            border-bottom: 2px solid #081820;
+                            border-right: 2px solid #081820;
+                            color: #ffffff;
+                            font-weight: bold;
+                            font-family: monospace;
+                            border-radius: 2px;
+                            padding: 2px 8px;
+                            font-size: 11px;
+                        }
+                    """)
+                else:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #0c1c22;
+                            border-top: 2px solid #306056;
+                            border-left: 2px solid #306056;
+                            border-bottom: 2px solid #050e12;
+                            border-right: 2px solid #050e12;
+                            color: #6a9c90;
+                            font-family: monospace;
+                            border-radius: 2px;
+                            padding: 2px 8px;
+                            font-size: 11px;
+                        }
+                        QPushButton:hover { background-color: #143038; color: #a8d8c8; }
+                        QPushButton:pressed {
+                            border-top: 2px solid #050e12;
+                            border-left: 2px solid #050e12;
+                            border-bottom: 2px solid #306056;
+                            border-right: 2px solid #306056;
+                        }
+                    """)
             else:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #1e293b;
-                        border: 1px solid #334155;
-                        color: #94a3b8;
-                        border-radius: 4px;
-                        padding: 2px 8px;
-                        font-size: 11px;
-                    }
-                    QPushButton:hover { background-color: #334155; color: #FFFFFF; }
-                """)
+                if active:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #0284c7;
+                            border: 1px solid #38bdf8;
+                            color: #FFFFFF;
+                            font-weight: bold;
+                            border-radius: 4px;
+                            padding: 2px 8px;
+                            font-size: 11px;
+                        }
+                    """)
+                else:
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #1e293b;
+                            border: 1px solid #334155;
+                            color: #94a3b8;
+                            border-radius: 4px;
+                            padding: 2px 8px;
+                            font-size: 11px;
+                        }
+                        QPushButton:hover { background-color: #334155; color: #FFFFFF; }
+                    """)
 
     def populate_route_list(self):
         reg = self.region_combo.currentText()
@@ -1579,6 +2723,21 @@ class QuetzalMasterApp(QMainWindow):
 
         self.cur.execute(sql, params)
         routes = [r[0] for r in self.cur.fetchall()]
+
+        # Also include regional map nodes (e.g. peaceful towns with 0 wild encounters)
+        if reg in REGIONAL_MAP_DATA:
+            map_nodes = [normalize_loc(n) for n in REGIONAL_MAP_DATA[reg].get("nodes", {}).keys()]
+            for mn in map_nodes:
+                if mn not in routes:
+                    routes.append(mn)
+            routes.sort()
+        elif reg == "All Regions":
+            for r_key in REGIONAL_MAP_DATA:
+                for n in REGIONAL_MAP_DATA[r_key].get("nodes", {}).keys():
+                    mn = normalize_loc(n)
+                    if mn not in routes:
+                        routes.append(mn)
+            routes.sort()
 
         self.route_combo.blockSignals(True)
         self.route_combo.clear()
@@ -1597,19 +2756,23 @@ class QuetzalMasterApp(QMainWindow):
         self.load_current_route_encounters()
 
     def on_region_changed(self):
+        play_sfx("menu_select.wav")
         self.populate_route_list()
 
     def on_prev_route(self):
+        play_sfx("menu_select.wav")
         idx = self.route_combo.currentIndex()
         if idx > 0:
             self.route_combo.setCurrentIndex(idx - 1)
 
     def on_next_route(self):
+        play_sfx("menu_select.wav")
         idx = self.route_combo.currentIndex()
         if idx < self.route_combo.count() - 1:
             self.route_combo.setCurrentIndex(idx + 1)
 
     def on_route_changed(self):
+        play_sfx("menu_select.wav")
         self.load_current_route_encounters()
 
     def load_current_route_encounters(self):
@@ -1655,21 +2818,15 @@ class QuetzalMasterApp(QMainWindow):
             self.current_route_data.append(d)
 
         # Update Route Completion Badge
-        total_unique = len(set(d["species_id"] for d in self.current_route_data))
-        caught_unique = len(set(d["species_id"] for d in self.current_route_data if d["is_caught"]))
-        pct = (caught_unique / total_unique * 100) if total_unique > 0 else 0
-
-        self.route_progress_badge.setText(f"{route}: {caught_unique} / {total_unique} Caught ({pct:.1f}%)")
-        if total_unique > 0 and caught_unique >= total_unique:
-            self.route_progress_badge.setStyleSheet("background-color: #064e3b; color: #34d399; border: 1px solid #10b981; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
-        else:
-            self.route_progress_badge.setStyleSheet("background-color: #1e293b; color: #facc15; border: 1px solid #eab308; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
+        self.update_route_completion_badge()
 
         self.filter_route_cards()
 
         # Populate inspector drawer with first mon if available
         if self.current_route_data:
             self.inspector_drawer.populate(self.current_route_data[0])
+        else:
+            self.inspector_drawer.clear()
 
     def filter_route_cards(self):
         # Clear existing cards in grid
@@ -1723,9 +2880,12 @@ class QuetzalMasterApp(QMainWindow):
 
         # If empty
         if not filtered:
-            empty_lbl = QLabel(f"No encounters match your current filters on {self.current_route_name}.")
+            if not self.current_route_data:
+                empty_lbl = QLabel("No wild Pokémon encounters in this peaceful town.")
+            else:
+                empty_lbl = QLabel(f"No encounters match your current filters on {self.current_route_name}.")
             empty_lbl.setAlignment(Qt.AlignCenter)
-            empty_lbl.setStyleSheet("color: #64748b; font-size: 14px; padding: 40px;")
+            empty_lbl.setStyleSheet("color: #94a3b8; font-size: 15px; font-weight: bold; padding: 60px;")
             self.cards_grid.addWidget(empty_lbl, 0, 0, 1, 2)
 
     def on_encounter_card_clicked(self, mon_data: dict):
@@ -1736,21 +2896,29 @@ class QuetzalMasterApp(QMainWindow):
 
     def on_encounter_catch_toggled(self, species_id: int, species_name: str, is_caught: bool):
         if is_caught:
+            play_sfx("caught_fanfare.wav")
             self.caught_species.add(species_id)
             self.cur.execute("INSERT OR REPLACE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (species_id, species_name))
         else:
+            play_sfx("menu_cancel.wav")
             self.caught_species.discard(species_id)
             self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (species_id,))
         self.conn.commit()
 
+        # Update in-memory data
+        for d in self.current_route_data:
+            if d.get("species_id") == species_id:
+                d["is_caught"] = is_caught
+
         # Update summary badge
-        self.save_status_lbl.setText(f"💾 Player: NIG • Caught: {len(self.caught_species)} / 1,499 ({len(self.caught_species)/1499*100:.1f}%)")
+        pct = (len(self.caught_species) / 1499 * 100) if 1499 > 0 else 0
+        if is_retro():
+            self.save_status_lbl.setText(f"💾 SAVE: NIG | POKéDEX: {len(self.caught_species)}/1,499 ({pct:.1f}%)")
+        else:
+            self.save_status_lbl.setText(f"💾 Player: NIG • Caught: {len(self.caught_species)} / 1,499 ({pct:.1f}%)")
 
         # Update route stats
-        total_unique = len(set(d["species_id"] for d in self.current_route_data))
-        caught_unique = len(set(d["species_id"] for d in self.current_route_data if d["is_caught"]))
-        pct = (caught_unique / total_unique * 100) if total_unique > 0 else 0
-        self.route_progress_badge.setText(f"{self.current_route_name}: {caught_unique} / {total_unique} Caught ({pct:.1f}%)")
+        self.update_route_completion_badge()
 
         # Update map widget stats if instantiated
         if hasattr(self, 'map_widget'):
@@ -1785,10 +2953,15 @@ class QuetzalMasterApp(QMainWindow):
             self.route_combo.setCurrentIndex(rt_idx)
         else:
             # Try partial
+            found = False
             for i in range(self.route_combo.count()):
                 if route_clean in self.route_combo.itemText(i) or self.route_combo.itemText(i) in route_clean:
                     self.route_combo.setCurrentIndex(i)
+                    found = True
                     break
+            if not found:
+                self.route_combo.addItem(route_clean)
+                self.route_combo.setCurrentText(route_clean)
 
         # Jump to Tab 0
         self.tabs.setCurrentIndex(0)
@@ -1826,14 +2999,22 @@ class QuetzalMasterApp(QMainWindow):
         right_box.setSpacing(10)
 
         # Header Frame: Sprite + Name + Types + Catch Status
-        p_header = QFrame()
-        p_header.setStyleSheet("""
+        self.p_header = QFrame()
+        self.p_header.setStyleSheet("""
+            background-color: #10262e;
+            border-top: 2px solid #58b8a8;
+            border-left: 2px solid #58b8a8;
+            border-bottom: 2px solid #081820;
+            border-right: 2px solid #081820;
+            border-radius: 4px;
+            padding: 8px 14px;
+        """ if is_retro() else """
             background-color: #0f172a;
             border: 1px solid #1e293b;
             border-radius: 8px;
             padding: 8px 14px;
         """)
-        ph_layout = QHBoxLayout(p_header)
+        ph_layout = QHBoxLayout(self.p_header)
         ph_layout.setContentsMargins(8, 4, 8, 4)
         ph_layout.setSpacing(12)
 
@@ -1845,7 +3026,7 @@ class QuetzalMasterApp(QMainWindow):
         title_col = QVBoxLayout()
         title_col.setSpacing(3)
         self.pokedex_name_lbl = QLabel("#0001 Bulbasaur")
-        self.pokedex_name_lbl.setStyleSheet("color: #f8fafc; font-size: 16px; font-weight: bold;")
+        self.pokedex_name_lbl.setStyleSheet("color: #00ff88; font-family: monospace; font-size: 16px; font-weight: bold;" if is_retro() else "color: #f8fafc; font-size: 16px; font-weight: bold;")
         title_col.addWidget(self.pokedex_name_lbl)
 
         self.pokedex_types_row = QHBoxLayout()
@@ -1859,10 +3040,11 @@ class QuetzalMasterApp(QMainWindow):
         self.pokedex_caught_btn.clicked.connect(self.on_pokedex_caught_clicked)
         ph_layout.addWidget(self.pokedex_caught_btn)
 
-        right_box.addWidget(p_header)
+        right_box.addWidget(self.p_header)
 
         # Pokédex Sub-Tabs: Area Locator, Base Stats, Learnsets, Evolution
         self.pokedex_subtabs = QTabWidget()
+        self.pokedex_subtabs.currentChanged.connect(lambda: play_sfx("pokenav_chirp.wav"))
         right_box.addWidget(self.pokedex_subtabs, 1)
 
         # Sub-tab 1: Area / Habitat Locator ("locating pokemon and shi")

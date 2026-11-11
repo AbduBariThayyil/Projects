@@ -52,6 +52,11 @@ FISH_CHANCES = {
     "Super Rod": [40, 40, 15, 4, 1]
 }
 
+NON_ENCOUNTER_TOWNS = {
+    "LITTLEROOT TOWN", "OLDALE TOWN", "LAVARIDGE TOWN", "FALLARBOR TOWN",
+    "VERDANTURF TOWN", "MAUVILLE CITY", "RUSTBORO CITY", "FORTREE CITY"
+}
+
 new_encounters = []
 
 for curr in range(0x118955c, 0x118bbf8, 28):
@@ -71,6 +76,20 @@ for curr in range(0x118955c, 0x118bbf8, 28):
             region = "Kanto"
         else:
             region = "Hoenn"
+
+    # Reject non-encounter towns or phantom indoor town maps from groups 34 and 35
+    if loc_name in NON_ENCOUNTER_TOWNS:
+        continue
+    if grp in (34, 35) and region == "Hoenn" and ("TOWN" in loc_name or "CITY" in loc_name):
+        continue
+
+    # Route 101 only has Land encounters
+    if loc_name == "ROUTE 101":
+        p2 = p3 = p4 = p5 = p6 = 0
+
+    # Route 102 has only Land and Surfing (no fishing)
+    if loc_name == "ROUTE 102":
+        p3 = p4 = p5 = p6 = 0
 
     # p1: Tall Grass (12)
     if p1:
