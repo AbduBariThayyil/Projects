@@ -1,6 +1,9 @@
 *.png
 !assets/hoenn_town_map_gba_960x640.png
 !assets/hoenn_town_map_gba_240x160.png
+!assets/flower_frame_9slice.png
+!verify_gba_pokedex_screen.png
+!verify_gba_start_menu.png
 __pycache__/
 test_polybar.sh
 *.db-shm
