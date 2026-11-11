@@ -16,26 +16,33 @@ def qapp():
 def test_app_initialization(qapp):
     win = quetzal_dex_gui.QuetzalMasterApp()
     assert win is not None
-    assert win.tabs.count() == 6
+    assert win.tabs.count() == 7
     assert win.current_route_name == "ROUTE 101"
     win.close()
 
 def test_route_encounters_data(qapp):
     win = quetzal_dex_gui.QuetzalMasterApp()
-    # Route 101 has 13 encounters (12 Land + 1 Hidden Eevee)
+    # Route 101 has 13 encounters (12 Land + 1 Hidden Vulpix)
     assert len(win.current_route_data) == 13
-    eevee = next((m for m in win.current_route_data if m["species_name"] == "Eevee"), None)
-    assert eevee is not None
-    assert eevee["method"] == "Hidden Rare"
+    vulpix = next((m for m in win.current_route_data if m["species_name"] == "Vulpix"), None)
+    assert vulpix is not None
+    assert vulpix["method"] == "Hidden Rare"
+    assert vulpix["species_id"] == 954
+    assert vulpix["type1"] == "Ice"
     win.close()
 
 def test_legendaries_synergies(qapp):
     win = quetzal_dex_gui.QuetzalMasterApp()
     assert len(win.all_legendary_data) >= 90
-    for row in win.all_legendary_data:
-        name, gen, loc, req, synergy = row
-        assert synergy != ""
-        assert synergy is not None
+    for item in win.all_legendary_data:
+        assert isinstance(item, dict)
+        assert "name" in item
+        assert "generation" in item
+        assert "location" in item
+        assert "requirements" in item
+        assert "synergy" in item
+        assert item["synergy"] != ""
+        assert item["synergy"] is not None
     win.close()
 
 def test_catch_calculator(qapp):

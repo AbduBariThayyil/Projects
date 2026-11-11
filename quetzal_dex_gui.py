@@ -738,6 +738,499 @@ class SpeciesInspectorDrawer(QFrame):
             self.open_in_pokedex.emit(self.current_species_id)
 
 
+class ModernLegendaryCard(QFrame):
+    """
+    Polished graphical card for Legendary & Mythical Pokémon.
+    Features 68x68 sprite, glowing gold/purple border, type pills, location,
+    generation badge, unlock preview, and 1-click caught toggle button.
+    """
+    clicked = Signal(dict)
+    catch_toggled = Signal(int, str, bool)
+
+    def __init__(self, leg_data: dict, parent=None):
+        super().__init__(parent)
+        self.leg_data = leg_data
+        self.species_id = leg_data.get("species_id", 0)
+        self.name = leg_data.get("name", "Unknown")
+        self.is_caught = leg_data.get("is_caught", False)
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self.init_ui()
+
+    def init_ui(self):
+        self.setMinimumWidth(240)
+        self.setFixedHeight(125)
+        self.update_card_style(is_selected=False)
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(10, 8, 10, 8)
+        main_layout.setSpacing(10)
+
+        # Left Column: Large Sprite Box with Gold/Purple Legendary styling
+        sprite_box = QFrame()
+        sprite_box.setFixedSize(68, 68)
+        border_col = "#eab308" if self.is_caught else "#6366f1"
+        bg_col = "#1c1917" if self.is_caught else "#1e1b4b"
+        sprite_box.setStyleSheet(f"""
+            background-color: {bg_col};
+            border: 1.5px solid {border_col};
+            border-radius: 8px;
+        """)
+        sb_layout = QVBoxLayout(sprite_box)
+        sb_layout.setContentsMargins(0, 0, 0, 0)
+        self.sprite_lbl = QLabel()
+        self.sprite_lbl.setAlignment(Qt.AlignCenter)
+
+        # Show sprite or silhouette if uncaught
+        pm = get_species_pixmap(self.species_id, is_silhouette=(not self.is_caught))
+        if pm:
+            self.sprite_lbl.setPixmap(pm.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.sprite_lbl.setText("👑")
+        sb_layout.addWidget(self.sprite_lbl)
+        main_layout.addWidget(sprite_box, alignment=Qt.AlignVCenter)
+
+        # Center Column: Info & Unlock Details
+        info_col = QVBoxLayout()
+        info_col.setContentsMargins(0, 0, 0, 0)
+        info_col.setSpacing(3)
+
+        # Row 1: Dex # + Name + Gen Tag
+        title_box = QHBoxLayout()
+        title_box.setSpacing(6)
+        if self.species_id > 0:
+            dex_num = QLabel(f"#{self.species_id:04d}")
+            dex_num.setStyleSheet("color: #facc15; font-size: 11px; font-weight: bold;")
+            title_box.addWidget(dex_num)
+
+        name_lbl = QLabel(f"⭐ {self.name}")
+        name_lbl.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: bold;")
+        title_box.addWidget(name_lbl)
+
+        gen = self.leg_data.get("generation", "")
+        if gen:
+            gen_clean = gen.replace("Generation ", "Gen ").replace("Native", "").strip()
+            gen_lbl = QLabel(gen_clean)
+            gen_lbl.setStyleSheet("""
+                background-color: #312e81;
+                color: #c7d2fe;
+                border: 1px solid #4338ca;
+                border-radius: 3px;
+                padding: 1px 5px;
+                font-size: 9px;
+                font-weight: bold;
+            """)
+            title_box.addWidget(gen_lbl)
+
+        title_box.addStretch()
+        info_col.addLayout(title_box)
+
+        # Row 2: Dual Type Badges
+        type_box = QHBoxLayout()
+        type_box.setSpacing(4)
+        t1 = self.leg_data.get("type1")
+        t2 = self.leg_data.get("type2")
+        if t1 and t1 != "None":
+            type_box.addWidget(TypeBadge(t1))
+        if t2 and t2 != "None" and t2 != t1:
+            type_box.addWidget(TypeBadge(t2))
+        type_box.addStretch()
+        info_col.addLayout(type_box)
+
+        # Row 3: Location Badge
+        loc = self.leg_data.get("location", "Unknown Location")
+        loc_box = QHBoxLayout()
+        loc_box.setSpacing(4)
+        loc_tag = QLabel(f"📍 {loc}")
+        loc_tag.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 500;")
+        loc_box.addWidget(loc_tag)
+        loc_box.addStretch()
+        info_col.addLayout(loc_box)
+
+        # Row 4: Unlock Requirements Preview
+        req = self.leg_data.get("requirements", "")
+        req_lbl = QLabel(f"🔓 {req[:46]}..." if len(req) > 46 else f"🔓 {req}")
+        req_lbl.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        info_col.addWidget(req_lbl)
+
+        main_layout.addLayout(info_col, 1)
+
+        # Right Column: 1-Click Caught Toggle Button
+        btn_col = QVBoxLayout()
+        btn_col.setContentsMargins(0, 0, 0, 0)
+        self.caught_btn = QPushButton()
+        self.caught_btn.setFixedSize(92, 28)
+        self.caught_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.update_caught_button_state()
+        self.caught_btn.clicked.connect(self.on_caught_button_clicked)
+        btn_col.addWidget(self.caught_btn, alignment=Qt.AlignVCenter)
+        main_layout.addLayout(btn_col)
+
+    def update_card_style(self, is_selected=False):
+        if is_selected:
+            self.setStyleSheet("""
+                ModernLegendaryCard {
+                    background-color: #1e1b4b;
+                    border: 2px solid #818cf8;
+                    border-radius: 8px;
+                }
+            """)
+        elif self.is_caught:
+            self.setStyleSheet("""
+                ModernLegendaryCard {
+                    background-color: #062b1f;
+                    border: 1px solid #059669;
+                    border-radius: 8px;
+                }
+                ModernLegendaryCard:hover {
+                    background-color: #0c3e2e;
+                    border: 1px solid #10b981;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                ModernLegendaryCard {
+                    background-color: #0f172a;
+                    border: 1px solid #1e293b;
+                    border-radius: 8px;
+                }
+                ModernLegendaryCard:hover {
+                    background-color: #1e293b;
+                    border: 1px solid #6366f1;
+                }
+            """)
+
+    def update_caught_button_state(self):
+        if self.is_caught:
+            self.caught_btn.setText("✓ CAUGHT")
+            self.caught_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #059669;
+                    color: #FFFFFF;
+                    font-size: 11px;
+                    font-weight: bold;
+                    border-radius: 4px;
+                    border: 1px solid #10b981;
+                }
+                QPushButton:hover {
+                    background-color: #047857;
+                }
+            """)
+        else:
+            self.caught_btn.setText("○ MISSING")
+            self.caught_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1e293b;
+                    color: #facc15;
+                    font-size: 11px;
+                    font-weight: bold;
+                    border-radius: 4px;
+                    border: 1px solid #eab308;
+                }
+                QPushButton:hover {
+                    background-color: #334155;
+                    color: #fef08a;
+                }
+            """)
+
+    def on_caught_button_clicked(self):
+        self.is_caught = not self.is_caught
+        self.update_caught_button_state()
+        self.update_card_style(is_selected=False)
+        pm = get_species_pixmap(self.species_id, is_silhouette=(not self.is_caught))
+        if pm:
+            self.sprite_lbl.setPixmap(pm.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.catch_toggled.emit(self.species_id, self.name, self.is_caught)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.leg_data)
+        super().mousePressEvent(event)
+
+
+class LegendaryInspectorDrawer(QFrame):
+    """
+    Sleek right-side inspector drawer for the selected Legendary Pokémon.
+    Displays big sprite, stats, unlock requirements, party synergy, and catch rates.
+    """
+    open_in_pokedex = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.current_species_id = 0
+        self.init_ui()
+
+    def init_ui(self):
+        self.setMinimumWidth(320)
+        self.setMaximumWidth(420)
+        self.setStyleSheet("""
+            LegendaryInspectorDrawer {
+                background-color: #0a0f1d;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        # Header Title
+        title_box = QHBoxLayout()
+        h_icon = QLabel("👑")
+        h_icon.setStyleSheet("font-size: 16px;")
+        title_box.addWidget(h_icon)
+        self.title_lbl = QLabel("LEGENDARY SANCTUM")
+        self.title_lbl.setFont(QFont("Arial", 11, QFont.Bold))
+        self.title_lbl.setStyleSheet("color: #facc15; letter-spacing: 1px;")
+        title_box.addWidget(self.title_lbl)
+        title_box.addStretch()
+        layout.addLayout(title_box)
+
+        # Hero Profile Frame
+        profile_frame = QFrame()
+        profile_frame.setStyleSheet("""
+            background-color: #0f172a;
+            border: 1px solid #312e81;
+            border-radius: 8px;
+            padding: 8px;
+        """)
+        pf_layout = QHBoxLayout(profile_frame)
+        pf_layout.setSpacing(12)
+
+        self.sprite_lbl = QLabel()
+        self.sprite_lbl.setFixedSize(88, 88)
+        self.sprite_lbl.setAlignment(Qt.AlignCenter)
+        self.sprite_lbl.setStyleSheet("background-color: #0b111a; border: 1px solid #4338ca; border-radius: 8px;")
+        pf_layout.addWidget(self.sprite_lbl)
+
+        info_col = QVBoxLayout()
+        info_col.setSpacing(3)
+        self.dex_lbl = QLabel("#0000")
+        self.dex_lbl.setStyleSheet("color: #facc15; font-size: 12px; font-weight: bold;")
+        info_col.addWidget(self.dex_lbl)
+
+        self.name_lbl = QLabel("Select a Legendary")
+        self.name_lbl.setFont(QFont("Arial", 15, QFont.Bold))
+        self.name_lbl.setStyleSheet("color: #f8fafc;")
+        info_col.addWidget(self.name_lbl)
+
+        self.types_layout = QHBoxLayout()
+        self.types_layout.setSpacing(4)
+        info_col.addLayout(self.types_layout)
+
+        self.bst_lbl = QLabel("Total BST: ---")
+        self.bst_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        info_col.addWidget(self.bst_lbl)
+        pf_layout.addLayout(info_col, 1)
+        layout.addWidget(profile_frame)
+
+        # Scrollable Content Area for Requirements & Lore
+        content_scroll = QScrollArea()
+        content_scroll.setWidgetResizable(True)
+        content_scroll.setStyleSheet("background: transparent; border: none;")
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(10)
+
+        # Unlock Requirements Box
+        req_frame = QFrame()
+        req_frame.setStyleSheet("""
+            background-color: #0c121d;
+            border: 1px solid #e11d48;
+            border-radius: 6px;
+            padding: 8px 10px;
+        """)
+        rf_layout = QVBoxLayout(req_frame)
+        rf_layout.setContentsMargins(4, 4, 4, 4)
+        rf_layout.setSpacing(4)
+        rf_title = QLabel("🔓 UNLOCK REQUIREMENTS & ACCESS")
+        rf_title.setStyleSheet("color: #fb7185; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        rf_layout.addWidget(rf_title)
+        self.req_lbl = QLabel("---")
+        self.req_lbl.setWordWrap(True)
+        self.req_lbl.setStyleSheet("color: #f1f5f9; font-size: 11px; line-height: 1.4;")
+        rf_layout.addWidget(self.req_lbl)
+        scroll_layout.addWidget(req_frame)
+
+        # Party Synergy / Multi-Use Squad Box
+        syn_frame = QFrame()
+        syn_frame.setStyleSheet("""
+            background-color: #0c121d;
+            border: 1px solid #0284c7;
+            border-radius: 6px;
+            padding: 8px 10px;
+        """)
+        sf_layout = QVBoxLayout(syn_frame)
+        sf_layout.setContentsMargins(4, 4, 4, 4)
+        sf_layout.setSpacing(4)
+        sf_title = QLabel("🧭 RECOMMENDED PARTY SYNERGY")
+        sf_title.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        sf_layout.addWidget(sf_title)
+        self.syn_lbl = QLabel("---")
+        self.syn_lbl.setWordWrap(True)
+        self.syn_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
+        sf_layout.addWidget(self.syn_lbl)
+        scroll_layout.addWidget(syn_frame)
+
+        # Base Stats Bars Container
+        stats_frame = QFrame()
+        stats_frame.setStyleSheet("""
+            background-color: #0c121d;
+            border: 1px solid #1e293b;
+            border-radius: 6px;
+            padding: 8px 10px;
+        """)
+        st_layout = QVBoxLayout(stats_frame)
+        st_layout.setContentsMargins(4, 4, 4, 4)
+        st_layout.setSpacing(4)
+        st_title = QLabel("📊 BASE STATS")
+        st_title.setStyleSheet("color: #facc15; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        st_layout.addWidget(st_title)
+
+        self.stat_bars = {}
+        for stat in ["HP", "Atk", "Def", "SpA", "SpD", "Spe"]:
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            s_lbl = QLabel(f"{stat:3}")
+            s_lbl.setFixedWidth(28)
+            s_lbl.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: bold;")
+            row.addWidget(s_lbl)
+
+            bar = QProgressBar()
+            bar.setFixedHeight(8)
+            bar.setMaximum(255)
+            bar.setTextVisible(False)
+            bar.setStyleSheet("""
+                QProgressBar {
+                    background-color: #1e293b;
+                    border-radius: 4px;
+                }
+                QProgressBar::chunk {
+                    background-color: #eab308;
+                    border-radius: 4px;
+                }
+            """)
+            row.addWidget(bar, 1)
+
+            val_lbl = QLabel("0")
+            val_lbl.setFixedWidth(28)
+            val_lbl.setAlignment(Qt.AlignRight)
+            val_lbl.setStyleSheet("color: #f8fafc; font-size: 10px;")
+            row.addWidget(val_lbl)
+
+            st_layout.addLayout(row)
+            self.stat_bars[stat] = (bar, val_lbl)
+
+        scroll_layout.addWidget(stats_frame)
+
+        # Catch Probability Box
+        prob_frame = QFrame()
+        prob_frame.setStyleSheet("""
+            background-color: #0c121d;
+            border: 1px solid #1e293b;
+            border-radius: 6px;
+            padding: 8px 10px;
+        """)
+        pf2_layout = QVBoxLayout(prob_frame)
+        pf2_layout.setContentsMargins(4, 4, 4, 4)
+        pf2_layout.setSpacing(4)
+        pf2_title = QLabel("🎯 CATCH PROBABILITY")
+        pf2_title.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        pf2_layout.addWidget(pf2_title)
+
+        self.quick_ball_lbl = QLabel("⚡ Quick Ball (Turn 1): ---")
+        self.quick_ball_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
+        pf2_layout.addWidget(self.quick_ball_lbl)
+
+        self.false_swipe_lbl = QLabel("⚔️ False Swipe + Ultra: ---")
+        self.false_swipe_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
+        pf2_layout.addWidget(self.false_swipe_lbl)
+
+        self.timer_ball_lbl = QLabel("⏱️ Timer Ball (Turn 5+): ---")
+        self.timer_ball_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px;")
+        pf2_layout.addWidget(self.timer_ball_lbl)
+        scroll_layout.addWidget(prob_frame)
+
+        content_scroll.setWidget(scroll_widget)
+        layout.addWidget(content_scroll, 1)
+
+        # View in Pokedex Button
+        self.btn_open_pokedex = QPushButton("📖 View Learnset & Stats in Pokédex")
+        self.btn_open_pokedex.setFixedHeight(34)
+        self.btn_open_pokedex.setCursor(QCursor(Qt.PointingHandCursor))
+        self.btn_open_pokedex.setStyleSheet("""
+            QPushButton {
+                background-color: #2563eb;
+                color: #FFFFFF;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #3b82f6;
+            }
+        """)
+        self.btn_open_pokedex.clicked.connect(self.on_open_pokedex_clicked)
+        layout.addWidget(self.btn_open_pokedex)
+
+    def populate(self, leg_data: dict):
+        self.current_species_id = leg_data.get("species_id", 0)
+        self.dex_lbl.setText(f"#{self.current_species_id:04d}" if self.current_species_id > 0 else "")
+        self.name_lbl.setText(leg_data.get("name", "Unknown"))
+        self.bst_lbl.setText(f"Total BST: {leg_data.get('bst', '---')}")
+
+        # Update sprite
+        pm = get_species_pixmap(self.current_species_id, is_silhouette=False)
+        if pm:
+            self.sprite_lbl.setPixmap(pm.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.sprite_lbl.setText("👑")
+
+        # Types
+        while self.types_layout.count():
+            item = self.types_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        t1 = leg_data.get("type1")
+        t2 = leg_data.get("type2")
+        if t1 and t1 != "None":
+            self.types_layout.addWidget(TypeBadge(t1))
+        if t2 and t2 != "None" and t2 != t1:
+            self.types_layout.addWidget(TypeBadge(t2))
+        self.types_layout.addStretch()
+
+        # Requirements and Synergy
+        self.req_lbl.setText(leg_data.get("requirements", "No special unlock requirements reported."))
+        syn = leg_data.get("synergy", "")
+        if not syn or syn == "None":
+            syn = "Standard High-Level Battle (False Swipe + Spore/Sleep recommended)."
+        self.syn_lbl.setText(syn)
+
+        # Base stats
+        for stat, (bar, lbl) in self.stat_bars.items():
+            val = leg_data.get(stat.lower(), 0)
+            bar.setValue(val)
+            lbl.setText(str(val))
+
+        # Catch calculations
+        cr = leg_data.get("catch_rate", 3)
+        if cr <= 0:
+            cr = 3
+        qb_pct = min(99.0, max(1.0, (cr * 5.0 / 3.0 / 255.0) * 100))
+        fs_pct = min(99.0, max(1.0, (cr * 2.0 * 2.5 / 255.0) * 100))
+        tb_pct = min(99.0, max(1.0, (cr * 4.0 * 2.5 / 255.0) * 100))
+
+        self.quick_ball_lbl.setText(f"⚡ Quick Ball (Turn 1): ~{qb_pct:.1f}%")
+        self.false_swipe_lbl.setText(f"⚔️ False Swipe + Ultra (1 HP + Sleep): ~{fs_pct:.1f}%")
+        self.timer_ball_lbl.setText(f"⏱️ Timer Ball (Turn 5+ & 1 HP): ~{tb_pct:.1f}%")
+
+    def on_open_pokedex_clicked(self):
+        if self.current_species_id > 0:
+            self.open_in_pokedex.emit(self.current_species_id)
+
+
 class QuetzalMasterApp(QMainWindow):
     """Lead Orchestrator Window for Pokémon Quetzal Companion."""
     def __init__(self):
@@ -854,6 +1347,7 @@ class QuetzalMasterApp(QMainWindow):
         self.create_pokedex_tab()
         self.create_trainers_tab()
         self.create_legendaries_tab()
+        self.create_legendary_roadmap_tab()
         self.create_calculator_tab()
 
     # ==========================================
@@ -1885,7 +2379,7 @@ class QuetzalMasterApp(QMainWindow):
             self.trainers_table.setItem(i, 6, QTableWidgetItem(team.replace("\n", " | ")))
 
     # ==========================================
-    # TAB 4: MASTER LEGENDARY GUIDE & PLANNER
+    # TAB 4: MASTER LEGENDARY GRAPHICAL GUIDE
     # ==========================================
     def create_legendaries_tab(self):
         tab = QWidget()
@@ -1898,117 +2392,379 @@ class QuetzalMasterApp(QMainWindow):
         top_row.setSpacing(10)
 
         top_row.addWidget(QLabel("Status:"))
-        self.leg_status_combo = QComboBox()
-        self.leg_status_combo.addItems(["All (97 Legendaries)", "Uncaught Only", "Caught Only"])
-        self.leg_status_combo.currentIndexChanged.connect(self.filter_legendaries)
-        top_row.addWidget(self.leg_status_combo)
+        self.leg_status_all = QPushButton("Show All")
+        self.leg_status_missing = QPushButton("○ Missing Only")
+        self.leg_status_caught = QPushButton("✓ Caught Only")
+
+        self.leg_status_btns = [self.leg_status_all, self.leg_status_missing, self.leg_status_caught]
+        self.leg_filter_mode = "Show All"
+
+        for btn, mode in zip(self.leg_status_btns, ["Show All", "Missing Only", "Caught Only"]):
+            btn.setCheckable(True)
+            btn.setFixedHeight(26)
+            btn.setCursor(QCursor(Qt.PointingHandCursor))
+            btn.clicked.connect(lambda checked, m=mode: self.set_leg_status_filter(m))
+            top_row.addWidget(btn)
+
+        self.update_leg_filter_button_styles()
+
+        top_row.addSpacing(14)
+        top_row.addWidget(QLabel("Gen / Region:"))
+        self.leg_gen_combo = QComboBox()
+        self.leg_gen_combo.addItems([
+            "All Generations",
+            "Hoenn Native",
+            "Generation 1 (Kanto)",
+            "Generation 2 (Johto)",
+            "Generation 4 (Sinnoh)",
+            "Generation 5 (Unova)",
+            "Generation 6 (Kalos)",
+            "Generation 7 (Alola & Ultra Beasts)",
+            "Generation 8 (Galar)",
+            "Generation 9 (Paldea & Paradox Encounters)"
+        ])
+        self.leg_gen_combo.currentIndexChanged.connect(self.filter_legendaries)
+        top_row.addWidget(self.leg_gen_combo)
 
         top_row.addStretch()
 
         self.leg_search = QLineEdit()
-        self.leg_search.setPlaceholderText("Search Legendary (e.g. Rayquaza, Mewtwo, Sky Pillar)...")
+        self.leg_search.setPlaceholderText("🔍 Search Legendary (e.g. Rayquaza, Sky Pillar, Mach Bike)...")
         self.leg_search.setFixedWidth(280)
         self.leg_search.textChanged.connect(self.filter_legendaries)
         top_row.addWidget(self.leg_search)
 
         layout.addLayout(top_row)
 
-        # Master Table (Read-Only)
-        self.legendaries_table = QTableWidget()
-        self.legendaries_table.setColumnCount(6)
-        self.legendaries_table.setHorizontalHeaderLabels([
-            "Pokémon", "Gen", "Level & Location", "Unlock Requirements", "Party Synergy", "Status"
-        ])
-        self.legendaries_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
-        self.legendaries_table.setColumnWidth(0, 140)
-        self.legendaries_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
-        self.legendaries_table.setColumnWidth(1, 130)
-        self.legendaries_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
-        self.legendaries_table.setColumnWidth(2, 210)
-        self.legendaries_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.legendaries_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Interactive)
-        self.legendaries_table.setColumnWidth(4, 230)
-        self.legendaries_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Interactive)
-        self.legendaries_table.setColumnWidth(5, 100)
-        self.legendaries_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.legendaries_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.legendaries_table.verticalHeader().setVisible(False)
-        layout.addWidget(self.legendaries_table, 1)
+        # Splitter: Card Grid (Left) | Legendary Inspector Drawer (Right)
+        splitter = QSplitter(Qt.Horizontal)
 
-        # Strategic Squad Planner Panel at bottom
-        strat_frame = QFrame()
-        strat_frame.setStyleSheet("""
-            background-color: #0c121d;
-            border: 1px solid #1e293b;
-            border-radius: 6px;
-            padding: 8px 12px;
-        """)
-        sf_layout = QVBoxLayout(strat_frame)
-        sf_layout.setContentsMargins(6, 4, 6, 4)
-        sf_title = QLabel("🧭 OPTIMAL DUAL-TYPE SQUAD ROUTE PLANNER (HoF Team Synergies)")
-        sf_title.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 11px;")
-        sf_layout.addWidget(sf_title)
+        self.leg_cards_scroll = QScrollArea()
+        self.leg_cards_scroll.setWidgetResizable(True)
+        self.leg_cards_scroll.setStyleSheet("background-color: #0b0f17; border: 1px solid #1e293b; border-radius: 8px;")
 
-        s_desc = QLabel(
-            "Your Hall of Fame Team (Breloom, Togekiss, Gardevoir, Blaziken, Hydrapple, Goodra) fulfills Grass, Fighting, Fairy, Flying, Psychic, Fire, Dragon! "
-            "Add Swampert (Water/Ground) + Tyranitar (Rock/Dark) to complete requirements for 84+ Legendaries simultaneously with minimal party switches!"
-        )
-        s_desc.setWordWrap(True)
-        s_desc.setStyleSheet("color: #94a3b8; font-size: 11px;")
-        sf_layout.addWidget(s_desc)
-        layout.addWidget(strat_frame)
+        self.leg_cards_container = QWidget()
+        self.leg_cards_grid = QGridLayout(self.leg_cards_container)
+        self.leg_cards_grid.setContentsMargins(10, 10, 10, 10)
+        self.leg_cards_grid.setSpacing(10)
+        self.leg_cards_scroll.setWidget(self.leg_cards_container)
+        splitter.addWidget(self.leg_cards_scroll)
+
+        # Right Legendary Inspector Drawer
+        self.leg_inspector_drawer = LegendaryInspectorDrawer()
+        self.leg_inspector_drawer.open_in_pokedex.connect(self.jump_to_pokedex_mon)
+        splitter.addWidget(self.leg_inspector_drawer)
+
+        splitter.setStretchFactor(0, 7)
+        splitter.setStretchFactor(1, 3)
+        layout.addWidget(splitter, 1)
 
         self.tabs.addTab(tab, "👑 Legendary Master Guide")
 
-        self.populate_legendaries_table()
+        self.populate_legendaries_cards()
 
-    def populate_legendaries_table(self):
-        self.cur.execute("SELECT name, generation, location, requirements, synergy FROM legendaries ORDER BY name ASC")
-        self.all_legendary_data = self.cur.fetchall()
+    def set_leg_status_filter(self, mode: str):
+        self.leg_filter_mode = mode
+        self.update_leg_filter_button_styles()
         self.filter_legendaries()
 
+    def update_leg_filter_button_styles(self):
+        for btn in self.leg_status_btns:
+            is_active = (btn.text().endswith(self.leg_filter_mode) or btn.text() == self.leg_filter_mode)
+            btn.setChecked(is_active)
+            if is_active:
+                btn.setStyleSheet("background-color: #0284c7; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 2px 10px;")
+            else:
+                btn.setStyleSheet("background-color: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 4px; padding: 2px 10px;")
+
+    def populate_legendaries_cards(self):
+        self.cur.execute("""
+            SELECT l.name, l.generation, l.level, l.location, l.requirements, l.synergy, l.notes,
+                   MIN(p.id), p.type1, p.type2, p.hp, p.atk, p.def, p.spa, p.spd, p.spe, p.bst, p.catch_rate,
+                   p.abilities, p.hidden_ability
+            FROM legendaries l
+            LEFT JOIN pokemon p ON LOWER(l.name) = LOWER(p.name)
+            GROUP BY l.name
+            ORDER BY l.name ASC
+        """)
+        rows = self.cur.fetchall()
+        self.all_legendary_data = []
+        for r in rows:
+            name, gen, lvl, loc, req, syn, notes = r[:7]
+            sp_id, t1, t2, hp, atk, df, spa, spd, spe, bst, cr, ab, ha = r[7:]
+            sp_id = sp_id if sp_id else 0
+            is_caught = sp_id in self.caught_species if sp_id else False
+            d = {
+                "name": name, "generation": gen, "level": lvl, "location": loc,
+                "requirements": req, "synergy": syn, "notes": notes,
+                "species_id": sp_id, "type1": t1, "type2": t2,
+                "hp": hp or 0, "atk": atk or 0, "def": df or 0, "spa": spa or 0,
+                "spd": spd or 0, "spe": spe or 0, "bst": bst or 0, "catch_rate": cr or 3,
+                "abilities": ab, "hidden_ability": ha, "is_caught": is_caught
+            }
+            self.all_legendary_data.append(d)
+
+        self.filter_legendaries()
+        if self.all_legendary_data:
+            self.leg_inspector_drawer.populate(self.all_legendary_data[0])
+
     def filter_legendaries(self):
-        status_filter = self.leg_status_combo.currentText()
+        while self.leg_cards_grid.count():
+            item = self.leg_cards_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        status_filter = self.leg_filter_mode
+        gen_filter = self.leg_gen_combo.currentText()
         query = self.leg_search.text().strip().lower()
 
         filtered = []
-        for row in self.all_legendary_data:
-            name, gen, loc, req, synergy = row
-
-            # Check caught
-            self.cur.execute("SELECT id FROM pokemon WHERE name = ?", (name,))
-            sp_r = self.cur.fetchone()
-            sp_id = sp_r[0] if sp_r else None
-            is_caught = sp_id in self.caught_species if sp_id else False
-
-            if "Uncaught" in status_filter and is_caught:
+        for d in self.all_legendary_data:
+            if status_filter == "Missing Only" and d["is_caught"]:
                 continue
-            if "Caught Only" in status_filter and not is_caught:
-                continue
-            if query and query not in f"{name} {gen} {loc} {req} {synergy}".lower():
+            if status_filter == "Caught Only" and not d["is_caught"]:
                 continue
 
-            filtered.append((name, gen, loc, req, synergy, is_caught))
+            if gen_filter != "All Generations":
+                if gen_filter.lower() not in d["generation"].lower():
+                    continue
 
-        self.legendaries_table.setRowCount(len(filtered))
-        for i, row in enumerate(filtered):
-            name, gen, loc, req, synergy, is_caught = row
+            if query:
+                haystack = f"{d['name']} {d['generation']} {d['location']} {d['requirements']} {d['synergy']}".lower()
+                if query not in haystack:
+                    continue
 
-            name_item = QTableWidgetItem(f"⭐ {name}")
-            name_item.setFont(QFont("Arial", 10, QFont.Bold))
-            self.legendaries_table.setItem(i, 0, name_item)
+            filtered.append(d)
 
-            self.legendaries_table.setItem(i, 1, QTableWidgetItem(gen))
-            self.legendaries_table.setItem(i, 2, QTableWidgetItem(loc))
-            self.legendaries_table.setItem(i, 3, QTableWidgetItem(req))
-            self.legendaries_table.setItem(i, 4, QTableWidgetItem(synergy or "Standard Battle"))
+        self.rendered_leg_cards = []
+        for idx, leg_data in enumerate(filtered):
+            card = ModernLegendaryCard(leg_data)
+            card.clicked.connect(self.on_legendary_card_clicked)
+            card.catch_toggled.connect(self.on_legendary_catch_toggled)
+            r = idx // 2
+            c = idx % 2
+            self.leg_cards_grid.addWidget(card, r, c)
+            self.rendered_leg_cards.append(card)
 
-            status_item = QTableWidgetItem("✓ CAUGHT" if is_caught else "○ MISSING")
-            if is_caught:
-                status_item.setForeground(QColor("#34d399"))
-            else:
-                status_item.setForeground(QColor("#f59e0b"))
-            self.legendaries_table.setItem(i, 5, status_item)
+        if not filtered:
+            empty_lbl = QLabel("No Legendary Pokémon match your filter criteria.")
+            empty_lbl.setAlignment(Qt.AlignCenter)
+            empty_lbl.setStyleSheet("color: #64748b; font-size: 14px; padding: 40px;")
+            self.leg_cards_grid.addWidget(empty_lbl, 0, 0, 1, 2)
+
+    def on_legendary_card_clicked(self, leg_data: dict):
+        self.leg_inspector_drawer.populate(leg_data)
+        for card in self.rendered_leg_cards:
+            is_sel = (card.name == leg_data["name"])
+            card.update_card_style(is_selected=is_sel)
+
+    def on_legendary_catch_toggled(self, species_id: int, species_name: str, is_caught: bool):
+        if is_caught:
+            self.caught_species.add(species_id)
+            self.cur.execute("INSERT OR IGNORE INTO caught_pokemon (species_id, species_name) VALUES (?, ?)", (species_id, species_name))
+        else:
+            self.caught_species.discard(species_id)
+            self.cur.execute("DELETE FROM caught_pokemon WHERE species_id = ?", (species_id,))
+        self.conn.commit()
+
+        for d in self.all_legendary_data:
+            if d["name"] == species_name:
+                d["is_caught"] = is_caught
+
+        self.update_stats_header()
+        if hasattr(self, 'map_widget'):
+            self.map_widget.load_data_from_db(DB_PATH)
+
+    # ==========================================
+    # TAB 5: DEDICATED LEGENDARY ROADMAP & SYNERGIES
+    # ==========================================
+    def create_legendary_roadmap_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        # Header Hero Card
+        hero_card = QFrame()
+        hero_card.setStyleSheet("""
+            background-color: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 10px 14px;
+        """)
+        h_layout = QVBoxLayout(hero_card)
+        h_layout.setContentsMargins(6, 4, 6, 4)
+        h_layout.setSpacing(4)
+
+        title = QLabel("🧭 OPTIMAL DUAL-TYPE SQUAD & REGIONAL LEGENDARY ROADMAP")
+        title.setFont(QFont("Arial", 13, QFont.Bold))
+        title.setStyleSheet("color: #38bdf8;")
+        h_layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Solve all ancient statues, puzzle seals, and door requirements across Hoenn, Kanto, Johto, and Portals "
+            "with zero repetitive PC backtracking by utilizing dual-type squad coverage."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        h_layout.addWidget(subtitle)
+        layout.addWidget(hero_card)
+
+        # Main Scroll Area for Roadmap
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background: transparent; border: none;")
+
+        s_widget = QWidget()
+        s_layout = QVBoxLayout(s_widget)
+        s_layout.setContentsMargins(0, 0, 0, 0)
+        s_layout.setSpacing(14)
+
+        # Blueprint Frame: Hall of Fame Coverage Analysis
+        bp_frame = QFrame()
+        bp_frame.setStyleSheet("""
+            background-color: #0c121d;
+            border: 1.5px solid #0284c7;
+            border-radius: 8px;
+            padding: 12px;
+        """)
+        bp_layout = QVBoxLayout(bp_frame)
+        bp_layout.setContentsMargins(8, 6, 8, 6)
+        bp_layout.setSpacing(8)
+
+        bp_title = QLabel("⭐ UNIVERSAL MULTI-USE SQUAD BLUEPRINT")
+        bp_title.setFont(QFont("Arial", 11, QFont.Bold))
+        bp_title.setStyleSheet("color: #38bdf8; letter-spacing: 0.5px;")
+        bp_layout.addWidget(bp_title)
+
+        bp_desc = QLabel(
+            "<b>Your Active Hall of Fame Squad:</b><br>"
+            "• <b>Breloom</b> (Grass/Fighting) • <b>Togekiss</b> (Fairy/Flying) • <b>Gardevoir</b> (Psychic/Fairy)<br>"
+            "• <b>Blaziken</b> (Fire/Fighting) • <b>Hydrapple</b> (Grass/Dragon) • <b>Goodra</b> (Dragon)<br>"
+            "<span style='color:#34d399;'>Current Coverage:</span> Grass, Fighting, Fairy, Flying, Psychic, Fire, Dragon (7 Types).<br><br>"
+            "<b>The 2 Golden Squad Expansions (To achieve 100% door unlock coverage for all 84+ Legendaries):</b><br>"
+            "1. <span style='color:#38bdf8; font-weight:bold;'>Swampert</span> (Water / Ground) — Unlocks Marine Cave, Terra Cave, Diving Trenches, Desert Underpass, and Regi puzzles.<br>"
+            "2. <span style='color:#f59e0b; font-weight:bold;'>Tyranitar</span> (Rock / Dark) — Unlocks Ancient Tomb, Desert Ruins, Distortion Nether Rifts, and Ruin Shrines.<br>"
+            "<i>With these 8 Pokémon, you never need to visit the PC again for type-gated legendary access!</i>"
+        )
+        bp_desc.setWordWrap(True)
+        bp_desc.setStyleSheet("color: #e2e8f0; font-size: 11px; line-height: 1.5;")
+        bp_layout.addWidget(bp_desc)
+        s_layout.addWidget(bp_frame)
+
+        # Roadmap Sequence Cards
+        phases = [
+            ("PHASE 1: HOENN ANCIENT RUINS & WEATHER SUMMITS", "#059669", [
+                ("Rayquaza", "Sky Pillar (Route 131 Rooftop)", "Defeat HoF. Bring Mach Bike or Flying Avatar (Aerodactyl).", "Flying / Dragon"),
+                ("Kyogre", "Marine Cave (Routes 105, 125, 127, 129)", "Speak to Weather Institute scientist on Route 119. Bring Dive user (Swampert).", "Water"),
+                ("Groudon", "Terra Cave (Routes 114, 115, 116, 118)", "Speak to Weather Institute scientist. Bring Ground / Water counter.", "Ground"),
+                ("Regirock", "Desert Ruins (Route 111 Desert)", "Sealed Chamber unlock (Wailord #1, Relicanth #6, Dig). Walk 2 left, 2 down, Rock Smash.", "Rock"),
+                ("Regice", "Island Cave (Route 105)", "Clockwise perimeter walk flush along room walls, inspect wall.", "Ice"),
+                ("Registeel", "Ancient Tomb (Route 120)", "Stand at center and use Flash.", "Steel"),
+                ("Latios / Latias", "Southern Island / Roaming Hoenn", "Obtain Eon Ticket, speak to Norman in Petalburg.", "Dragon / Psychic"),
+                ("Jirachi", "Mossdeep White Rock Space Center", "Interact with white rock with Wishing Stone or Space Center trigger.", "Steel / Psychic"),
+                ("Deoxys", "Birth Island (Triangle Puzzle)", "Walk straight shortest path to hot triangle without running until it turns red.", "Psychic")
+            ]),
+            ("PHASE 2: KANTO EXPEDITIONS & SEAFOAM ISLES", "#0284c7", [
+                ("Articuno", "Seafoam Islands B4F", "Bring Surf + Strength to redirect boulder rapids.", "Ice / Flying"),
+                ("Zapdos", "Kanto Power Plant Inner Sanctum", "Surf from Route 10, navigate generator maze.", "Electric / Flying"),
+                ("Moltres", "Mt. Ember Summit (One Island)", "Post-game Sevii Island access, navigate magma stairs.", "Fire / Flying"),
+                ("Mewtwo", "Cerulean Cave Deep Basin", "Defeat Champion, complete Sevii Ruby/Sapphire quest.", "Psychic"),
+                ("Mew", "Faraway Island Deep Foliage", "Old Sea Map ferry, play hide-and-seek in grass maze.", "Psychic")
+            ]),
+            ("PHASE 3: JOHTO SACRED SHRINES & BELL TOWERS", "#d97706", [
+                ("Raikou, Entei, Suicune", "Burned Tower & Roaming Johto", "Awaken beasts in Burned Tower basement in Ecruteak City.", "Electric / Fire / Water"),
+                ("Lugia", "Whirl Islands Deep Chamber", "Bring Tidal Bell + Silver Wing from Goldenrod Radio Director + Whirlpool user.", "Psychic / Flying"),
+                ("Ho-Oh", "Tin Tower Roof (Ecruteak City)", "Clear Bell + Rainbow Wing, defeat Ecruteak Wise Trio.", "Fire / Flying"),
+                ("Celebi", "Ilex Forest Shrine", "Bring GS Ball to forest shrine.", "Grass / Psychic")
+            ]),
+            ("PHASE 4: DIMENSIONAL PORTALS & ULTRA EXPEDITIONS", "#7c3aed", [
+                ("Dialga, Palkia, Giratina", "Spear Pillar Dimensional Rift", "Adamant, Lustrous, and Griseous Orbs required at dimensional anomaly.", "Dragon / Steel / Water / Ghost"),
+                ("Reshiram, Zekrom, Kyurem", "Giant Chasm / Dragonspiral Tower", "Light Stone & Dark Stone triggers.", "Dragon / Fire / Electric / Ice"),
+                ("Xerneas & Yveltal", "Geosenge Deep Ruins", "Power Plant Pass & Fairy/Dark dual keys.", "Fairy / Dark"),
+                ("Necrozma & Ultra Beasts", "Ultra Megalopolis Portal", "Post-game Wormhole portal exploration.", "Psychic / Ultra"),
+                ("Treasures of Ruin (Wo-Chien, Chien-Pao, Ting-Lu, Chi-Yu)", "Paldea Ruin Shrines", "Pull all 8 Ominous Stakes per elemental shrine.", "Dark + Grass / Ice / Ground / Fire")
+            ])
+        ]
+
+        for phase_title, phase_color, leg_list in phases:
+            p_card = QFrame()
+            p_card.setStyleSheet(f"""
+                background-color: #0c121d;
+                border: 1px solid {phase_color};
+                border-radius: 8px;
+                padding: 10px;
+            """)
+            pc_layout = QVBoxLayout(p_card)
+            pc_layout.setContentsMargins(6, 4, 6, 4)
+            pc_layout.setSpacing(6)
+
+            pt_lbl = QLabel(phase_title)
+            pt_lbl.setFont(QFont("Arial", 11, QFont.Bold))
+            pt_lbl.setStyleSheet(f"color: {phase_color};")
+            pc_layout.addWidget(pt_lbl)
+
+            for mon_name, loc, req, synergy in leg_list:
+                row_frame = QFrame()
+                row_frame.setStyleSheet("""
+                    background-color: #0f172a;
+                    border: 1px solid #1e293b;
+                    border-radius: 6px;
+                    padding: 6px 8px;
+                """)
+                rf_layout = QHBoxLayout(row_frame)
+                rf_layout.setContentsMargins(6, 4, 6, 4)
+                rf_layout.setSpacing(10)
+
+                self.cur.execute("SELECT id FROM pokemon WHERE name = ?", (mon_name,))
+                sp_row = self.cur.fetchone()
+                sp_id = sp_row[0] if sp_row else 0
+                is_caught = sp_id in self.caught_species if sp_id else False
+
+                sprite_box = QLabel()
+                sprite_box.setFixedSize(40, 40)
+                sprite_box.setAlignment(Qt.AlignCenter)
+                pm = get_species_pixmap(sp_id, is_silhouette=(not is_caught))
+                if pm:
+                    sprite_box.setPixmap(pm.scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                else:
+                    sprite_box.setText("👑")
+                rf_layout.addWidget(sprite_box)
+
+                info_col = QVBoxLayout()
+                info_col.setSpacing(2)
+                name_row = QHBoxLayout()
+                name_row.setSpacing(6)
+
+                m_name = QLabel(f"⭐ {mon_name}")
+                m_name.setFont(QFont("Arial", 11, QFont.Bold))
+                m_name.setStyleSheet("color: #f8fafc;")
+                name_row.addWidget(m_name)
+
+                m_loc = QLabel(f"📍 {loc}")
+                m_loc.setStyleSheet("color: #38bdf8; font-size: 10px;")
+                name_row.addWidget(m_loc)
+                name_row.addStretch()
+                info_col.addLayout(name_row)
+
+                m_req = QLabel(f"🔓 {req}  •  <span style='color:#facc15;'>Synergy: {synergy}</span>")
+                m_req.setWordWrap(True)
+                m_req.setStyleSheet("color: #cbd5e1; font-size: 10px;")
+                info_col.addWidget(m_req)
+                rf_layout.addLayout(info_col, 1)
+
+                s_lbl = QLabel("✓ CAUGHT" if is_caught else "○ MISSING")
+                s_col = "#34d399" if is_caught else "#f59e0b"
+                s_lbl.setStyleSheet(f"color: {s_col}; font-size: 10px; font-weight: bold; padding: 2px 8px; border: 1px solid {s_col}; border-radius: 4px;")
+                rf_layout.addWidget(s_lbl)
+
+                pc_layout.addWidget(row_frame)
+
+            s_layout.addWidget(p_card)
+
+        scroll.setWidget(s_widget)
+        layout.addWidget(scroll, 1)
+        self.tabs.addTab(tab, "🧭 Legendary Roadmap & Synergies")
 
     # ==========================================
     # TAB 5: CATCH CALCULATOR

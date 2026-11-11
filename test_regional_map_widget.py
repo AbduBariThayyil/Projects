@@ -96,4 +96,23 @@ def test_db_loading(qapp):
         assert len(widget.canvas.caught_stats) > 0
         assert "ROUTE 101" in widget.canvas.caught_stats
         assert "PETALBURG WOODS" in widget.canvas.caught_stats
+        assert len(widget.canvas.trainers_by_loc) > 0
+
+def test_pan_and_zoom(qapp):
+    widget = RegionalMapWidget()
+    initial_zoom = widget.canvas.zoom_factor
+    widget.canvas.zoom_in()
+    assert widget.canvas.zoom_factor > initial_zoom
+    widget.canvas.zoom_out()
+    assert widget.canvas.zoom_factor <= initial_zoom + 0.05
+    widget.canvas.reset_zoom()
+    assert widget.canvas.zoom_factor == 1.0
+    assert widget.canvas.pan_offset == QPointF(0, 0)
+
+    # Test toggles
+    assert widget.canvas.show_trainers is True
+    widget.btn_trainers.click()
+    assert widget.canvas.show_trainers is False
+    widget.btn_trainers.click()
+    assert widget.canvas.show_trainers is True
 

@@ -596,10 +596,22 @@ class MapCanvas(QWidget):
         self.caught_stats: Dict[str, Tuple[int, int]] = {}
         # Missing species: normalized_name -> List[str]
         self.missing_species: Dict[str, List[str]] = {}
+        # Wild species list: normalized_name -> List[str]
+        self.encounters_by_loc: Dict[str, List[str]] = {}
+        # Trainers list: normalized_name -> List[Dict[str, str]]
+        self.trainers_by_loc: Dict[str, List[Dict[str, str]]] = {}
         # Highlighted locations (set of normalized names)
         self.highlighted_nodes: Set[str] = set()
         # Filter mode: "all", "incomplete", "mastered"
         self.filter_mode: str = "all"
+
+        # Interactive Pan & Zoom Controls
+        self.zoom_factor = 1.0
+        self.pan_offset = QPointF(0, 0)
+        self.is_panning = False
+        self.last_mouse_pos = QPointF(0, 0)
+        self.show_trainers = True
+        self.show_encounters = True
 
         # Radar animation timer for target pulse
         self.radar_phase = 0.0
@@ -627,14 +639,34 @@ class MapCanvas(QWidget):
         return px, py
 
     def _get_transform(self) -> Tuple[float, float, float]:
-        """Calculates scale and offset to fit virtual canvas while preserving aspect ratio."""
+        """Calculates scale and offset with dynamic pan & zoom factor applied."""
         w, h = float(self.width()), float(self.height())
-        scale_x = w / self.VIRTUAL_W
-        scale_y = h / self.VIRTUAL_H
-        scale = min(scale_x, scale_y)
-        offset_x = (w - self.VIRTUAL_W * scale) / 2.0
-        offset_y = (h - self.VIRTUAL_H * scale) / 2.0
+        base_scale = min(w / self.VIRTUAL_W, h / self.VIRTUAL_H)
+        scale = base_scale * self.zoom_factor
+        offset_x = (w - self.VIRTUAL_W * scale) / 2.0 + self.pan_offset.x()
+        offset_y = (h - self.VIRTUAL_H * scale) / 2.0 + self.pan_offset.y()
         return scale, offset_x, offset_y
+
+    def zoom_in(self):
+        self.zoom_factor = min(3.5, self.zoom_factor * 1.25)
+        self.update()
+
+    def zoom_out(self):
+        self.zoom_factor = max(0.65, self.zoom_factor / 1.25)
+        self.update()
+
+    def reset_zoom(self):
+        self.zoom_factor = 1.0
+        self.pan_offset = QPointF(0, 0)
+        self.update()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self.zoom_in()
+        elif delta < 0:
+            self.zoom_out()
+        event.accept()
 
     def _screen_to_virtual(self, pos: QPointF) -> QPointF:
         scale, offset_x, offset_y = self._get_transform()
@@ -656,6 +688,13 @@ class MapCanvas(QWidget):
 
     def mouseMoveEvent(self, event):
         self.mouse_pos = event.position()
+        if self.is_panning:
+            diff = self.mouse_pos - self.last_mouse_pos
+            self.pan_offset += diff
+            self.last_mouse_pos = self.mouse_pos
+            self.update()
+            return
+
         vpos = self._screen_to_virtual(self.mouse_pos)
         old_hover = self.hovered_node
         self.hovered_node = self._find_node_at(vpos)
@@ -669,13 +708,29 @@ class MapCanvas(QWidget):
             self.update()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() in (Qt.MiddleButton, Qt.RightButton):
+            self.is_panning = True
+            self.last_mouse_pos = event.position()
+            self.setCursor(QCursor(Qt.ClosedHandCursor))
+            event.accept()
+            return
+        elif event.button() == Qt.LeftButton:
             vpos = self._screen_to_virtual(event.position())
             clicked = self._find_node_at(vpos)
             if clicked:
                 self.selected_node = clicked
                 self.node_clicked.emit(clicked, self.region)
                 self.update()
+            else:
+                self.is_panning = True
+                self.last_mouse_pos = event.position()
+                self.setCursor(QCursor(Qt.ClosedHandCursor))
+
+    def mouseReleaseEvent(self, event):
+        if self.is_panning:
+            self.is_panning = False
+            self.setCursor(QCursor(Qt.ArrowCursor))
+            self.update()
 
     def leaveEvent(self, event):
         if self.hovered_node is not None:
@@ -974,6 +1029,21 @@ class MapCanvas(QWidget):
                 painter.setPen(QColor("#facc15"))
                 painter.drawText(QRectF(star_pt.x() - 6, star_pt.y() - 6, 12, 12), Qt.AlignCenter, "★")
 
+            # ----------------------------------------------------------------
+            # TRAINER BADGE PIN (⚔️ IF TRAINERS PRESENT)
+            # ----------------------------------------------------------------
+            if self.show_trainers:
+                norm_node = normalize_loc(name)
+                trainers_here = self.trainers_by_loc.get(norm_node) or self.trainers_by_loc.get(f"{norm_node} CITY")
+                if trainers_here:
+                    t_pt = QPointF(px + 12.0, py - 12.0)
+                    painter.setBrush(QColor("#ef4444"))
+                    painter.setPen(QPen(QColor("#fecaca"), 1.0))
+                    painter.drawEllipse(t_pt, 7.5, 7.5)
+                    painter.setFont(QFont("SansSerif", 7, QFont.Bold))
+                    painter.setPen(QColor("#ffffff"))
+                    painter.drawText(QRectF(t_pt.x() - 6, t_pt.y() - 6, 12, 12), Qt.AlignCenter, "⚔")
+
             painter.restore()
 
     def _draw_text_with_halo(self, painter: QPainter, text: str, x: float, y: float, font: QFont):
@@ -1021,8 +1091,14 @@ class MapCanvas(QWidget):
         missing = self.missing_species.get(norm, [])
         node_type = data.get("type", "route").replace("_", " ").upper()
 
-        card_w = 260.0
-        card_h = 135.0
+        # Check trainers and wild encounters
+        trainers_here = self.trainers_by_loc.get(norm) or self.trainers_by_loc.get(f"{norm} CITY") or []
+        spawns_here = self.encounters_by_loc.get(norm, [])
+
+        card_w = 280.0
+        # Calculate dynamic height based on extra sections
+        extra_lines = (1 if trainers_here else 0) + (1 if spawns_here else 0)
+        card_h = 145.0 + extra_lines * 18.0
 
         # Position card cleanly avoiding edges
         cx = px + 18.0
@@ -1077,11 +1153,9 @@ class MapCanvas(QWidget):
         if total > 0:
             pct = int((caught / total) * 100.0)
             ratio_str = f"Caught: {caught} / {total}  ({pct}%)"
-            status_text = "⭐ AREA MASTERED" if caught >= total else f"⚠️ {total - caught} UNCAUGHT"
         else:
             pct = 0
             ratio_str = "No Wild Encounters (Safe Area)"
-            status_text = "CIVILIZED ZONE"
 
         painter.setPen(QColor("#f8fafc"))
         painter.drawText(QRectF(cx + 12, cy + 54, card_w - 24, 18), Qt.AlignLeft | Qt.AlignVCenter, ratio_str)
@@ -1098,6 +1172,28 @@ class MapCanvas(QWidget):
             painter.setBrush(QBrush(CLR_STATUS_COMPLETE if caught >= total else CLR_STATUS_PARTIAL))
             painter.drawRoundedRect(bar_fill, 3.0, 3.0)
 
+        curr_y = cy + 86.0
+
+        # Trainer Section if present
+        if trainers_here:
+            t = trainers_here[0]
+            t_name = t.get("name", "Trainer")
+            t_title = t.get("title", "")
+            painter.setFont(QFont("SansSerif", 7, QFont.Bold))
+            painter.setPen(QColor("#f87171"))
+            painter.drawText(QRectF(cx + 12, curr_y, card_w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, f"⚔️ Boss: {t_name} ({t_title})")
+            curr_y += 18.0
+
+        # Wild Spawns Preview if present
+        if spawns_here and self.show_encounters:
+            disp_spawns = ", ".join(spawns_here[:4])
+            if len(spawns_here) > 4:
+                disp_spawns += f" (+{len(spawns_here)-4})"
+            painter.setFont(QFont("SansSerif", 7, QFont.Normal))
+            painter.setPen(QColor("#38bdf8"))
+            painter.drawText(QRectF(cx + 12, curr_y, card_w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, f"🌿 Wild: {disp_spawns}")
+            curr_y += 18.0
+
         # Missing Pokemon Preview or Completion Badge
         painter.setFont(QFont("SansSerif", 7, QFont.DemiBold))
         if missing:
@@ -1113,12 +1209,13 @@ class MapCanvas(QWidget):
             msg = "Safe town / no encounter grass."
             painter.setPen(QColor("#94a3b8"))
 
-        painter.drawText(QRectF(cx + 12, cy + 86, card_w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, msg)
+        painter.drawText(QRectF(cx + 12, curr_y, card_w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, msg)
+        curr_y += 18.0
 
         # Footer interaction hint
         painter.setFont(QFont("SansSerif", 7, QFont.Normal))
         painter.setPen(QColor("#64748b"))
-        painter.drawText(QRectF(cx + 12, cy + 108, card_w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, "🖱️ Left-Click to inspect in DexNav")
+        painter.drawText(QRectF(cx + 12, curr_y, card_w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, "🖱️ Click: DexNav | Drag: Pan | Scroll: Zoom")
 
 # ============================================================================
 # MAIN REGIONAL MAP WIDGET
@@ -1156,6 +1253,8 @@ class RegionalMapWidget(QWidget):
             self._update_status_bar()
 
     def _build_ui(self):
+        self.canvas = MapCanvas(self)
+
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(16, 14, 16, 14)
         main_layout.setSpacing(10)
@@ -1307,12 +1406,115 @@ class RegionalMapWidget(QWidget):
 
         top_layout.addWidget(filter_frame)
 
+        # View Toggles: [ ⚔️ Trainers ] [ 🌿 Spawns ]
+        toggle_frame = QFrame()
+        toggle_frame.setStyleSheet("""
+            QFrame {
+                background-color: #0b0f17;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 2px;
+            }
+        """)
+        t_layout = QHBoxLayout(toggle_frame)
+        t_layout.setContentsMargins(2, 2, 2, 2)
+        t_layout.setSpacing(2)
+
+        self.btn_trainers = QPushButton("⚔️ Trainers")
+        self.btn_trainers.setCheckable(True)
+        self.btn_trainers.setChecked(True)
+        self.btn_trainers.setCursor(Qt.PointingHandCursor)
+        self.btn_trainers.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #94a3b8;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { color: #FFFFFF; background-color: #1e293b; }
+            QPushButton:checked { background-color: #7f1d1d; color: #fca5a5; }
+        """)
+        self.btn_trainers.clicked.connect(self._toggle_trainers)
+        t_layout.addWidget(self.btn_trainers)
+
+        self.btn_spawns = QPushButton("🌿 Spawns")
+        self.btn_spawns.setCheckable(True)
+        self.btn_spawns.setChecked(True)
+        self.btn_spawns.setCursor(Qt.PointingHandCursor)
+        self.btn_spawns.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #94a3b8;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { color: #FFFFFF; background-color: #1e293b; }
+            QPushButton:checked { background-color: #064e3b; color: #6ee7b7; }
+        """)
+        self.btn_spawns.clicked.connect(self._toggle_spawns)
+        t_layout.addWidget(self.btn_spawns)
+        top_layout.addWidget(toggle_frame)
+
+        # Pan & Zoom Controls: [ ＋ ] [ － ] [ ⟲ 1:1 ]
+        zoom_frame = QFrame()
+        zoom_frame.setStyleSheet("""
+            QFrame {
+                background-color: #0b0f17;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 2px;
+            }
+        """)
+        z_layout = QHBoxLayout(zoom_frame)
+        z_layout.setContentsMargins(2, 2, 2, 2)
+        z_layout.setSpacing(2)
+
+        zoom_btn_style = """
+            QPushButton {
+                background-color: transparent;
+                color: #e2e8f0;
+                border: none;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1e293b;
+                color: #38bdf8;
+            }
+        """
+        self.btn_zoom_in = QPushButton("＋")
+        self.btn_zoom_in.setToolTip("Zoom In (or Scroll Wheel Up)")
+        self.btn_zoom_in.setStyleSheet(zoom_btn_style)
+        self.btn_zoom_in.clicked.connect(self.canvas.zoom_in)
+        z_layout.addWidget(self.btn_zoom_in)
+
+        self.btn_zoom_out = QPushButton("－")
+        self.btn_zoom_out.setToolTip("Zoom Out (or Scroll Wheel Down)")
+        self.btn_zoom_out.setStyleSheet(zoom_btn_style)
+        self.btn_zoom_out.clicked.connect(self.canvas.zoom_out)
+        z_layout.addWidget(self.btn_zoom_out)
+
+        self.btn_zoom_reset = QPushButton("⟲ 1:1")
+        self.btn_zoom_reset.setToolTip("Reset Zoom & Pan to 100%")
+        self.btn_zoom_reset.setStyleSheet(zoom_btn_style)
+        self.btn_zoom_reset.clicked.connect(self.canvas.reset_zoom)
+        z_layout.addWidget(self.btn_zoom_reset)
+
+        top_layout.addWidget(zoom_frame)
+
         main_layout.addWidget(top_bar)
 
         # ====================================================================
         # CENTER INTERACTIVE CANVAS
         # ====================================================================
-        self.canvas = MapCanvas(self)
         main_layout.addWidget(self.canvas, stretch=1)
 
         # ====================================================================
@@ -1492,6 +1694,25 @@ class RegionalMapWidget(QWidget):
                 ]
                 missing_map[norm] = missing_names
 
+            # Build encounters list per location
+            enc_map: Dict[str, List[str]] = {}
+            for norm, d in location_data.items():
+                enc_map[norm] = list(d["all_species"].values())
+            self.canvas.encounters_by_loc = enc_map
+
+            # Query trainers
+            c.execute("SELECT name, title, region, location, unlock_condition, team_preview FROM trainers")
+            trainers_rows = c.fetchall()
+            trainers_map: Dict[str, List[Dict[str, str]]] = {}
+            for name, title, reg, loc, unlock, team in trainers_rows:
+                norm_l = normalize_loc(loc)
+                loc_clean = norm_l.replace(" GYM", " CITY").replace(" GYM LEADERS", "")
+                entry = {"name": name, "title": title, "region": reg, "location": loc, "unlock": unlock, "team": team}
+                trainers_map.setdefault(norm_l, []).append(entry)
+                if loc_clean != norm_l:
+                    trainers_map.setdefault(loc_clean, []).append(entry)
+            self.canvas.trainers_by_loc = trainers_map
+
             self.canvas.caught_stats = stats
             self.canvas.missing_species = missing_map
             self.canvas.update()
@@ -1503,6 +1724,14 @@ class RegionalMapWidget(QWidget):
     # ========================================================================
     # INTERNAL HANDLERS
     # ========================================================================
+
+    def _toggle_trainers(self, checked: bool):
+        self.canvas.show_trainers = checked
+        self.canvas.update()
+
+    def _toggle_spawns(self, checked: bool):
+        self.canvas.show_encounters = checked
+        self.canvas.update()
 
     def _on_canvas_node_clicked(self, node_name: str, region: str):
         self.route_selected.emit(node_name, region)
