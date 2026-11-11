@@ -5027,9 +5027,26 @@ class QuetzalMasterApp(QMainWindow):
         rows = self.cur.fetchall()
 
         if not rows:
-            # Check legendaries
-            self.cur.execute("SELECT location, requirements FROM legendaries WHERE name = ?", (name,))
-            leg = self.cur.fetchone()
+            # Check legendaries (support regional forms like Galarian Zapdos/Articuno/Moltres)
+            leg = None
+            nat = self.sp_to_nat.get(pid, pid)
+            forms = self.nat_dex_to_forms.get(nat, [])
+            form_badge = ""
+            for f in forms:
+                if f["id"] == pid:
+                    form_badge = f.get("badge", "")
+                    break
+
+            queries = []
+            if form_badge and form_badge.lower() not in ("standard", ""):
+                queries.append(f"{form_badge} {name}")
+            queries.append(name)
+
+            for q_name in queries:
+                self.cur.execute("SELECT location, requirements FROM legendaries WHERE LOWER(name) = LOWER(?)", (q_name,))
+                leg = self.cur.fetchone()
+                if leg:
+                    break
             if leg:
                 card = QFrame()
                 card.setStyleSheet("background-color: #1e1b4b; border: 1px solid #6366f1; border-radius: 6px; padding: 10px;")
