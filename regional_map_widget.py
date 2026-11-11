@@ -96,82 +96,82 @@ def normalize_loc(name: str) -> str:
 # Virtual canvas: 1100 x 700
 
 HOENN_NODES = {
-    # Towns & Cities
-    "Littleroot Town": {"x": 6.0, "y": 17.5, "type": "town", "label": "LIT"},
-    "Oldale Town": {"x": 6.0, "y": 14.5, "type": "town", "label": "OLD"},
-    "Petalburg City": {"x": 3.0, "y": 14.5, "type": "city", "label": "PET"},
-    "Rustboro City": {"x": 2.0, "y": 9.5, "type": "city", "label": "RUS"},
-    "Dewford Town": {"x": 5.0, "y": 19.5, "type": "town", "label": "DEW"},
-    "Slateport City": {"x": 11.5, "y": 14.5, "type": "city", "label": "SLA"},
-    "Mauville City": {"x": 11.5, "y": 9.5, "type": "city", "label": "MAU"},
-    "Verdanturf Town": {"x": 7.0, "y": 9.5, "type": "town", "label": "VER"},
-    "Fallarbor Town": {"x": 5.5, "y": 3.5, "type": "town", "label": "FAL"},
-    "Lavaridge Town": {"x": 8.0, "y": 6.0, "type": "town", "label": "LAV"},
-    "Fortree City": {"x": 16.0, "y": 3.5, "type": "city", "label": "FOR"},
-    "Lilycove City": {"x": 22.0, "y": 5.5, "type": "city", "label": "LIL"},
-    "Mossdeep City": {"x": 26.5, "y": 5.5, "type": "city", "label": "MOS"},
-    "Sootopolis City": {"x": 23.0, "y": 9.5, "type": "city", "label": "SOO"},
-    "Pacifidlog Town": {"x": 17.0, "y": 15.0, "type": "town", "label": "PAC"},
-    "Ever Grande City": {"x": 28.0, "y": 11.5, "type": "city", "label": "EVE"},
+    # Towns & Cities (1:1 Native GBA Pixel Coordinates on 240x160 PokéNav Town Map)
+    "Littleroot Town": {"x": 44.0, "y": 110.0, "type": "town", "label": "LIT"},
+    "Oldale Town": {"x": 44.0, "y": 94.0, "type": "town", "label": "OLD"},
+    "Petalburg City": {"x": 20.0, "y": 94.0, "type": "city", "label": "PET"},
+    "Rustboro City": {"x": 12.0, "y": 64.0, "type": "city", "label": "RUS"},
+    "Dewford Town": {"x": 27.0, "y": 135.0, "type": "town", "label": "DEW"},
+    "Slateport City": {"x": 75.0, "y": 107.0, "type": "city", "label": "SLA"},
+    "Mauville City": {"x": 79.0, "y": 69.0, "type": "city", "label": "MAU"},
+    "Verdanturf Town": {"x": 44.0, "y": 69.0, "type": "town", "label": "VER"},
+    "Fallarbor Town": {"x": 35.0, "y": 21.0, "type": "town", "label": "FAL"},
+    "Lavaridge Town": {"x": 52.0, "y": 44.0, "type": "town", "label": "LAV"},
+    "Fortree City": {"x": 108.0, "y": 21.0, "type": "city", "label": "FOR"},
+    "Lilycove City": {"x": 159.0, "y": 45.0, "type": "city", "label": "LIL"},
+    "Mossdeep City": {"x": 207.0, "y": 61.0, "type": "city", "label": "MOS"},
+    "Sootopolis City": {"x": 180.0, "y": 78.0, "type": "city", "label": "SOO"},
+    "Pacifidlog Town": {"x": 147.0, "y": 102.0, "type": "town", "label": "PAC"},
+    "Ever Grande City": {"x": 227.0, "y": 90.0, "type": "city", "label": "EVE"},
 
     # Land Routes
-    "Route 101": {"x": 6.0, "y": 16.0, "type": "route", "label": "101"},
-    "Route 102": {"x": 4.5, "y": 14.5, "type": "route", "label": "102"},
-    "Route 103": {"x": 8.5, "y": 12.5, "type": "route", "label": "103"},
-    "Route 104": {"x": 2.5, "y": 12.5, "type": "route", "label": "104"},
-    "Route 116": {"x": 4.0, "y": 9.5, "type": "route", "label": "116"},
-    "Route 117": {"x": 9.2, "y": 9.5, "type": "route", "label": "117"},
-    "Route 115": {"x": 2.0, "y": 6.5, "type": "route", "label": "115"},
-    "Route 114": {"x": 4.0, "y": 4.5, "type": "route", "label": "114"},
-    "Route 113": {"x": 8.5, "y": 3.5, "type": "route", "label": "113"},
-    "Route 112": {"x": 9.5, "y": 6.5, "type": "route", "label": "112"},
-    "Route 111": {"x": 11.5, "y": 6.0, "type": "route", "label": "111"},
-    "Route 110": {"x": 11.5, "y": 12.0, "type": "route", "label": "110"},
-    "Route 118": {"x": 14.0, "y": 9.5, "type": "route", "label": "118"},
-    "Route 119": {"x": 14.0, "y": 5.5, "type": "route", "label": "119"},
-    "Route 120": {"x": 18.0, "y": 5.0, "type": "route", "label": "120"},
-    "Route 121": {"x": 20.0, "y": 5.5, "type": "route", "label": "121"},
-    "Route 123": {"x": 17.0, "y": 9.5, "type": "route", "label": "123"},
+    "Route 101": {"x": 44.0, "y": 102.0, "type": "route", "label": "101"},
+    "Route 102": {"x": 32.0, "y": 94.0, "type": "route", "label": "102"},
+    "Route 103": {"x": 58.0, "y": 86.0, "type": "route", "label": "103"},
+    "Route 104": {"x": 12.0, "y": 82.0, "type": "route", "label": "104"},
+    "Route 116": {"x": 28.0, "y": 64.0, "type": "route", "label": "116"},
+    "Route 117": {"x": 61.0, "y": 69.0, "type": "route", "label": "117"},
+    "Route 115": {"x": 12.0, "y": 45.0, "type": "route", "label": "115"},
+    "Route 114": {"x": 22.0, "y": 28.0, "type": "route", "label": "114"},
+    "Route 113": {"x": 52.0, "y": 21.0, "type": "route", "label": "113"},
+    "Route 112": {"x": 65.0, "y": 48.0, "type": "route", "label": "112"},
+    "Route 111": {"x": 79.0, "y": 35.0, "type": "route", "label": "111"},
+    "Route 110": {"x": 75.0, "y": 88.0, "type": "route", "label": "110"},
+    "Route 118": {"x": 95.0, "y": 69.0, "type": "route", "label": "118"},
+    "Route 119": {"x": 108.0, "y": 45.0, "type": "route", "label": "119"},
+    "Route 120": {"x": 123.0, "y": 35.0, "type": "route", "label": "120"},
+    "Route 121": {"x": 142.0, "y": 54.0, "type": "route", "label": "121"},
+    "Route 123": {"x": 115.0, "y": 69.0, "type": "route", "label": "123"},
 
     # Water Routes
-    "Route 105": {"x": 2.0, "y": 16.5, "type": "water_route", "label": "105"},
-    "Route 106": {"x": 3.2, "y": 19.5, "type": "water_route", "label": "106"},
-    "Route 107": {"x": 7.0, "y": 19.5, "type": "water_route", "label": "107"},
-    "Route 108": {"x": 9.0, "y": 19.5, "type": "water_route", "label": "108"},
-    "Route 109": {"x": 11.5, "y": 17.5, "type": "water_route", "label": "109"},
-    "Route 122": {"x": 19.5, "y": 8.0, "type": "water_route", "label": "122"},
-    "Route 124": {"x": 24.2, "y": 5.5, "type": "water_route", "label": "124"},
-    "Route 125": {"x": 26.5, "y": 4.0, "type": "water_route", "label": "125"},
-    "Route 126": {"x": 23.0, "y": 7.5, "type": "water_route", "label": "126"},
-    "Route 127": {"x": 26.5, "y": 8.0, "type": "water_route", "label": "127"},
-    "Route 128": {"x": 26.5, "y": 11.5, "type": "water_route", "label": "128"},
-    "Route 129": {"x": 25.0, "y": 15.0, "type": "water_route", "label": "129"},
-    "Route 130": {"x": 22.5, "y": 15.0, "type": "water_route", "label": "130"},
-    "Route 131": {"x": 20.0, "y": 15.0, "type": "water_route", "label": "131"},
-    "Route 132": {"x": 15.5, "y": 15.0, "type": "water_route", "label": "132"},
-    "Route 133": {"x": 14.0, "y": 15.0, "type": "water_route", "label": "133"},
-    "Route 134": {"x": 12.8, "y": 15.0, "type": "water_route", "label": "134"},
+    "Route 105": {"x": 12.0, "y": 120.0, "type": "water_route", "label": "105"},
+    "Route 106": {"x": 20.0, "y": 131.0, "type": "water_route", "label": "106"},
+    "Route 107": {"x": 43.0, "y": 135.0, "type": "water_route", "label": "107"},
+    "Route 108": {"x": 58.0, "y": 135.0, "type": "water_route", "label": "108"},
+    "Route 109": {"x": 75.0, "y": 122.0, "type": "water_route", "label": "109"},
+    "Route 122": {"x": 142.0, "y": 70.0, "type": "water_route", "label": "122"},
+    "Route 124": {"x": 183.0, "y": 54.0, "type": "water_route", "label": "124"},
+    "Route 125": {"x": 207.0, "y": 45.0, "type": "water_route", "label": "125"},
+    "Route 126": {"x": 175.0, "y": 78.0, "type": "water_route", "label": "126"},
+    "Route 127": {"x": 207.0, "y": 78.0, "type": "water_route", "label": "127"},
+    "Route 128": {"x": 216.0, "y": 90.0, "type": "water_route", "label": "128"},
+    "Route 129": {"x": 207.0, "y": 102.0, "type": "water_route", "label": "129"},
+    "Route 130": {"x": 183.0, "y": 102.0, "type": "water_route", "label": "130"},
+    "Route 131": {"x": 165.0, "y": 102.0, "type": "water_route", "label": "131"},
+    "Route 132": {"x": 130.0, "y": 102.0, "type": "water_route", "label": "132"},
+    "Route 133": {"x": 115.0, "y": 102.0, "type": "water_route", "label": "133"},
+    "Route 134": {"x": 95.0, "y": 102.0, "type": "water_route", "label": "134"},
 
     # Caves & Landmarks
-    "Petalburg Woods": {"x": 2.0, "y": 13.5, "type": "landmark", "label": "WOD"},
-    "Rusturf Tunnel": {"x": 5.5, "y": 9.5, "type": "landmark", "label": "TUN"},
-    "Granite Cave": {"x": 4.2, "y": 18.2, "type": "landmark", "label": "GNT"},
-    "Abandoned Ship": {"x": 9.5, "y": 18.2, "type": "landmark", "label": "SHP"},
-    "New Mauville": {"x": 13.0, "y": 12.0, "type": "landmark", "label": "NMV"},
-    "Fiery Path": {"x": 9.5, "y": 5.0, "type": "landmark", "label": "FIE"},
-    "Jagged Pass": {"x": 8.0, "y": 4.8, "type": "landmark", "label": "JAG"},
-    "Meteor Falls": {"x": 2.5, "y": 4.5, "type": "landmark", "label": "MET"},
-    "Mirage Tower": {"x": 12.8, "y": 5.0, "type": "landmark", "label": "MIR"},
-    "Desert Underpass": {"x": 13.0, "y": 6.5, "type": "landmark", "label": "DES"},
-    "Safari Zone": {"x": 19.5, "y": 4.0, "type": "landmark", "label": "SAF"},
-    "Mt. Pyre": {"x": 19.5, "y": 9.5, "type": "landmark", "label": "PYR"},
-    "Artisan Cave": {"x": 22.0, "y": 4.0, "type": "landmark", "label": "ART"},
-    "Shoal Cave": {"x": 26.5, "y": 2.5, "type": "landmark", "label": "SHO"},
-    "Cave of Origin": {"x": 23.0, "y": 11.2, "type": "landmark", "label": "ORI"},
-    "Seafloor Cavern": {"x": 25.0, "y": 11.5, "type": "landmark", "label": "SEA"},
-    "Victory Road": {"x": 28.0, "y": 9.8, "type": "landmark", "label": "VIC"},
-    "Sky Pillar": {"x": 20.0, "y": 13.2, "type": "landmark", "label": "SKY"},
-    "Altering Cave": {"x": 7.5, "y": 11.5, "type": "landmark", "label": "ALT"}
+    "Petalburg Woods": {"x": 12.0, "y": 92.0, "type": "landmark", "label": "WOD"},
+    "Rusturf Tunnel": {"x": 36.0, "y": 64.0, "type": "landmark", "label": "TUN"},
+    "Granite Cave": {"x": 20.0, "y": 135.0, "type": "landmark", "label": "GNT"},
+    "Abandoned Ship": {"x": 58.0, "y": 138.0, "type": "landmark", "label": "SHP"},
+    "New Mauville": {"x": 83.0, "y": 90.0, "type": "landmark", "label": "NMV"},
+    "Fiery Path": {"x": 68.0, "y": 36.0, "type": "landmark", "label": "FIE"},
+    "Jagged Pass": {"x": 58.0, "y": 44.0, "type": "landmark", "label": "JAG"},
+    "Meteor Falls": {"x": 12.0, "y": 22.0, "type": "landmark", "label": "MET"},
+    "Mirage Tower": {"x": 84.0, "y": 32.0, "type": "landmark", "label": "MIR"},
+    "Desert Underpass": {"x": 84.0, "y": 40.0, "type": "landmark", "label": "DES"},
+    "Safari Zone": {"x": 142.0, "y": 42.0, "type": "landmark", "label": "SAF"},
+    "Mt. Pyre": {"x": 142.0, "y": 64.0, "type": "landmark", "label": "PYR"},
+    "Artisan Cave": {"x": 159.0, "y": 36.0, "type": "landmark", "label": "ART"},
+    "Shoal Cave": {"x": 207.0, "y": 36.0, "type": "landmark", "label": "SHO"},
+    "Cave of Origin": {"x": 180.0, "y": 72.0, "type": "landmark", "label": "ORI"},
+    "Seafloor Cavern": {"x": 207.0, "y": 90.0, "type": "landmark", "label": "SEA"},
+    "Victory Road": {"x": 227.0, "y": 80.0, "type": "landmark", "label": "VIC"},
+    "Sky Pillar": {"x": 165.0, "y": 92.0, "type": "landmark", "label": "SKY"},
+    "Altering Cave": {"x": 58.0, "y": 86.0, "type": "landmark", "label": "ALT"}
 }
 
 HOENN_EDGES = [
@@ -573,8 +573,8 @@ class MapCanvas(QWidget):
     node_clicked = Signal(str, str)   # (location_name, region)
     node_hovered = Signal(str, str)   # (location_name, region)
 
-    VIRTUAL_W = 1100.0
-    VIRTUAL_H = 700.0
+    VIRTUAL_W = 960.0
+    VIRTUAL_H = 640.0
     PAD_X = 50.0
     PAD_Y = 50.0
     GRID_COLS = 28.0
@@ -613,6 +613,22 @@ class MapCanvas(QWidget):
         self.show_trainers = True
         self.show_encounters = True
 
+        # Load authentic GBA Hoenn Town Map graphic
+        self.hoenn_pixmap = QPixmap()
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        candidate_paths = [
+            os.path.join(base_dir, "assets", "hoenn_town_map_gba_960x640.png"),
+            os.path.join(base_dir, "assets", "hoenn_town_map_gba_240x160.png"),
+            os.path.join(base_dir, "assets", "hoenn_pokenav_town_map_raw.png"),
+            "/home/vibecoder/Projects/assets/hoenn_town_map_gba_960x640.png",
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p):
+                pm = QPixmap(p)
+                if not pm.isNull():
+                    self.hoenn_pixmap = pm
+                    break
+
         # Radar animation timer for target pulse
         self.radar_phase = 0.0
         self.pulse_timer = QTimer(self)
@@ -632,11 +648,17 @@ class MapCanvas(QWidget):
             self.update()
 
     def get_node_screen_pos(self, grid_x: float, grid_y: float) -> Tuple[float, float]:
-        step_x = (self.VIRTUAL_W - 2 * self.PAD_X) / (self.GRID_COLS - 1.0)
-        step_y = (self.VIRTUAL_H - 2 * self.PAD_Y) / (self.GRID_ROWS - 1.0)
-        px = self.PAD_X + (grid_x - 1.0) * step_x
-        py = self.PAD_Y + (grid_y - 1.0) * step_y
-        return px, py
+        if self.region == REGION_HOENN:
+            # 1:1 authentic GBA coordinate mapping (240x160 native -> 960x640 virtual canvas)
+            scale_x = self.VIRTUAL_W / 240.0
+            scale_y = self.VIRTUAL_H / 160.0
+            return grid_x * scale_x, grid_y * scale_y
+        else:
+            step_x = (self.VIRTUAL_W - 2 * self.PAD_X) / (self.GRID_COLS - 1.0)
+            step_y = (self.VIRTUAL_H - 2 * self.PAD_Y) / (self.GRID_ROWS - 1.0)
+            px = self.PAD_X + (grid_x - 1.0) * step_x
+            py = self.PAD_Y + (grid_y - 1.0) * step_y
+            return px, py
 
     def _get_transform(self) -> Tuple[float, float, float]:
         """Calculates scale and offset with dynamic pan & zoom factor applied."""
@@ -678,13 +700,17 @@ class MapCanvas(QWidget):
 
     def _find_node_at(self, vpos: QPointF) -> Optional[str]:
         nodes = REGIONAL_MAP_DATA.get(self.region, {}).get("nodes", {})
+        hit_radius = 16.0 if self.region == REGION_HOENN else 18.0
+        best_name = None
+        best_dist = 999999.0
         for name, data in nodes.items():
             px, py = self.get_node_screen_pos(data["x"], data["y"])
             dist = math.hypot(vpos.x() - px, vpos.y() - py)
-            # Hitbox radius: 18px virtual
-            if dist <= 18.0:
-                return name
-        return None
+            threshold = hit_radius * (1.35 if data.get("type") in ("city", "town") else 1.0)
+            if dist <= threshold and dist < best_dist:
+                best_dist = dist
+                best_name = name
+        return best_name
 
     def mouseMoveEvent(self, event):
         self.mouse_pos = event.position()
@@ -756,27 +782,36 @@ class MapCanvas(QWidget):
         painter.translate(offset_x, offset_y)
         painter.scale(scale, scale)
 
-        # 1. Background Grid & Coordinates
-        self._draw_grid_and_margins(painter)
-
-        # 2. Regional Watermark
-        self._draw_region_watermark(painter)
-
-        # 3. Route Connection Edges
-        self._draw_edges(painter)
-
-        # 4. Regional Nodes (Cities, Routes, Landmarks)
-        self._draw_nodes(painter)
-
-        # 5. Floating Hover Tooltip Card
-        if self.hovered_node:
-            self._draw_hover_card(painter, self.hovered_node)
+        if self.region == REGION_HOENN and not self.hoenn_pixmap.isNull():
+            # 1. Authentic 1:1 GBA Hoenn Town Map Background
+            painter.drawPixmap(
+                QRectF(0, 0, self.VIRTUAL_W, self.VIRTUAL_H),
+                self.hoenn_pixmap,
+                QRectF(self.hoenn_pixmap.rect())
+            )
+            # 2. Dynamic Route Connections
+            self._draw_edges(painter)
+            # 3. Interactive GBA Markers & Completion Rings
+            self._draw_nodes(painter)
+            # 4. Authentic Bottom-Right Flower Frame Info Box
+            self._draw_flower_frame_info(painter)
+        else:
+            # 1. Background Grid & Coordinates
+            self._draw_grid_and_margins(painter)
+            # 2. Regional Watermark
+            self._draw_region_watermark(painter)
+            # 3. Route Connection Edges
+            self._draw_edges(painter)
+            # 4. Regional Nodes (Cities, Routes, Landmarks)
+            self._draw_nodes(painter)
+            # 5. Floating Hover Tooltip Card
+            if self.hovered_node:
+                self._draw_hover_card(painter, self.hovered_node)
 
         painter.restore()
 
     def _draw_grid_and_margins(self, painter: QPainter):
         """Draws subtle retro-futuristic grid coordinates."""
-        # Grid lines
         step_x = (self.VIRTUAL_W - 2 * self.PAD_X) / (self.GRID_COLS - 1.0)
         step_y = (self.VIRTUAL_H - 2 * self.PAD_Y) / (self.GRID_ROWS - 1.0)
 
@@ -791,7 +826,6 @@ class MapCanvas(QWidget):
             y = self.PAD_Y + row * step_y
             painter.drawLine(QPointF(self.PAD_X, y), QPointF(self.VIRTUAL_W - self.PAD_X, y))
 
-        # Margin coordinates (01..28 and A..T)
         font = QFont("Monospace", 7, QFont.Bold)
         painter.setFont(font)
         painter.setPen(CLR_GRID_TEXT)
@@ -825,8 +859,11 @@ class MapCanvas(QWidget):
         nodes = region_data.get("nodes", {})
         edges = region_data.get("edges", [])
 
+        is_hoenn = (self.region == REGION_HOENN)
+
         for edge in edges:
-            src_name, dst_name, edge_type = edge[0], edge[1], edge[2] if len(edge) > 2 else "land"
+            src_name, dst_name = edge[0], edge[1]
+            edge_type = edge[2] if len(edge) > 2 else "land"
             if src_name not in nodes or dst_name not in nodes:
                 continue
 
@@ -839,7 +876,24 @@ class MapCanvas(QWidget):
             is_edge_hovered = (self.hovered_node in (src_name, dst_name))
             is_edge_selected = (self.selected_node in (src_name, dst_name))
 
-            # Base path styling
+            if is_hoenn:
+                # On authentic Hoenn map, routes are already in the pixel art background.
+                # Highlight active connections dynamically with neon electric glow.
+                if is_edge_hovered or is_edge_selected:
+                    glow_pen = QPen(QColor(56, 189, 248, 180), 5.5, Qt.SolidLine, Qt.RoundCap)
+                    painter.setPen(glow_pen)
+                    painter.drawLine(QPointF(p1x, p1y), QPointF(p2x, p2y))
+
+                    core_pen = QPen(QColor(255, 255, 255, 240), 2.2, Qt.SolidLine, Qt.RoundCap)
+                    painter.setPen(core_pen)
+                    painter.drawLine(QPointF(p1x, p1y), QPointF(p2x, p2y))
+                elif edge_type in ("cave", "tunnel"):
+                    cave_pen = QPen(QColor(168, 85, 247, 70), 1.6, Qt.DotLine, Qt.RoundCap)
+                    painter.setPen(cave_pen)
+                    painter.drawLine(QPointF(p1x, p1y), QPointF(p2x, p2y))
+                continue
+
+            # Standard vector edge styling for other regions
             if edge_type == "water":
                 casing_pen = QPen(CLR_PATH_WATER_OUTER, 6.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
                 inner_pen = QPen(
@@ -858,7 +912,6 @@ class MapCanvas(QWidget):
                 inner_pen.setDashPattern([3, 3])
             else:  # land
                 casing_pen = QPen(CLR_PATH_LAND_OUTER, 7.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-                # If both ends completed, give subtle green hue
                 s_stat = self._get_status(src_name)
                 d_stat = self._get_status(dst_name)
                 land_color = CLR_PATH_LAND_COMPLETE if (s_stat == "complete" and d_stat == "complete") else CLR_PATH_LAND_INNER
@@ -882,169 +935,408 @@ class MapCanvas(QWidget):
                 painter.setPen(glow_pen)
                 painter.drawLine(QPointF(p1x, p1y), QPointF(p2x, p2y))
 
+    def _draw_reticle(self, painter: QPainter, px: float, py: float, sz: float = 14.0):
+        """Draws authentic GBA PokéNav corner reticle [ ] around a node."""
+        painter.save()
+        c_len = 5.0
+        # White reticle with crisp corners
+        pen = QPen(QColor("#ffffff"), 2.4, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin)
+        painter.setPen(pen)
+
+        # Top-Left
+        painter.drawLine(QPointF(px - sz, py - sz + c_len), QPointF(px - sz, py - sz))
+        painter.drawLine(QPointF(px - sz, py - sz), QPointF(px - sz + c_len, py - sz))
+
+        # Top-Right
+        painter.drawLine(QPointF(px + sz - c_len, py - sz), QPointF(px + sz, py - sz))
+        painter.drawLine(QPointF(px + sz, py - sz), QPointF(px + sz, py - sz + c_len))
+
+        # Bottom-Left
+        painter.drawLine(QPointF(px - sz, py + sz - c_len), QPointF(px - sz, py + sz))
+        painter.drawLine(QPointF(px - sz, py + sz), QPointF(px - sz + c_len, py + sz))
+
+        # Bottom-Right
+        painter.drawLine(QPointF(px + sz - c_len, py + sz), QPointF(px + sz, py + sz))
+        painter.drawLine(QPointF(px + sz, py + sz), QPointF(px + sz, py + sz - c_len))
+
+        painter.restore()
+
+    def _draw_gba_node(self, painter: QPainter, name: str, data: Dict[str, Any], px: float, py: float):
+        """Draws authentic 1:1 GBA-style interactive markers with completion rings."""
+        node_type = data.get("type", "route")
+        status = self._get_status(name)
+        is_hovered = (self.hovered_node == name)
+        is_selected = (self.selected_node == name)
+        is_target = normalize_loc(name) in self.highlighted_nodes
+
+        # Filtering dimming
+        if self.filter_mode == "incomplete" and status == "complete":
+            alpha = 0.25
+        elif self.filter_mode == "mastered" and status != "complete":
+            alpha = 0.25
+        else:
+            alpha = 1.0
+
+        painter.save()
+        painter.setOpacity(alpha)
+
+        # Status ring color: 🟢 Green = Mastered, 🟡 Amber = In Progress, ⚪ Slate = Uncaught
+        if status == "complete":
+            ring_color = CLR_STATUS_COMPLETE   # #10b981
+        elif status == "partial":
+            ring_color = CLR_STATUS_PARTIAL    # #f59e0b
+        else:
+            ring_color = QColor("#cbd5e1")     # #cbd5e1 slate/white
+
+        # 1. Target radar pulse (Habitat Locator Radar)
+        if is_target:
+            p_rad = 12.0 + self.radar_phase * 22.0
+            p_alpha = int((1.0 - self.radar_phase) * 180)
+            painter.setPen(QPen(QColor(244, 63, 94, p_alpha), 2.2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(QPointF(px, py), p_rad, p_rad)
+            painter.setPen(QPen(CLR_GLOW_TARGET, 1.5))
+            painter.drawEllipse(QPointF(px, py), 15.0, 15.0)
+
+        # 2. Authentic White GBA Reticle [ ] on hovered or selected node
+        if is_hovered or is_selected:
+            r_sz = 17.0 if node_type in ("city", "town") else 13.0
+            self._draw_reticle(painter, px, py, r_sz)
+
+        # 3. Pin Geometry
+        scale_node = 1.2 if is_hovered else 1.0
+
+        if node_type == "city":
+            # Authentic capsule pin for cities
+            capsule_w = 26.0 * scale_node
+            capsule_h = 17.0 * scale_node
+            capsule_rect = QRectF(px - capsule_w / 2.0, py - capsule_h / 2.0, capsule_w, capsule_h)
+
+            glow_pen = QPen(ring_color, 2.5 if not is_hovered else 3.5)
+            painter.setPen(glow_pen)
+            grad = QLinearGradient(capsule_rect.topLeft(), capsule_rect.bottomRight())
+            grad.setColorAt(0.0, QColor("#e11d48"))
+            grad.setColorAt(1.0, QColor("#881337"))
+            painter.setBrush(QBrush(grad))
+            painter.drawRoundedRect(capsule_rect, 6.0, 6.0)
+
+            # Abbreviation label inside capsule
+            painter.setFont(QFont("Monospace", 6, QFont.Bold))
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(capsule_rect, Qt.AlignCenter, data.get("label", ""))
+
+        elif node_type == "town":
+            # Circular pin for towns
+            radius = 7.5 * scale_node
+            painter.setPen(QPen(ring_color, 2.4 if not is_hovered else 3.2))
+            grad = QRadialGradient(QPointF(px, py), radius)
+            grad.setColorAt(0.0, QColor("#38bdf8"))
+            grad.setColorAt(1.0, QColor("#0369a1"))
+            painter.setBrush(QBrush(grad))
+            painter.drawEllipse(QPointF(px, py), radius, radius)
+
+            # Center white pip
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#ffffff"))
+            painter.drawEllipse(QPointF(px, py), 2.5, 2.5)
+
+        elif node_type == "landmark":
+            # Diamond pin for caves and landmarks
+            sz = 8.0 * scale_node
+            poly = QPainterPath()
+            poly.moveTo(px, py - sz)
+            poly.lineTo(px + sz, py)
+            poly.lineTo(px, py + sz)
+            poly.lineTo(px - sz, py)
+            poly.closeSubpath()
+
+            painter.setPen(QPen(ring_color, 2.2 if not is_hovered else 3.0))
+            painter.setBrush(QColor("#7c3aed"))
+            painter.drawPath(poly)
+
+        else:  # Route (land or water)
+            r_rad = 5.0 * scale_node
+            painter.setPen(QPen(ring_color, 2.0 if not is_hovered else 2.8))
+            route_bg = QColor("#0284c7") if node_type == "water_route" else QColor("#d97706")
+            painter.setBrush(route_bg)
+            painter.drawEllipse(QPointF(px, py), r_rad, r_rad)
+
+        # 4. Completion badge (★ for 100% Mastered)
+        if status == "complete":
+            star_pt = QPointF(px + 9.0, py - 9.0)
+            painter.setFont(QFont("SansSerif", 7, QFont.Bold))
+            painter.setPen(QColor("#facc15"))
+            painter.drawText(QRectF(star_pt.x() - 6, star_pt.y() - 6, 12, 12), Qt.AlignCenter, "★")
+
+        # 5. Trainer badge (⚔️ if trainers present)
+        if self.show_trainers:
+            norm_node = normalize_loc(name)
+            trainers_here = self.trainers_by_loc.get(norm_node) or self.trainers_by_loc.get(f"{norm_node} CITY")
+            if trainers_here:
+                t_pt = QPointF(px + 10.0, py + 8.0)
+                painter.setBrush(QColor("#ef4444"))
+                painter.setPen(QPen(QColor("#fecaca"), 1.0))
+                painter.drawEllipse(t_pt, 6.5, 6.5)
+                painter.setFont(QFont("SansSerif", 6, QFont.Bold))
+                painter.setPen(QColor("#ffffff"))
+                painter.drawText(QRectF(t_pt.x() - 6, t_pt.y() - 6, 12, 12), Qt.AlignCenter, "⚔")
+
+        painter.restore()
+
+    def _draw_flower_frame_info(self, painter: QPainter):
+        """Draws authentic GBA location card inside the bottom-right flower frame."""
+        active = self.hovered_node or self.selected_node
+
+        # Flower frame inner box bounds (960x640 virtual canvas, fits 240x160 GBA frame)
+        box_rect = QRectF(540, 554, 392, 74)
+
+        painter.save()
+        # Clean white card backing inside the decorative flower frame
+        painter.setBrush(QColor(255, 255, 255, 245))
+        painter.setPen(QPen(QColor(41, 49, 49), 1.2))
+        painter.drawRoundedRect(box_rect, 3.0, 3.0)
+
+        if active:
+            norm = normalize_loc(active)
+            status = self._get_status(active)
+            caught, total = self.caught_stats.get(norm, (0, 0))
+            spawns = self.encounters_by_loc.get(norm, [])
+            trainers = self.trainers_by_loc.get(norm) or self.trainers_by_loc.get(f"{norm} CITY") or []
+
+            # 1. Header: Location Name & Status Badge
+            font_title = QFont("Monospace", 9, QFont.Bold)
+            painter.setFont(font_title)
+            painter.setPen(QColor("#0f172a"))
+            painter.drawText(QRectF(box_rect.x() + 8, box_rect.y() + 3, 260, 16), Qt.AlignLeft | Qt.AlignVCenter, active.upper())
+
+            # Status Badge Pill
+            badge_font = QFont("SansSerif", 7, QFont.Bold)
+            painter.setFont(badge_font)
+            badge_rect = QRectF(box_rect.right() - 105, box_rect.y() + 3, 98, 15)
+            if status == "complete":
+                painter.setBrush(QColor("#059669"))
+                painter.setPen(Qt.NoPen)
+                painter.drawRoundedRect(badge_rect, 3.0, 3.0)
+                painter.setPen(QColor("#ffffff"))
+                painter.drawText(badge_rect, Qt.AlignCenter, "★ MASTERED")
+            elif status == "partial":
+                painter.setBrush(QColor("#d97706"))
+                painter.setPen(Qt.NoPen)
+                painter.drawRoundedRect(badge_rect, 3.0, 3.0)
+                painter.setPen(QColor("#ffffff"))
+                painter.drawText(badge_rect, Qt.AlignCenter, "⚡ IN PROGRESS")
+            else:
+                painter.setBrush(QColor("#64748b"))
+                painter.setPen(Qt.NoPen)
+                painter.drawRoundedRect(badge_rect, 3.0, 3.0)
+                painter.setPen(QColor("#ffffff"))
+                painter.drawText(badge_rect, Qt.AlignCenter, "○ UNEXPLORED")
+
+            # 2. Progress / Caught Count
+            font_info = QFont("SansSerif", 8, QFont.DemiBold)
+            painter.setFont(font_info)
+            if total > 0:
+                pct = int((caught / total) * 100.0)
+                ratio_str = f"Caught: {caught} / {total}  ({pct}%)"
+                c_clr = QColor("#059669") if caught >= total else (QColor("#d97706") if caught > 0 else QColor("#475569"))
+            else:
+                ratio_str = "Safe Area • No Wild Encounters"
+                c_clr = QColor("#64748b")
+
+            painter.setPen(c_clr)
+            painter.drawText(QRectF(box_rect.x() + 8, box_rect.y() + 20, 240, 14), Qt.AlignLeft | Qt.AlignVCenter, ratio_str)
+
+            # Progress bar
+            bar_bg = QRectF(box_rect.x() + 8, box_rect.y() + 36, box_rect.width() - 16, 4.5)
+            painter.setBrush(QColor("#e2e8f0"))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(bar_bg, 2.0, 2.0)
+            if total > 0 and caught > 0:
+                fill_w = (box_rect.width() - 16) * min(1.0, caught / total)
+                bar_fill = QRectF(box_rect.x() + 8, box_rect.y() + 36, fill_w, 4.5)
+                painter.setBrush(QColor("#059669") if caught >= total else QColor("#f59e0b"))
+                painter.drawRoundedRect(bar_fill, 2.0, 2.0)
+
+            # 3. Wild Pokémon Preview / Boss
+            font_spawns = QFont("SansSerif", 7, QFont.Normal)
+            painter.setFont(font_spawns)
+            if spawns:
+                disp_spawns = ", ".join(spawns[:5])
+                if len(spawns) > 5:
+                    disp_spawns += f" (+{len(spawns) - 5})"
+                sp_text = f"🌿 Wild: {disp_spawns}"
+                painter.setPen(QColor("#0284c7"))
+            elif trainers:
+                t = trainers[0]
+                sp_text = f"⚔️ Leader: {t.get('name', 'Gym Leader')} ({t.get('title', '')})"
+                painter.setPen(QColor("#dc2626"))
+            else:
+                sp_text = "Peaceful settlement in Hoenn"
+                painter.setPen(QColor("#64748b"))
+
+            painter.drawText(QRectF(box_rect.x() + 8, box_rect.y() + 44, box_rect.width() - 16, 26), Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap, sp_text)
+
+        else:
+            # Default overview display
+            font_title = QFont("Monospace", 9, QFont.Bold)
+            painter.setFont(font_title)
+            painter.setPen(QColor("#0f172a"))
+            painter.drawText(QRectF(box_rect.x() + 8, box_rect.y() + 6, box_rect.width() - 16, 18), Qt.AlignLeft | Qt.AlignVCenter, "HOENN REGION // POKÉNAV")
+
+            font_info = QFont("SansSerif", 8, QFont.Normal)
+            painter.setFont(font_info)
+            painter.setPen(QColor("#475569"))
+            painter.drawText(QRectF(box_rect.x() + 8, box_rect.y() + 26, box_rect.width() - 16, 16), Qt.AlignLeft | Qt.AlignVCenter, "Authentic Town Map Navigation Grid")
+            painter.setPen(QColor("#0284c7"))
+            painter.drawText(QRectF(box_rect.x() + 8, box_rect.y() + 46, box_rect.width() - 16, 18), Qt.AlignLeft | Qt.AlignVCenter, "🖱️ Hover or Click nodes to view area encounters")
+
+        painter.restore()
+
     def _draw_nodes(self, painter: QPainter):
         """Draws cities, routes, caves, and completion badges."""
         nodes = REGIONAL_MAP_DATA.get(self.region, {}).get("nodes", {})
+        is_hoenn = (self.region == REGION_HOENN)
 
-        # Font setup
+        for name, data in nodes.items():
+            px, py = self.get_node_screen_pos(data["x"], data["y"])
+            if is_hoenn:
+                self._draw_gba_node(painter, name, data, px, py)
+            else:
+                self._draw_schematic_node(painter, name, data, px, py)
+
+    def _draw_schematic_node(self, painter: QPainter, name: str, data: Dict[str, Any], px: float, py: float):
+        """Draws abstract HUD schematic node for non-Hoenn regions."""
+        node_type = data.get("type", "route")
+        label_text = data.get("label", "")
+        norm = normalize_loc(name)
+
+        status = self._get_status(name)
+        is_target = norm in self.highlighted_nodes
+        is_hovered = (self.hovered_node == name)
+        is_selected = (self.selected_node == name)
+
         font_city = QFont("SansSerif", 8, QFont.Bold)
         font_route = QFont("Monospace", 7, QFont.Bold)
         font_label = QFont("SansSerif", 7, QFont.DemiBold)
 
-        for name, data in nodes.items():
-            px, py = self.get_node_screen_pos(data["x"], data["y"])
-            node_type = data.get("type", "route")
-            label_text = data.get("label", "")
-            norm = normalize_loc(name)
+        if self.filter_mode == "incomplete" and status == "complete":
+            alpha_mult = 0.25
+        elif self.filter_mode == "mastered" and status != "complete":
+            alpha_mult = 0.25
+        else:
+            alpha_mult = 1.0
 
-            status = self._get_status(name)
-            is_target = norm in self.highlighted_nodes
-            is_hovered = (self.hovered_node == name)
-            is_selected = (self.selected_node == name)
+        scale_node = 1.18 if is_hovered else 1.0
+        node_radius = 11.0 * scale_node
 
-            # Filtering dimming
-            if self.filter_mode == "incomplete" and status == "complete":
-                alpha_mult = 0.25
-            elif self.filter_mode == "mastered" and status != "complete":
-                alpha_mult = 0.25
+        if status == "complete":
+            status_color = CLR_STATUS_COMPLETE
+        elif status == "partial":
+            status_color = CLR_STATUS_PARTIAL
+        else:
+            status_color = CLR_STATUS_UNCAUGHT
+
+        if is_target:
+            p_rad = 12.0 + self.radar_phase * 22.0
+            p_alpha = int((1.0 - self.radar_phase) * 180)
+            pulse_pen = QPen(QColor(244, 63, 94, p_alpha), 2.2)
+            painter.setPen(pulse_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(QPointF(px, py), p_rad, p_rad)
+
+            beacon_pen = QPen(CLR_GLOW_TARGET, 1.5)
+            painter.setPen(beacon_pen)
+            painter.drawEllipse(QPointF(px, py), 15.0, 15.0)
+
+        if is_hovered or is_selected:
+            glow_color = QColor(56, 189, 248, 140) if is_hovered else QColor(244, 63, 94, 180)
+            glow_pen = QPen(glow_color, 4.0)
+            painter.setPen(glow_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(QPointF(px, py), node_radius + 4.0, node_radius + 4.0)
+
+        painter.save()
+        painter.setOpacity(alpha_mult)
+
+        if node_type in ("city", "town"):
+            box_w = 26.0 * scale_node
+            box_h = 24.0 * scale_node
+            rect = QRectF(px - box_w / 2.0, py - box_h / 2.0, box_w, box_h)
+
+            grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
+            if node_type == "city":
+                grad.setColorAt(0.0, QColor("#1e293b"))
+                grad.setColorAt(1.0, QColor("#0f172a"))
             else:
-                alpha_mult = 1.0
+                grad.setColorAt(0.0, QColor("#1e2230"))
+                grad.setColorAt(1.0, QColor("#0d121d"))
 
-            # Scale up if hovered
-            scale_node = 1.18 if is_hovered else 1.0
-            node_radius = 11.0 * scale_node
+            painter.setBrush(QBrush(grad))
+            border_pen = QPen(status_color, 2.0 if not is_hovered else 2.8)
+            painter.setPen(border_pen)
+            painter.drawRoundedRect(rect, 5.0, 5.0)
 
-            # Completion color
-            if status == "complete":
-                status_color = CLR_STATUS_COMPLETE
-            elif status == "partial":
-                status_color = CLR_STATUS_PARTIAL
-            else:
-                status_color = CLR_STATUS_UNCAUGHT
+            painter.setFont(font_city)
+            painter.setPen(QColor("#f8fafc"))
+            painter.drawText(rect, Qt.AlignCenter, label_text)
 
-            # ----------------------------------------------------------------
-            # TARGET RADAR PULSE
-            # ----------------------------------------------------------------
-            if is_target:
-                p_rad = 12.0 + self.radar_phase * 22.0
-                p_alpha = int((1.0 - self.radar_phase) * 180)
-                pulse_pen = QPen(QColor(244, 63, 94, p_alpha), 2.2)
-                painter.setPen(pulse_pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(QPointF(px, py), p_rad, p_rad)
+            self._draw_text_with_halo(painter, name, px, py + box_h / 2.0 + 10.0, font_label)
 
-                beacon_pen = QPen(CLR_GLOW_TARGET, 1.5)
-                painter.setPen(beacon_pen)
-                painter.drawEllipse(QPointF(px, py), 15.0, 15.0)
+        elif node_type == "landmark":
+            box_sz = 22.0 * scale_node
+            poly = QPainterPath()
+            poly.moveTo(px, py - box_sz / 2.0)
+            poly.lineTo(px + box_sz / 2.0, py)
+            poly.lineTo(px, py + box_sz / 2.0)
+            poly.lineTo(px - box_sz / 2.0, py)
+            poly.closeSubpath()
 
-            # ----------------------------------------------------------------
-            # HOVER & SELECTION GLOW
-            # ----------------------------------------------------------------
-            if is_hovered or is_selected:
-                glow_color = QColor(56, 189, 248, 140) if is_hovered else QColor(244, 63, 94, 180)
-                glow_pen = QPen(glow_color, 4.0)
-                painter.setPen(glow_pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(QPointF(px, py), node_radius + 4.0, node_radius + 4.0)
+            grad = QLinearGradient(QPointF(px, py - box_sz / 2.0), QPointF(px, py + box_sz / 2.0))
+            grad.setColorAt(0.0, QColor("#2e1065"))
+            grad.setColorAt(1.0, QColor("#1e1b4b"))
 
-            # ----------------------------------------------------------------
-            # NODE GEOMETRY BY TYPE
-            # ----------------------------------------------------------------
-            painter.save()
-            painter.setOpacity(alpha_mult)
+            painter.setBrush(QBrush(grad))
+            painter.setPen(QPen(status_color, 2.0 if not is_hovered else 2.8))
+            painter.drawPath(poly)
 
-            if node_type in ("city", "town"):
-                # Rounded card for towns & cities
-                box_w = 26.0 * scale_node
-                box_h = 24.0 * scale_node
-                rect = QRectF(px - box_w / 2.0, py - box_h / 2.0, box_w, box_h)
+            painter.setFont(font_route)
+            painter.setPen(QColor("#e2e8f0"))
+            painter.drawText(QRectF(px - 14, py - 9, 28, 18), Qt.AlignCenter, label_text)
 
-                # Background fill gradient
-                grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
-                if node_type == "city":
-                    grad.setColorAt(0.0, QColor("#1e293b"))
-                    grad.setColorAt(1.0, QColor("#0f172a"))
-                else:
-                    grad.setColorAt(0.0, QColor("#1e2230"))
-                    grad.setColorAt(1.0, QColor("#0d121d"))
+            self._draw_text_with_halo(painter, name, px, py + box_sz / 2.0 + 10.0, font_label)
 
-                painter.setBrush(QBrush(grad))
-                border_pen = QPen(status_color, 2.0 if not is_hovered else 2.8)
-                painter.setPen(border_pen)
-                painter.drawRoundedRect(rect, 5.0, 5.0)
+        else:  # Route
+            rect_sz = 22.0 * scale_node
+            rect = QRectF(px - rect_sz / 2.0, py - rect_sz / 2.0, rect_sz, rect_sz)
 
-                # Icon/Badge text inside city node
-                painter.setFont(font_city)
-                painter.setPen(QColor("#f8fafc"))
-                painter.drawText(rect, Qt.AlignCenter, label_text)
+            bg_color = QColor("#082f49") if node_type == "water_route" else QColor("#1e293b")
+            painter.setBrush(QBrush(bg_color))
+            painter.setPen(QPen(status_color, 2.0 if not is_hovered else 2.8))
+            painter.drawRoundedRect(rect, 4.0, 4.0)
 
-                # Draw city name label underneath with dark contrast halo
-                self._draw_text_with_halo(painter, name, px, py + box_h / 2.0 + 10.0, font_label)
+            painter.setFont(font_route)
+            painter.setPen(QColor("#f8fafc"))
+            painter.drawText(rect, Qt.AlignCenter, label_text)
 
-            elif node_type == "landmark":
-                # Diamond / Hexagon for landmarks & caves
-                box_sz = 22.0 * scale_node
-                poly = QPainterPath()
-                poly.moveTo(px, py - box_sz / 2.0)
-                poly.lineTo(px + box_sz / 2.0, py)
-                poly.lineTo(px, py + box_sz / 2.0)
-                poly.lineTo(px - box_sz / 2.0, py)
-                poly.closeSubpath()
+        if status == "complete":
+            star_pt = QPointF(px + 10.0, py - 10.0)
+            painter.setFont(QFont("SansSerif", 7, QFont.Bold))
+            painter.setPen(QColor("#facc15"))
+            painter.drawText(QRectF(star_pt.x() - 6, star_pt.y() - 6, 12, 12), Qt.AlignCenter, "★")
 
-                grad = QLinearGradient(QPointF(px, py - box_sz / 2.0), QPointF(px, py + box_sz / 2.0))
-                grad.setColorAt(0.0, QColor("#2e1065"))
-                grad.setColorAt(1.0, QColor("#1e1b4b"))
-
-                painter.setBrush(QBrush(grad))
-                painter.setPen(QPen(status_color, 2.0 if not is_hovered else 2.8))
-                painter.drawPath(poly)
-
-                # Label inside diamond
-                painter.setFont(font_route)
-                painter.setPen(QColor("#e2e8f0"))
-                painter.drawText(QRectF(px - 14, py - 9, 28, 18), Qt.AlignCenter, label_text)
-
-                # Name label below
-                self._draw_text_with_halo(painter, name, px, py + box_sz / 2.0 + 10.0, font_label)
-
-            else:  # Route (land / water)
-                rect_sz = 22.0 * scale_node
-                rect = QRectF(px - rect_sz / 2.0, py - rect_sz / 2.0, rect_sz, rect_sz)
-
-                bg_color = QColor("#082f49") if node_type == "water_route" else QColor("#1e293b")
-                painter.setBrush(QBrush(bg_color))
-                painter.setPen(QPen(status_color, 2.0 if not is_hovered else 2.8))
-                painter.drawRoundedRect(rect, 4.0, 4.0)
-
-                painter.setFont(font_route)
-                painter.setPen(QColor("#f8fafc"))
-                painter.drawText(rect, Qt.AlignCenter, label_text)
-
-            # ----------------------------------------------------------------
-            # COMPLETION BADGE PIN (⭐ FOR 100% MASTERED)
-            # ----------------------------------------------------------------
-            if status == "complete":
-                star_pt = QPointF(px + 10.0, py - 10.0)
+        if self.show_trainers:
+            norm_node = normalize_loc(name)
+            trainers_here = self.trainers_by_loc.get(norm_node) or self.trainers_by_loc.get(f"{norm_node} CITY")
+            if trainers_here:
+                t_pt = QPointF(px + 12.0, py - 12.0)
+                painter.setBrush(QColor("#ef4444"))
+                painter.setPen(QPen(QColor("#fecaca"), 1.0))
+                painter.drawEllipse(t_pt, 7.5, 7.5)
                 painter.setFont(QFont("SansSerif", 7, QFont.Bold))
-                painter.setPen(QColor("#facc15"))
-                painter.drawText(QRectF(star_pt.x() - 6, star_pt.y() - 6, 12, 12), Qt.AlignCenter, "★")
+                painter.setPen(QColor("#ffffff"))
+                painter.drawText(QRectF(t_pt.x() - 6, t_pt.y() - 6, 12, 12), Qt.AlignCenter, "⚔")
 
-            # ----------------------------------------------------------------
-            # TRAINER BADGE PIN (⚔️ IF TRAINERS PRESENT)
-            # ----------------------------------------------------------------
-            if self.show_trainers:
-                norm_node = normalize_loc(name)
-                trainers_here = self.trainers_by_loc.get(norm_node) or self.trainers_by_loc.get(f"{norm_node} CITY")
-                if trainers_here:
-                    t_pt = QPointF(px + 12.0, py - 12.0)
-                    painter.setBrush(QColor("#ef4444"))
-                    painter.setPen(QPen(QColor("#fecaca"), 1.0))
-                    painter.drawEllipse(t_pt, 7.5, 7.5)
-                    painter.setFont(QFont("SansSerif", 7, QFont.Bold))
-                    painter.setPen(QColor("#ffffff"))
-                    painter.drawText(QRectF(t_pt.x() - 6, t_pt.y() - 6, 12, 12), Qt.AlignCenter, "⚔")
-
-            painter.restore()
+        painter.restore()
 
     def _draw_text_with_halo(self, painter: QPainter, text: str, x: float, y: float, font: QFont):
         """Draws text with a dark halo for legibility over lines."""

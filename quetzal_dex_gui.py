@@ -410,14 +410,38 @@ QListWidget::item:hover:!selected {
 }
 """
 
+SILHOUETTE_CACHE: Dict[int, QPixmap] = {}
+
 def get_species_pixmap(species_id: int, is_silhouette: bool = False) -> Optional[QPixmap]:
-    """Load cached 2D sprite or silhouette pixmap."""
+    """Load cached 2D sprite or silhouette pixmap with auto-generation fallback."""
+    if is_silhouette and species_id in SILHOUETTE_CACHE:
+        return SILHOUETTE_CACHE[species_id]
+
     target_dir = ASSETS_SILHOUETTES_DIR if is_silhouette else ASSETS_SPRITES_DIR
     path = os.path.join(target_dir, f"{species_id}.png")
     if os.path.exists(path):
         pm = QPixmap(path)
         if not pm.isNull():
+            if is_silhouette:
+                SILHOUETTE_CACHE[species_id] = pm
             return pm
+
+    # Fallback: dynamically generate silhouette from normal sprite if missing
+    if is_silhouette:
+        sprite_path = os.path.join(ASSETS_SPRITES_DIR, f"{species_id}.png")
+        if os.path.exists(sprite_path):
+            base_pm = QPixmap(sprite_path)
+            if not base_pm.isNull():
+                img = base_pm.toImage()
+                for y in range(img.height()):
+                    for x in range(img.width()):
+                        c = img.pixelColor(x, y)
+                        if c.alpha() > 20:
+                            img.setPixelColor(x, y, QColor(10, 20, 26, c.alpha()))
+                sil_pm = QPixmap.fromImage(img)
+                SILHOUETTE_CACHE[species_id] = sil_pm
+                return sil_pm
+
     return None
 
 
@@ -538,6 +562,421 @@ def get_form_badge(species_id: int, national_dex_num: int, base_species_id: int,
     # Generic fallback based on typing
     t_clean = type1 if (type1 == type2 or not type2 or type2 == "None") else f"{type1}/{type2}"
     return f"[{t_clean}]"
+
+
+class DexNavSlotWidget(QFrame):
+    """
+    Tactile 1:1 in-game DexNav slot widget.
+    Represents an authentic habitat slot:
+    - If mon_data is None: renders an authentic '✕' (empty slot mark).
+    - If mon_data is present: renders Pokémon mini-sprite (or silhouette if uncaught),
+      Dex #, mini Pokéball icon if caught, species name, and rate %.
+    - Clicking selects the Pokémon and populates the right Telemetry Inspector.
+    """
+    slot_selected = Signal(dict)
+    catch_toggled = Signal(int, str, bool)
+
+    def __init__(self, habitat: str, slot_num: int, mon_data: Optional[dict] = None, parent=None):
+        super().__init__(parent)
+        self.habitat = habitat.upper()
+        self.slot_num = slot_num
+        self.mon_data = mon_data
+        self.is_selected = False
+        self.is_dimmed = False
+        self.is_caught = bool(mon_data and mon_data.get("is_caught", False))
+
+        self.init_ui()
+
+    def init_ui(self):
+        if self.habitat == "LAND":
+            self.setFixedSize(88, 92)
+        else:
+            self.setFixedSize(94, 94)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 3, 4, 3)
+        layout.setSpacing(1)
+
+        # Top Bar: Dex # / Slot # and mini Pokéball
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(0, 0, 0, 0)
+        top_bar.setSpacing(2)
+
+        self.id_lbl = QLabel()
+        self.id_lbl.setFont(QFont("Monospace", 8, QFont.Bold))
+        top_bar.addWidget(self.id_lbl)
+
+        top_bar.addStretch()
+
+        self.ball_lbl = QLabel()
+        self.ball_lbl.setFont(QFont("SansSerif", 8))
+        top_bar.addWidget(self.ball_lbl)
+
+        layout.addLayout(top_bar)
+
+        # Center: Sprite / Silhouette or X Mark
+        self.center_box = QLabel()
+        self.center_box.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.center_box, 1)
+
+        # Bottom Bar: Name and Rate %
+        self.name_lbl = QLabel()
+        self.name_lbl.setAlignment(Qt.AlignCenter)
+        self.name_lbl.setFont(QFont("SansSerif", 8, QFont.Bold))
+        layout.addWidget(self.name_lbl)
+
+        self.rate_lbl = QLabel()
+        self.rate_lbl.setAlignment(Qt.AlignCenter)
+        self.rate_lbl.setFont(QFont("Monospace", 7))
+        layout.addWidget(self.rate_lbl)
+
+        self.update_content()
+        self.update_style()
+
+    def set_mon_data(self, mon_data: Optional[dict]):
+        self.mon_data = mon_data
+        self.is_caught = bool(mon_data and mon_data.get("is_caught", False))
+        self.update_content()
+        self.update_style()
+
+    def set_selected(self, selected: bool):
+        self.is_selected = selected
+        self.update_style()
+
+    def set_dimmed(self, dimmed: bool):
+        self.is_dimmed = dimmed
+        self.update_style()
+
+    def update_content(self):
+        if not self.mon_data:
+            # Empty slot -> authentic X mark
+            self.setCursor(QCursor(Qt.ArrowCursor))
+            self.id_lbl.setText("")
+            self.ball_lbl.setText("")
+            self.center_box.clear()
+            self.center_box.setText("✕")
+            self.center_box.setFont(QFont("Monospace", 20, QFont.Bold))
+            self.center_box.setStyleSheet("color: #ff3858;" if is_retro() else "color: #ef4444;")
+            self.name_lbl.setText("—")
+            self.rate_lbl.setText("")
+            self.setToolTip(f"{self.habitat} Slot {self.slot_num}: No Pokémon")
+            return
+
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        pid = self.mon_data["species_id"]
+        nat_dex = self.mon_data.get("national_dex_num", pid)
+        name = self.mon_data["species_name"]
+        chance = self.mon_data.get("chance", 0)
+        min_l = self.mon_data.get("min_level", 0)
+        max_l = self.mon_data.get("max_level", 0)
+
+        self.id_lbl.setText(f"#{nat_dex:04d}")
+        self.ball_lbl.setText("🔴" if self.is_caught else "")
+
+        # Sprite / Silhouette: show silhouette if uncaught (authentic DexNav behavior)
+        pm = get_species_pixmap(pid, is_silhouette=(not self.is_caught))
+        if pm:
+            scale_sz = 42 if self.habitat == "LAND" else 46
+            self.center_box.setPixmap(pm.scaled(scale_sz, scale_sz, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.center_box.setText("🐾")
+
+        # Name label
+        disp_name = name
+        if len(disp_name) > 8:
+            disp_name = disp_name[:7] + "…"
+        self.name_lbl.setText(disp_name)
+
+        # Rate / Level label
+        lvl_str = f"Lv.{min_l}" if min_l == max_l else f"Lv.{min_l}-{max_l}"
+        if chance > 0:
+            self.rate_lbl.setText(f"{chance}% • {lvl_str}")
+        else:
+            self.rate_lbl.setText(lvl_str)
+
+        status_str = "Caught ✓" if self.is_caught else "Missing ○"
+        self.setToolTip(f"#{nat_dex:04d} {name}\nHabitat: {self.habitat} (Slot {self.slot_num})\nLevel: {lvl_str}\nEncounter Rate: {chance}%\nStatus: {status_str}")
+
+    def update_style(self):
+        retro = is_retro()
+        if not self.mon_data:
+            # Empty X slot styling
+            if retro:
+                self.setStyleSheet("""
+                    QFrame {
+                        background-color: #081014;
+                        border-top: 1px solid #102428;
+                        border-left: 1px solid #102428;
+                        border-bottom: 1px solid #04080a;
+                        border-right: 1px solid #04080a;
+                        border-radius: 3px;
+                    }
+                """)
+            else:
+                self.setStyleSheet("""
+                    QFrame {
+                        background-color: #0b111e;
+                        border: 1px dashed #1e293b;
+                        border-radius: 6px;
+                    }
+                """)
+            self.name_lbl.setStyleSheet("color: #475569; font-size: 8px;")
+            return
+
+        opacity_css = "opacity: 0.25;" if self.is_dimmed else ""
+
+        if retro:
+            if self.is_selected:
+                border_style = """
+                    background-color: #103525;
+                    border-top: 2px solid #00ff88;
+                    border-left: 2px solid #00ff88;
+                    border-bottom: 2px solid #042010;
+                    border-right: 2px solid #042010;
+                """
+            elif self.is_caught:
+                border_style = """
+                    background-color: #0a2018;
+                    border-top: 1.5px solid #00a850;
+                    border-left: 1.5px solid #00a850;
+                    border-bottom: 1.5px solid #04140c;
+                    border-right: 1.5px solid #04140c;
+                """
+            else:
+                border_style = """
+                    background-color: #09171e;
+                    border-top: 1.5px solid #285462;
+                    border-left: 1.5px solid #285462;
+                    border-bottom: 1.5px solid #040a0c;
+                    border-right: 1.5px solid #040a0c;
+                """
+            self.setStyleSheet(f"""
+                QFrame {{
+                    {border_style}
+                    border-radius: 3px;
+                    {opacity_css}
+                }}
+            """)
+            self.id_lbl.setStyleSheet("color: #58b8a8; font-size: 8px; font-weight: bold;")
+            self.name_lbl.setStyleSheet("color: #e0fff0; font-size: 8px; font-weight: bold;")
+            self.rate_lbl.setStyleSheet("color: #88c8b8; font-size: 7px;")
+        else:
+            if self.is_selected:
+                border_style = "border: 2px solid #38bdf8; background-color: #1e293b;"
+            elif self.is_caught:
+                border_style = "border: 1px solid #059669; background-color: #064e3b;"
+            else:
+                border_style = "border: 1px solid #334155; background-color: #0f172a;"
+            self.setStyleSheet(f"""
+                QFrame {{
+                    {border_style}
+                    border-radius: 6px;
+                    {opacity_css}
+                }}
+            """)
+            self.id_lbl.setStyleSheet("color: #94a3b8; font-size: 8px; font-weight: bold;")
+            self.name_lbl.setStyleSheet("color: #f8fafc; font-size: 8px; font-weight: bold;")
+            self.rate_lbl.setStyleSheet("color: #cbd5e1; font-size: 7px;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.mon_data:
+            self.slot_selected.emit(self.mon_data)
+        super().mousePressEvent(event)
+
+
+class DexNavHabitatBoxWidget(QFrame):
+    """
+    Habitat Box widget matching the authentic ORAS / Quetzal DexNav screen layout.
+    - Title banner with Habitat Name (WATER, LAND, BEACH, HIDDEN), icon, and completion Pokéball.
+    - Grid of exact fixed slots (WATER: 5, LAND: 12, BEACH: 3, HIDDEN: 1).
+    - If a habitat has 0 Pokémon on that route, all slots render authentic '✕' marks.
+    - When all available Pokémon in the habitat are caught, the header Pokéball turns GOLD!
+    """
+    slot_clicked = Signal(dict)
+    catch_toggled = Signal(int, str, bool)
+
+    def __init__(self, habitat: str, icon: str, header_color: str, total_slots: int, columns: int, parent=None):
+        super().__init__(parent)
+        self.habitat = habitat.upper()
+        self.icon = icon
+        self.header_color = header_color
+        self.total_slots = total_slots
+        self.columns = columns
+        self.slots: List[DexNavSlotWidget] = []
+
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(6, 6, 6, 8)
+        main_layout.setSpacing(6)
+
+        # Header Banner
+        self.header_frame = QFrame()
+        self.header_frame.setFixedHeight(30)
+        h_layout = QHBoxLayout(self.header_frame)
+        h_layout.setContentsMargins(10, 2, 10, 2)
+        h_layout.setSpacing(6)
+
+        # Left: Habitat Icon & Title
+        self.title_lbl = QLabel(f"{self.icon} {self.habitat}")
+        self.title_lbl.setFont(QFont("SansSerif", 10, QFont.Bold))
+        h_layout.addWidget(self.title_lbl)
+
+        # Counter / badge: e.g. "5 / 5 CAUGHT"
+        self.count_lbl = QLabel("")
+        self.count_lbl.setFont(QFont("Monospace", 8, QFont.Bold))
+        h_layout.addWidget(self.count_lbl)
+
+        h_layout.addStretch()
+
+        # Right: Authentic Pokéball Completion Badge
+        self.ball_icon = QLabel("⚪")
+        self.ball_icon.setFont(QFont("SansSerif", 11))
+        h_layout.addWidget(self.ball_icon)
+
+        main_layout.addWidget(self.header_frame)
+
+        # Slots Grid
+        self.grid_frame = QFrame()
+        self.grid_layout = QGridLayout(self.grid_frame)
+        self.grid_layout.setContentsMargins(4, 4, 4, 4)
+        self.grid_layout.setSpacing(6)
+
+        # Pre-instantiate the fixed slots
+        for idx in range(1, self.total_slots + 1):
+            slot_w = DexNavSlotWidget(self.habitat, idx)
+            slot_w.slot_selected.connect(self.on_slot_selected)
+            slot_w.catch_toggled.connect(self.catch_toggled.emit)
+            r = (idx - 1) // self.columns
+            c = (idx - 1) % self.columns
+            self.grid_layout.addWidget(slot_w, r, c)
+            self.slots.append(slot_w)
+
+        main_layout.addWidget(self.grid_frame)
+        self.apply_theme(CURRENT_THEME)
+
+    def on_slot_selected(self, mon_data: dict):
+        self.slot_clicked.emit(mon_data)
+
+    def populate(self, mons: List[dict]):
+        """
+        Populate the slots with encounter records.
+        If mons has fewer items than total_slots, remaining slots render as '✕' (None).
+        """
+        total_avail = len(mons)
+        caught_count = sum(1 for m in mons if m.get("is_caught", False))
+
+        for idx, slot_w in enumerate(self.slots):
+            if idx < total_avail:
+                slot_w.set_mon_data(mons[idx])
+            else:
+                slot_w.set_mon_data(None)
+
+        # Update Header Counter and Pokéball Badge
+        if total_avail == 0:
+            self.count_lbl.setText("— EMPTY")
+            self.ball_icon.setText("—")
+            self.ball_icon.setToolTip(f"No {self.habitat} encounters on this route")
+        elif caught_count >= total_avail:
+            self.count_lbl.setText(f"✓ {caught_count}/{total_avail} CAUGHT (100%)")
+            self.ball_icon.setText("🟡")  # Gold Pokéball / crown!
+            self.ball_icon.setToolTip(f"100% Complete! All {self.habitat} Pokémon caught!")
+        else:
+            self.count_lbl.setText(f"○ {caught_count}/{total_avail} CAUGHT")
+            self.ball_icon.setText("⚪")  # Unfinished Pokéball
+            self.ball_icon.setToolTip(f"{caught_count} of {total_avail} caught")
+
+    def deselect_all(self):
+        for s in self.slots:
+            s.set_selected(False)
+
+    def select_species(self, species_id: int):
+        found = False
+        for s in self.slots:
+            if s.mon_data and s.mon_data["species_id"] == species_id:
+                s.set_selected(True)
+                found = True
+            else:
+                s.set_selected(False)
+        return found
+
+    def apply_filters(self, filter_mode: str, query: str):
+        q = query.strip().lower()
+        clean_q = q.lstrip("#").strip()
+        for s in self.slots:
+            if not s.mon_data:
+                s.set_dimmed(False)
+                continue
+            d = s.mon_data
+            # Caught filter
+            dim = False
+            if filter_mode == "Missing Only" and d.get("is_caught", False):
+                dim = True
+            elif filter_mode == "Caught Only" and not d.get("is_caught", False):
+                dim = True
+
+            # Query filter
+            if q and not dim:
+                matches_name = q in d["species_name"].lower()
+                matches_id = q in str(d["species_id"])
+                nat_dex = d.get("national_dex_num", d["species_id"])
+                matches_nat = (clean_q.isdigit() and int(clean_q) == nat_dex) or (f"#{nat_dex:04d}" in q)
+                matches_form = bool(d.get("form_badge") and q in d["form_badge"].lower())
+                if not (matches_name or matches_id or matches_nat or matches_form):
+                    dim = True
+
+            s.set_dimmed(dim)
+
+    def apply_theme(self, theme_mode: str):
+        retro = (theme_mode == "retro")
+        # Color palettes per habitat
+        colors = {
+            "WATER": {"header_retro": "#0c3048", "border_retro": "#00b8ff", "header_mod": "#1e3a8a", "border_mod": "#3b82f6"},
+            "LAND": {"header_retro": "#0c3c1e", "border_retro": "#00e858", "header_mod": "#14532d", "border_mod": "#22c55e"},
+            "BEACH": {"header_retro": "#483008", "border_retro": "#f8b800", "header_mod": "#78350f", "border_mod": "#f59e0b"},
+            "HIDDEN": {"header_retro": "#481014", "border_retro": "#ff3858", "header_mod": "#7f1d1d", "border_mod": "#ef4444"},
+        }.get(self.habitat, {"header_retro": "#182830", "border_retro": "#58b8a8", "header_mod": "#1e293b", "border_mod": "#64748b"})
+
+        if retro:
+            self.setStyleSheet("""
+                DexNavHabitatBoxWidget {
+                    background-color: #0b1820;
+                    border-top: 2px solid #386860;
+                    border-left: 2px solid #386860;
+                    border-bottom: 2px solid #040c10;
+                    border-right: 2px solid #040c10;
+                    border-radius: 4px;
+                }
+            """)
+            self.header_frame.setStyleSheet(f"""
+                background-color: {colors["header_retro"]};
+                border-top: 1.5px solid {colors["border_retro"]};
+                border-left: 1.5px solid {colors["border_retro"]};
+                border-bottom: 1.5px solid #04080c;
+                border-right: 1.5px solid #04080c;
+                border-radius: 2px;
+            """)
+            self.title_lbl.setStyleSheet(f"color: #ffffff; font-weight: bold; font-family: monospace; font-size: 11px;")
+            self.count_lbl.setStyleSheet(f"color: {colors['border_retro']}; font-weight: bold; font-family: monospace; font-size: 9px;")
+        else:
+            self.setStyleSheet("""
+                DexNavHabitatBoxWidget {
+                    background-color: #0f172a;
+                    border: 1px solid #1e293b;
+                    border-radius: 8px;
+                }
+            """)
+            self.header_frame.setStyleSheet(f"""
+                background-color: {colors["header_mod"]};
+                border: 1px solid {colors["border_mod"]};
+                border-radius: 6px;
+            """)
+            self.title_lbl.setStyleSheet("color: #f8fafc; font-weight: bold; font-size: 11px;")
+            self.count_lbl.setStyleSheet(f"color: {colors['border_mod']}; font-weight: bold; font-size: 9px;")
+
+        for s in self.slots:
+            s.update_style()
 
 
 class ModernEncounterCard(QFrame):

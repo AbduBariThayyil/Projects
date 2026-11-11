@@ -390,15 +390,15 @@ def main():
                 ch = BEACH_CHANCES[idx] if idx < len(BEACH_CHANCES) else 10
                 enc_records.append((region, grp, num, loc_name, "Beach", idx + 1, ch, min_l, max_l, sp, sp_name))
 
-        # Rock smash
-        if p_smash:
+        # Rock smash (DexNav does not track Rock Smash for Hoenn)
+        if p_smash and region != "Hoenn":
             slots = parse_slots(p_smash, 5)
             for idx, (min_l, max_l, sp, sp_name) in enumerate(slots):
                 ch = SMASH_CHANCES[idx] if idx < len(SMASH_CHANCES) else 1
                 enc_records.append((region, grp, num, loc_name, "Rock Smash", idx + 1, ch, min_l, max_l, sp, sp_name))
 
-        # Fishing
-        if p_fish:
+        # Fishing (DexNav strictly tracks Tall Grass, Surfing, Beach, Hidden Rare; no Fishing)
+        if p_fish and region != "Hoenn":
             slots = parse_slots(p_fish, 10)
             # Old Rod: slots 0-1
             for idx in range(min(2, len(slots))):

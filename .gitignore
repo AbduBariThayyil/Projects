@@ -1,4 +1,6 @@
 *.png
+!assets/hoenn_town_map_gba_960x640.png
+!assets/hoenn_town_map_gba_240x160.png
 __pycache__/
 test_polybar.sh
 *.db-shm
