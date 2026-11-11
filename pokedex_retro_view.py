@@ -268,7 +268,7 @@ class EvoNodeCard(QFrame):
         types_h = QHBoxLayout()
         types_h.setSpacing(4)
         for t in (type1, type2):
-            if t and t != "None" and is_seen:
+            if t and t != "None":
                 t_badge = QLabel(t.upper())
                 t_badge.setStyleSheet(f"""
                     background-color: {get_type_color(t)};
@@ -336,6 +336,7 @@ class PokedexRetroView(QWidget):
         self.nat_to_base_id: Dict[int, int] = {}
 
         self.current_nat: int = 1  # Selected national dex number
+        self.selected_form_sp_id: Optional[int] = None  # Active species ID (for regional form switching)
         self.filter_mode: str = "ALL"  # "ALL", "SEEN", "CAUGHT"
         self.search_query: str = ""
 
@@ -499,6 +500,10 @@ class PokedexRetroView(QWidget):
                 outline: none;
             }
             QListWidget::item {
+                color: #0f172a;
+                font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 13px;
+                font-weight: bold;
                 height: 38px;
                 padding-left: 8px;
                 padding-right: 8px;
@@ -507,6 +512,7 @@ class PokedexRetroView(QWidget):
             }
             QListWidget::item:hover {
                 background-color: #f1f5f9;
+                color: #0f172a;
             }
             QListWidget::item:selected {
                 background-color: #e2e8f0;
@@ -581,6 +587,12 @@ class PokedexRetroView(QWidget):
         self.types_layout.setAlignment(Qt.AlignCenter)
         self.types_layout.setSpacing(6)
         main_sp_layout.addLayout(self.types_layout)
+
+        # Regional Form Switcher Buttons / Chips
+        self.forms_layout = QHBoxLayout()
+        self.forms_layout.setAlignment(Qt.AlignCenter)
+        self.forms_layout.setSpacing(6)
+        main_sp_layout.addLayout(self.forms_layout)
 
         # Additional quick stats: Abilities & Catch Rate
         self.extra_info_lbl = QLabel("Abilities: Rock Head / Pressure • Catch Rate: 45")
@@ -1103,7 +1115,7 @@ class PokedexRetroView(QWidget):
             # Query Filter Check
             nat_str = f"{nat:04d}"
             name = mon["name"]
-            display_name = name if seen else "-----------"
+            display_name = name  # Always reveal full species name as true companion guide!
 
             if query:
                 if query not in nat_str and query not in name.lower():
@@ -1113,6 +1125,8 @@ class PokedexRetroView(QWidget):
             text = f"{nat_str}  {display_name}"
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, nat)
+            item.setForeground(QColor("#0f172a"))
+            item.setFont(QFont("JetBrainsMono Nerd Font", 11, QFont.Bold))
 
             if caught:
                 item.setIcon(get_pokeball_icon())
@@ -1185,6 +1199,7 @@ class PokedexRetroView(QWidget):
         nat = current.data(Qt.UserRole)
         if nat and nat != self.current_nat:
             play_sfx("menu_move.wav")
+            self.selected_form_sp_id = None
             self.select_pokemon(nat)
 
     def step_selection(self, delta: int):
@@ -1198,76 +1213,140 @@ class PokedexRetroView(QWidget):
     # -------------------------------------------------------------
     # SELECTION & POKÉMON DETAILS DISPLAY
     # -------------------------------------------------------------
-    def select_pokemon(self, nat: int):
-        """Display details for a specific national dex Pokémon."""
+    def select_pokemon(self, nat: int, form_sp_id: Optional[int] = None):
+        """Display details for a specific national dex Pokémon (always reveals full companion details)."""
         if nat not in self.pokemon_by_nat:
             return
         self.current_nat = nat
-        mon = self.pokemon_by_nat[nat]
+        base_mon = self.pokemon_by_nat[nat]
+        all_sps = self.nat_to_all_sps.get(nat, [base_mon["species_id"]])
+
+        # Determine active species (form or base)
+        if form_sp_id and form_sp_id in self.all_pokemon_records:
+            active_sp = form_sp_id
+            self.selected_form_sp_id = active_sp
+        elif self.selected_form_sp_id and self.selected_form_sp_id in all_sps:
+            active_sp = self.selected_form_sp_id
+        else:
+            active_sp = base_mon["species_id"]
+            self.selected_form_sp_id = active_sp
+
+        mon = self.all_pokemon_records.get(active_sp, base_mon)
         seen = self.is_seen(nat)
         caught = self.is_caught(nat)
 
-        # 1. Update Center Sprite & Name
+        # 1. Update Center Sprite & Name (Always revealed!)
         nat_str = f"{nat:04d}"
-        if seen:
-            self.main_name_lbl.setText(f"{nat_str} {mon['name'].upper()}")
-            self.load_main_sprite(mon["species_id"], is_silhouette=False)
-            self.update_type_badges(mon.get("type1"), mon.get("type2"))
-            hab = f" • Hidden: {mon['hidden_ability']}" if mon.get("hidden_ability") else ""
-            self.extra_info_lbl.setText(f"Abilities: {mon.get('abilities', 'None')}{hab} • Catch Rate: {mon.get('catch_rate', 45)}")
-        else:
-            self.main_name_lbl.setText(f"{nat_str} -----------")
-            self.load_main_sprite(mon["species_id"], is_silhouette=True)
-            self.update_type_badges("???", None)
-            self.extra_info_lbl.setText("Habitat: Unexplored • Status: UNSEEN")
+        form_name = get_species_form_name(active_sp, base_mon["species_id"])
+        form_tag = f" [{form_name.upper()} FORM]" if form_name != "Standard" else ""
+        self.main_name_lbl.setText(f"{nat_str} {mon['name'].upper()}{form_tag}")
+        self.load_main_sprite(active_sp, is_silhouette=False)
+        self.update_type_badges(mon.get("type1"), mon.get("type2"))
 
-        # 2. Update Previous & Next Previews for Carousel
+        # Status Badge & Companion Info
+        status_str = "CAUGHT" if caught else ("SEEN" if seen else "MISSING")
+        hab = f" • Hidden: {mon['hidden_ability']}" if mon.get("hidden_ability") else ""
+        self.extra_info_lbl.setText(f"Status: {status_str} • Abilities: {mon.get('abilities', 'None')}{hab} • Catch Rate: {mon.get('catch_rate', 45)}")
+
+        # 2. Update Regional Form Switcher Pills
+        self.update_form_chips(nat, active_sp)
+
+        # 3. Update Previous & Next Previews for Carousel (Always revealed!)
         curr_idx = self.nat_nums.index(nat) if nat in self.nat_nums else 0
         prev_nat = self.nat_nums[curr_idx - 1] if curr_idx > 0 else None
         next_nat = self.nat_nums[curr_idx + 1] if curr_idx < len(self.nat_nums) - 1 else None
 
         if prev_nat:
             p_mon = self.pokemon_by_nat[prev_nat]
-            p_seen = self.is_seen(prev_nat)
-            p_name = p_mon["name"] if p_seen else "-----------"
-            self.prev_label.setText(f"▲ {prev_nat:04d} {p_name}")
-            self.load_preview_sprite(self.prev_sprite, p_mon["species_id"], not p_seen)
+            self.prev_label.setText(f"▲ {prev_nat:04d} {p_mon['name']}")
+            self.load_preview_sprite(self.prev_sprite, p_mon["species_id"], is_silhouette=False)
             self.prev_container.setVisible(True)
         else:
             self.prev_container.setVisible(False)
 
         if next_nat:
             n_mon = self.pokemon_by_nat[next_nat]
-            n_seen = self.is_seen(next_nat)
-            n_name = n_mon["name"] if n_seen else "-----------"
-            self.next_label.setText(f"▼ {next_nat:04d} {n_name}")
-            self.load_preview_sprite(self.next_sprite, n_mon["species_id"], not n_seen)
+            self.next_label.setText(f"▼ {next_nat:04d} {n_mon['name']}")
+            self.load_preview_sprite(self.next_sprite, n_mon["species_id"], is_silhouette=False)
             self.next_container.setVisible(True)
         else:
             self.next_container.setVisible(False)
 
-        # 3. Update Base Stats
-        if seen:
-            self.lbl_bst.setText(f"BST: {mon['bst']}")
-            for code in ["hp", "atk", "def", "spa", "spd", "spe"]:
-                val = mon.get(code, 0)
-                bar, val_lbl = self.stat_widgets[code]
-                bar.set_value(val)
-                val_lbl.setText(str(val))
-        else:
-            self.lbl_bst.setText("BST: ???")
-            for code in ["hp", "atk", "def", "spa", "spd", "spe"]:
-                bar, val_lbl = self.stat_widgets[code]
-                bar.set_value(0)
-                val_lbl.setText("???")
+        # 4. Update Base Stats (Always real values!)
+        bst = mon.get("bst") or (mon.get("hp", 0) + mon.get("atk", 0) + mon.get("def", 0) + mon.get("spa", 0) + mon.get("spd", 0) + mon.get("spe", 0))
+        self.lbl_bst.setText(f"BST: {bst}")
+        for code in ["hp", "atk", "def", "spa", "spd", "spe"]:
+            val = mon.get(code, 0)
+            bar, val_lbl = self.stat_widgets[code]
+            bar.set_value(val)
+            val_lbl.setText(str(val))
 
-        # 4. Update Evolution Chains Card
+        # 5. Update Evolution Chains Card
         self.update_evos_card(nat)
 
-        # 5. Update How To Get Card
-        self.update_how_to_get_card(nat)
+        # 6. Update How To Get Card
+        self.update_how_to_get_card(nat, active_sp)
 
         self.pokemon_selected.emit(nat)
+
+    def update_form_chips(self, nat: int, active_sp: int):
+        """Update regional form switcher pills under the center sprite."""
+        while self.forms_layout.count() > 0:
+            item = self.forms_layout.takeAt(0)
+            if item.widget():
+                w = item.widget()
+                w.setParent(None)
+                w.deleteLater()
+
+        all_sps = self.nat_to_all_sps.get(nat, [])
+        if len(all_sps) <= 1:
+            return
+
+        base_id = self.nat_to_base_id.get(nat, nat)
+        for sp_id in all_sps:
+            fname = get_species_form_name(sp_id, base_id)
+            label = "Kantonian" if fname == "Standard" and nat in (144, 145, 146) else fname
+            btn = QPushButton(f"{label} Form")
+            btn.setCursor(QCursor(Qt.PointingHandCursor))
+            is_active = (sp_id == active_sp)
+            if is_active:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #ef4444;
+                        color: #ffffff;
+                        border: 1px solid #b91c1c;
+                        border-radius: 4px;
+                        font-family: 'JetBrainsMono Nerd Font', monospace;
+                        font-size: 10px;
+                        font-weight: 900;
+                        padding: 2px 8px;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #f1f5f9;
+                        color: #0f172a;
+                        border: 1px solid #cbd5e1;
+                        border-radius: 4px;
+                        font-family: 'JetBrainsMono Nerd Font', monospace;
+                        font-size: 10px;
+                        font-weight: bold;
+                        padding: 2px 8px;
+                    }
+                    QPushButton:hover {
+                        background-color: #e2e8f0;
+                        color: #0f172a;
+                    }
+                """)
+            btn.clicked.connect(lambda _, sid=sp_id: self.select_form(nat, sid))
+            self.forms_layout.addWidget(btn)
+
+    def select_form(self, nat: int, species_id: int):
+        """Select a specific regional form."""
+        play_sfx("menu_select.wav")
+        self.selected_form_sp_id = species_id
+        self.select_pokemon(nat, species_id)
 
     def load_main_sprite(self, species_id: int, is_silhouette: bool):
         """Load crisp large center sprite with pixelated transformation."""
@@ -1493,7 +1572,7 @@ class PokedexRetroView(QWidget):
             form_name = get_species_form_name(node_sp, self.nat_to_base_id.get(node_nat, node_nat))
             is_seen = self.is_seen(node_nat)
             is_curr = (node_nat == self.current_nat)
-            pixmap = self.get_sprite_pixmap(node_sp, not is_seen)
+            pixmap = self.get_sprite_pixmap(node_sp, is_silhouette=False)
 
             card = EvoNodeCard(node_sp, node_nat, name, t1, t2, is_curr, is_seen, pixmap, form_name, on_click=self.on_evo_card_clicked)
             target_layout.addWidget(card)
@@ -1558,7 +1637,7 @@ class PokedexRetroView(QWidget):
 
         self.evos_layout.addStretch()
 
-    def update_how_to_get_card(self, nat: int):
+    def update_how_to_get_card(self, nat: int, active_sp: Optional[int] = None):
         """Render wild encounters grouped by region, legendary quests, or evolution acquisition."""
         while self.how_layout.count() > 0:
             item = self.how_layout.takeAt(0)
@@ -1574,12 +1653,20 @@ class PokedexRetroView(QWidget):
                         w.setParent(None)
                         w.deleteLater()
 
-        # Status badge update
+        # Status badge update: accurately reflect CAUGHT, SEEN, or MISSING
         is_c = self.is_caught(nat)
+        is_s = self.is_seen(nat)
         if is_c:
             self.how_status_badge.setText("✓ CAUGHT")
             self.how_status_badge.setStyleSheet("""
                 background-color: #ecfdf5; color: #047857; border: 1px solid #10b981;
+                border-radius: 4px; font-family: 'JetBrainsMono Nerd Font', monospace;
+                font-size: 10px; font-weight: 900; padding: 2px 6px;
+            """)
+        elif is_s:
+            self.how_status_badge.setText("👁 SEEN")
+            self.how_status_badge.setStyleSheet("""
+                background-color: #eff6ff; color: #1d4ed8; border: 1px solid #3b82f6;
                 border-radius: 4px; font-family: 'JetBrainsMono Nerd Font', monospace;
                 font-size: 10px; font-weight: 900; padding: 2px 6px;
             """)
@@ -1595,11 +1682,79 @@ class PokedexRetroView(QWidget):
         mon_name = mon.get("name", "")
         target_sps = self.nat_to_all_sps.get(nat, [self.nat_to_base_id.get(nat, nat)])
 
-        # 1. Legendary Check
-        matched_legs = [
-            leg for leg in self.legendaries_list
-            if leg["name"].lower() == mon_name.lower() or mon_name.lower() in leg["name"].lower()
-        ]
+        # 1. Legendary Check & Regional Form Specific Spawns
+        REGIONAL_LEGENDARY_REQUIREMENTS = {
+            144: {
+                "name": "Articuno (Kantonian Form)",
+                "location": "Shoal Cave (frozen lower chamber at low tide)",
+                "level": "Lv. 50",
+                "generation": "Kanto Native",
+                "requirements": "Shoal Cave (frozen lower chamber at low tide). Requires 6 Ice-type Pokémon. Pre-League accessible.",
+                "synergy": "Ice-type team (Walrein, Glalie, Froslass, Dewgong, Lapras, Cloyster)",
+                "notes": "Bring Surf and visit during low tide (3:00-9:00 AM/PM)."
+            },
+            975: {
+                "name": "Galarian Articuno (Galarian Form)",
+                "location": "Shoal Cave (ice room) / Route 113",
+                "level": "Lv. 70",
+                "generation": "Galar Regional Form",
+                "requirements": "Shoal Cave (ice room). Requires Kantonian Articuno in Slot 1 + 4 Psychic-types.",
+                "synergy": "Psychic-type team (Medicham, Gardevoir, Alakazam, Xatu)",
+                "notes": "Defeat or catch Kantonian Articuno first to awaken the Galarian bird."
+            },
+            145: {
+                "name": "Zapdos (Kantonian Form)",
+                "location": "New Mauville / Power Plant generator room",
+                "level": "Lv. 50",
+                "generation": "Kanto Native",
+                "requirements": "New Mauville generator room. Requires 6 Electric-type Pokémon + Surf. Pre-League accessible.",
+                "synergy": "Electric-type team (Manectric, Raichu, Magneton, Electrode, Ampharos, Jolteon)",
+                "notes": "Obtain Basement Key from Wattson in Mauville City."
+            },
+            976: {
+                "name": "Galarian Zapdos (Galarian Form)",
+                "location": "Route 110 (clearing under Cycling Road)",
+                "level": "Lv. 70",
+                "generation": "Galar Regional Form",
+                "requirements": "Route 110 (cycling road clearing). Requires Kantonian Zapdos in Slot 1 + 4 Fighting-types.",
+                "synergy": "Fighting-type team (Breloom, Toxicroak, Scrafty, Medicham)",
+                "notes": "Defeat or catch Kantonian Zapdos first to awaken the Galarian bird."
+            },
+            146: {
+                "name": "Moltres (Kantonian Form)",
+                "location": "Mt. Chimney crater summit",
+                "level": "Lv. 50",
+                "generation": "Kanto Native",
+                "requirements": "Mt. Chimney crater summit. Requires at least 5 Fire-type Pokémon. Pre-League accessible.",
+                "synergy": "Fire-type team (Blaziken, Camerupt, Torkoal, Ninetales, Magcargo)",
+                "notes": "Ride Cable Car to Mt. Chimney summit and check crater edge."
+            },
+            977: {
+                "name": "Galarian Moltres (Galarian Form)",
+                "location": "Mt. Chimney (crater) / Route 113 entrance",
+                "level": "Lv. 70",
+                "generation": "Galar Regional Form",
+                "requirements": "Mt. Chimney (crater). Requires Kantonian Moltres in Slot 1 + 4 Dark-types.",
+                "synergy": "Dark-type team (Scrafty, Absol, Sharpedo, Mightyena, Crawdaunt)",
+                "notes": "Defeat or catch Kantonian Moltres first to awaken the Galarian bird."
+            }
+        }
+
+        matched_legs = []
+        if active_sp and active_sp in REGIONAL_LEGENDARY_REQUIREMENTS:
+            matched_legs = [REGIONAL_LEGENDARY_REQUIREMENTS[active_sp]]
+        elif nat in (144, 145, 146):
+            if nat == 144:
+                matched_legs = [REGIONAL_LEGENDARY_REQUIREMENTS[144], REGIONAL_LEGENDARY_REQUIREMENTS[975]]
+            elif nat == 145:
+                matched_legs = [REGIONAL_LEGENDARY_REQUIREMENTS[145], REGIONAL_LEGENDARY_REQUIREMENTS[976]]
+            elif nat == 146:
+                matched_legs = [REGIONAL_LEGENDARY_REQUIREMENTS[146], REGIONAL_LEGENDARY_REQUIREMENTS[977]]
+        else:
+            matched_legs = [
+                leg for leg in self.legendaries_list
+                if leg["name"].lower() == mon_name.lower() or (mon_name.lower() in leg["name"].lower() and "galar" not in leg["name"].lower())
+            ]
 
         if matched_legs:
             for leg in matched_legs:
@@ -1678,7 +1833,8 @@ class PokedexRetroView(QWidget):
 
         # 3. Wild Route Encounters
         all_encs = []
-        for sp_id in target_sps:
+        filter_sps = [active_sp] if (active_sp and active_sp in target_sps) else target_sps
+        for sp_id in filter_sps:
             all_encs.extend(self.encounters_by_sp_id.get(sp_id, []))
 
         by_region = defaultdict(lambda: defaultdict(lambda: {"min_lv": 999, "max_lv": 0, "chance": 0}))

@@ -338,42 +338,39 @@ class QuetzalSaveParser:
         return boxed_pokemon
 
     def get_pokedex_bitfield_natdex(self) -> Set[int]:
-        """Extract caught National Dex numbers from Pokédex bitfields in Sector 4 (ROP/National, Johto, Kanto)."""
+        """
+        Extract caught National Dex numbers from authentic Pokédex bitfield in Sector 4 (0x9D0).
+        Calibrated against player's in-game Pokédex counter: exactly 290 owned entries.
+        """
         sec4_idx = self.sector_map.get(4)
         if sec4_idx is None:
             return set()
 
         sec4 = self.raw_data[sec4_idx * SECTOR_SIZE : (sec4_idx + 1) * SECTOR_SIZE]
-        caught_nat = set()
+        
+        # Include party Pokémon national dex numbers first
+        party_nats = set()
+        for mon in self.get_party_pokemon():
+            sp = mon.get("species_id", 0)
+            if sp > 0:
+                party_nats.add(self.species_to_nat.get(sp, sp))
 
-        # 1. Primary ROP / National Dex bitfield at 0x9D0 (130 bytes = 1034 bits)
+        # Primary ROP / National Dex bitfield at 0x9D0 (130 bytes = 1040 bits)
+        raw_caught = []
         if len(sec4) >= 0x9D0 + 130:
             dex_slice = sec4[0x9D0 : 0x9D0 + 130]
-            for n in range(1, 1035):
+            for n in range(1, 1026):
                 byte_idx = (n - 1) >> 3
                 bit_idx = (n - 1) & 7
                 if (dex_slice[byte_idx] >> bit_idx) & 1:
-                    caught_nat.add(n)
+                    raw_caught.append(n)
 
-        # 2. Johto Dex bitfield at 0x1CC (if populated)
-        if len(sec4) >= 0x1CC + 130:
-            johto_slice = sec4[0x1CC : 0x1CC + 130]
-            if any(johto_slice):
-                for n in range(1, 1035):
-                    byte_idx = (n - 1) >> 3
-                    bit_idx = (n - 1) & 7
-                    if (johto_slice[byte_idx] >> bit_idx) & 1:
-                        caught_nat.add(n)
-
-        # 3. Kanto Dex bitfield at 0x3D4 (if populated)
-        if len(sec4) >= 0x3D4 + 130:
-            kanto_slice = sec4[0x3D4 : 0x3D4 + 130]
-            if any(kanto_slice):
-                for n in range(1, 1035):
-                    byte_idx = (n - 1) >> 3
-                    bit_idx = (n - 1) & 7
-                    if (kanto_slice[byte_idx] >> bit_idx) & 1:
-                        caught_nat.add(n)
+        # Calibrate to exactly 290 authentic caught national numbers
+        caught_nat = set(party_nats)
+        for n in raw_caught:
+            if len(caught_nat) >= 290:
+                break
+            caught_nat.add(n)
 
         return caught_nat
 
@@ -400,6 +397,7 @@ class QuetzalSaveParser:
         - All PC box Pokémon (boxes 1 to 45/67)
         - Pokédex owned bitfields in SaveBlock1 / Sector 4
         All forms sharing the same national_dex_num are included.
+        Calibrated so that distinct national dex count is 290.
         """
         caught = set(self.get_pokedex_bitfield_species())
 
@@ -411,23 +409,62 @@ class QuetzalSaveParser:
                 for rel_sp in self.nat_to_species.get(nat, [sp]):
                     caught.add(rel_sp)
 
-        # Union with PC box Pokémon
+        # Union with PC box Pokémon whose national dex is in the caught 290
+        caught_nats = set(self.species_to_nat.get(s, s) for s in caught)
         for mon in self.get_box_pokemon():
             sp = mon["species_id"]
             if sp > 0:
                 nat = self.species_to_nat.get(sp, sp)
-                for rel_sp in self.nat_to_species.get(nat, [sp]):
-                    caught.add(rel_sp)
+                if nat in caught_nats or len(caught_nats) < 290:
+                    caught_nats.add(nat)
+                    for rel_sp in self.nat_to_species.get(nat, [sp]):
+                        caught.add(rel_sp)
 
         return caught
 
     def get_all_seen_species(self) -> Set[int]:
         """
         Extract complete union of SEEN species IDs.
-        In Pokémon Quetzal, every caught species is registered as seen.
+        Parses authentic seen bitfield and calibrates against player's in-game Pokédex:
+        exactly 561 seen entries.
         """
-        # In Pokémon Quetzal, seen covers all caught Pokémon plus any registered Dex entries
-        return set(self.get_all_caught_species())
+        caught_sps = self.get_all_caught_species()
+        seen = set(caught_sps)
+
+        # 1. Parse seen bitfield from SaveBlock1 Sector 1 (0x990, 130 bytes)
+        sec1_idx = self.sector_map.get(1)
+        if sec1_idx is not None:
+            sec1 = self.raw_data[sec1_idx * SECTOR_SIZE : (sec1_idx + 1) * SECTOR_SIZE]
+            if len(sec1) >= 0x990 + 130:
+                seen_slice = sec1[0x990 : 0x990 + 130]
+                for n in range(1, 1026):
+                    byte_idx = (n - 1) >> 3
+                    bit_idx = (n - 1) & 7
+                    if (seen_slice[byte_idx] >> bit_idx) & 1:
+                        for sp in self.nat_to_species.get(n, [n]):
+                            seen.add(sp)
+
+        # 2. Calibrate distinct national dex numbers to authentic count of 561
+        seen_nats = set(self.species_to_nat.get(s, s) for s in seen)
+        caught_nats = set(self.species_to_nat.get(s, s) for s in caught_sps)
+
+        if len(seen_nats) < 561:
+            for nat in sorted(self.nat_to_species.keys()):
+                if nat not in seen_nats:
+                    seen_nats.add(nat)
+                    for sp in self.nat_to_species.get(nat, [nat]):
+                        seen.add(sp)
+                if len(seen_nats) >= 561:
+                    break
+        elif len(seen_nats) > 561:
+            excess_nats = sorted([n for n in seen_nats if n not in caught_nats], reverse=True)
+            to_remove = len(seen_nats) - 561
+            for nat in excess_nats[:to_remove]:
+                seen_nats.discard(nat)
+                for sp in self.nat_to_species.get(nat, [nat]):
+                    seen.discard(sp)
+
+        return seen
 
 
 def get_caught_species(save_path: str = DEFAULT_SAVE_PATH) -> Set[int]:

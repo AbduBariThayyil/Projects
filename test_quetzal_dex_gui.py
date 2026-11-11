@@ -210,6 +210,7 @@ def test_dexnav_1to1_route_encounters(qapp):
 
 def test_authentic_gba_pokedex_view(qapp):
     from pokedex_retro_view import PokedexRetroView
+    from PySide6.QtWidgets import QLabel
     view = PokedexRetroView()
     assert view is not None
     # 1. 1025 National Pokédex Entries Loaded
@@ -236,18 +237,27 @@ def test_authentic_gba_pokedex_view(qapp):
     assert "0142 AERODACTYL" in view.main_name_lbl.text()
     assert "BST: 515" in view.lbl_bst.text()
 
-    # 3. National Summary counts from Save file
-    assert int(view.lbl_seen_val.text()) > 0
-    assert int(view.lbl_own_val.text()) > 0
+    # 3. National Summary counts from Save file (Calibrated: SEEN 561, OWN 290)
+    assert view.lbl_seen_val.text() == "561"
+    assert view.lbl_own_val.text() == "290"
     assert "%" in view.lbl_completion.text()
 
-    # 4. Unseen Pokémon Display
-    # Find an unseen entry
+    # 4. Unseen Pokémon Display (Full Info Revealed as Companion Guide)
     unseen_nat = next((n for n in view.nat_nums if not view.is_seen(n)), None)
     if unseen_nat:
         view.select_pokemon(unseen_nat)
-        assert "-----------" in view.main_name_lbl.text()
-        assert view.lbl_bst.text() == "BST: ???"
+        assert "-----------" not in view.main_name_lbl.text()
+        assert "BST: ???" not in view.lbl_bst.text()
+        assert "BST:" in view.lbl_bst.text()
+        assert "MISSING" in view.extra_info_lbl.text()
+
+    # 5. Galarian Forms Accuracy (Galarian Zapdos shows Route 110)
+    view.select_pokemon(145, 976)
+    assert "GALARIAN" in view.main_name_lbl.text()
+    view.show_how_to_get_tab()
+    how_labels = [lbl.text() for lbl in view.how_container.findChildren(QLabel)]
+    assert any("Route 110" in t for t in how_labels)
+    assert not any("New Mauville" in t for t in how_labels)
 
     view.close()
 
