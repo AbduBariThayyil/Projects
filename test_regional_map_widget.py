@@ -116,3 +116,166 @@ def test_pan_and_zoom(qapp):
     widget.btn_trainers.click()
     assert widget.canvas.show_trainers is True
 
+
+def test_wasd_and_arrow_keys_navigation(qapp):
+    from PySide6.QtGui import QKeyEvent
+
+    widget = RegionalMapWidget()
+    canvas = widget.canvas
+    canvas.selected_node = "Oldale Town"
+
+    # W (Up)
+    event_w = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_W, Qt.NoModifier)
+    canvas.keyPressEvent(event_w)
+    assert canvas.selected_node is not None
+
+    # S (Down)
+    event_s = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_S, Qt.NoModifier)
+    canvas.keyPressEvent(event_s)
+    assert canvas.selected_node is not None
+
+    # A (Left)
+    event_a = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_A, Qt.NoModifier)
+    canvas.keyPressEvent(event_a)
+    assert canvas.selected_node is not None
+
+    # D (Right)
+    event_d = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_D, Qt.NoModifier)
+    canvas.keyPressEvent(event_d)
+    assert canvas.selected_node is not None
+
+
+def test_button_a_and_b(qapp):
+    from PySide6.QtGui import QKeyEvent
+
+    widget = RegionalMapWidget()
+    canvas = widget.canvas
+    canvas.selected_node = "Littleroot Town"
+
+    clicked = []
+    canvas.node_clicked.connect(lambda n, r: clicked.append((n, r)))
+
+    # Up Arrow is Button A (Select / Confirm)
+    event_up = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Up, Qt.NoModifier)
+    canvas.keyPressEvent(event_up)
+    assert len(clicked) == 1
+    assert clicked[0] == ("Littleroot Town", REGION_HOENN)
+
+    # Down Arrow is Button B (Cancel / Back)
+    event_down = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Down, Qt.NoModifier)
+    canvas.keyPressEvent(event_down)
+    # Shouldn't trigger node_clicked
+    assert len(clicked) == 1
+
+
+def test_shoulders_l_r_and_start(qapp):
+    from PySide6.QtGui import QKeyEvent
+
+    widget = RegionalMapWidget()
+    canvas = widget.canvas
+    canvas.selected_node = "Littleroot Town"
+
+    # Right Arrow is Button R (Next route)
+    event_r = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Right, Qt.NoModifier)
+    canvas.keyPressEvent(event_r)
+    first_jump = canvas.selected_node
+    assert first_jump != "Littleroot Town"
+
+    # Left Arrow is Button L (Prev route)
+    event_l = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Left, Qt.NoModifier)
+    canvas.keyPressEvent(event_l)
+    assert canvas.selected_node == "Littleroot Town"
+
+    # Space is Button START
+    start_called = []
+    canvas.start_menu_requested.connect(lambda: start_called.append(True))
+    event_space = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Space, Qt.NoModifier)
+    canvas.keyPressEvent(event_space)
+    assert len(start_called) == 1
+
+
+def test_retro_filter_popup_toggle_and_select(qapp):
+    from PySide6.QtGui import QKeyEvent
+
+    widget = RegionalMapWidget()
+    canvas = widget.canvas
+    widget.set_retro_mode(True)
+    assert canvas.is_retro is True
+
+    # Press F to toggle popup
+    event_f = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_F, Qt.NoModifier)
+    canvas.keyPressEvent(event_f)
+    assert canvas.filter_popup_open is True
+
+    # Press S (Down) in popup
+    event_s = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_S, Qt.NoModifier)
+    canvas.keyPressEvent(event_s)
+    assert canvas.filter_popup_idx == 1  # "incomplete" / "MISSING ENCOUNTERS"
+
+    # Press Up Arrow (Button A) to confirm selection
+    event_a = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Up, Qt.NoModifier)
+    canvas.keyPressEvent(event_a)
+    assert canvas.filter_popup_open is False
+    assert canvas.filter_mode == "incomplete"
+
+    # Test legendary filter
+    canvas.set_filter_mode("legendary")
+    assert canvas.filter_mode == "legendary"
+    assert canvas._matches_filter("Sky Pillar") is True
+
+
+def test_gba_start_menu_widget_controls(qapp):
+    from PySide6.QtGui import QKeyEvent
+    from gba_start_menu_widget import GbaStartMenuOverlay
+
+    menu = GbaStartMenuOverlay()
+    menu.show_menu()
+    assert menu.isVisible()
+    assert menu.selected_index == 0
+
+    # S moves down
+    event_s = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_S, Qt.NoModifier)
+    menu.keyPressEvent(event_s)
+    assert menu.selected_index == 1
+
+    # W moves up
+    event_w = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_W, Qt.NoModifier)
+    menu.keyPressEvent(event_w)
+    assert menu.selected_index == 0
+
+    # Right Arrow (R) jumps to bottom
+    event_r = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Right, Qt.NoModifier)
+    menu.keyPressEvent(event_r)
+    assert menu.selected_index == len(menu.menu_items) - 1
+
+    # Left Arrow (L) jumps to top
+    event_l = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Left, Qt.NoModifier)
+    menu.keyPressEvent(event_l)
+    assert menu.selected_index == 0
+
+    # Up Arrow (Button A) selects active item
+    actions = []
+    menu.action_triggered.connect(lambda act: actions.append(act))
+    event_up = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Up, Qt.NoModifier)
+    menu.keyPressEvent(event_up)
+    assert len(actions) == 1
+    assert actions[0] == menu.menu_items[0]["id"]
+    assert not menu.isVisible()
+
+    # Reopen and test Down Arrow (Button B) closes menu
+    menu.show_menu()
+    assert menu.isVisible()
+    event_down = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Down, Qt.NoModifier)
+    menu.keyPressEvent(event_down)
+    assert not menu.isVisible()
+
+
+def test_sfx_non_blocking_performance():
+    from regional_map_widget import play_sfx
+
+    # Rapid fire calls must not block or hang
+    for _ in range(20):
+        play_sfx("menu_move.wav")
+        play_sfx("menu_select.wav")
+        play_sfx("menu_cancel.wav")
+

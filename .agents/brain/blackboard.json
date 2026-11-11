@@ -1,5 +1,49 @@
 {
-  "active_agents": {},
-  "file_locks": {},
+  "active_agents": {
+    "agent-dexnav": {
+      "role": "DexNav Visuals Specialist",
+      "project": "quetzal-companion",
+      "registered_at": 1794415797.495995,
+      "status": "active"
+    },
+    "agent-pokedex": {
+      "role": "Pokedex & Save Specialist",
+      "project": "quetzal-companion",
+      "registered_at": 1794415797.566904,
+      "status": "active"
+    },
+    "agent-audio": {
+      "role": "Audio Controls & Anti-Freeze Specialist",
+      "project": "quetzal-companion",
+      "registered_at": 1794415797.630055,
+      "status": "active"
+    }
+  },
+  "file_locks": {
+    "/home/vibecoder/Projects/pokedex_retro_view.py": {
+      "agent_id": "agent-pokedex",
+      "locked_at": 1794415806.4765842
+    },
+    "/home/vibecoder/Projects/quetzal_save_reader.py": {
+      "agent_id": "agent-pokedex",
+      "locked_at": 1794415806.54058
+    },
+    "/home/vibecoder/Projects/regional_map_widget.py": {
+      "agent_id": "agent-audio",
+      "locked_at": 1794415806.6020372
+    },
+    "/home/vibecoder/Projects/gba_start_menu_widget.py": {
+      "agent_id": "agent-audio",
+      "locked_at": 1794415806.6690283
+    },
+    "/home/vibecoder/Projects/update_exact_hidden_pokemon.py": {
+      "agent_id": "agent-dexnav",
+      "locked_at": 1794415806.734309
+    },
+    "/home/vibecoder/Projects/quetzal_dex_gui.py": {
+      "agent_id": "agent-dexnav",
+      "locked_at": 1794415861.652061
+    }
+  },
   "session_tasks": []
 }

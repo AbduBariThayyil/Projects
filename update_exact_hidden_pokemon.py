@@ -10,7 +10,7 @@ c.execute("DELETE FROM encounters WHERE region = 'Hoenn' AND method = 'Hidden Ra
 hoenn_routes_hidden = [
     ("ROUTE 101", 954, "Vulpix"),
     ("ROUTE 102", 570, "Zorua"),
-    ("ROUTE 103", 132, "Ditto"),
+    ("ROUTE 103", 885, "Dreepy"),
     ("ROUTE 104", 132, "Ditto"),
     ("ROUTE 105", 132, "Ditto"),
     ("ROUTE 106", 627, "Rufflet"),

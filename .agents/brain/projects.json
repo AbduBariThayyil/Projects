@@ -193,6 +193,18 @@
         "Bonjour"
       ],
       "description": "Native crossplay GBA Link Cable emulator connecting Arch Linux and iOS with synchronized fast-forward and LAN auto-discovery"
+    },
+    "quetzal-companion": {
+      "path": "quetzal-companion",
+      "context": "quetzal-companion/context.md",
+      "type": "retro-companion",
+      "stack": [
+        "Python",
+        "PySide6",
+        "SQLite3",
+        "GBA"
+      ],
+      "description": "Pok\u00e9mon Quetzal Emerald GBA Companion Application and Pok\u00e9dex"
     }
   }
 }

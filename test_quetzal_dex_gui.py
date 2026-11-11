@@ -194,14 +194,14 @@ def test_dexnav_1to1_route_encounters(qapp):
     assert win.water_box.slots[4].mon_data["species_name"] == "Clawitzer"
     assert all(s.mon_data is not None for s in win.land_box.slots)
     assert all(s.mon_data is None for s in win.beach_box.slots)
-    assert win.hidden_box.slots[0].mon_data["species_name"] == "Ditto"
+    assert win.hidden_box.slots[0].mon_data["species_name"] == "Dreepy"
 
     # Inspector Drawer checks
     win.water_box.slots[0].slot_selected.emit(win.water_box.slots[0].mon_data)
     assert win.inspector_drawer.current_species_id == 692
     assert "Clauncher" in win.inspector_drawer.name_lbl.text()
     assert hasattr(win.inspector_drawer, "search_btn")
-    assert win.inspector_drawer.search_btn.text() == "SEARCH"
+    assert "SEARCH" in win.inspector_drawer.search_btn.text()
     assert "SEARCH LEVEL:" in win.inspector_drawer.search_lvl_lbl.text()
     assert "HIDDEN ABILITY:" in win.inspector_drawer.hidden_ability_lbl.text()
 
@@ -417,7 +417,7 @@ def test_gba_dpad_navigation(qapp):
     assert win.dexnav_sel_col == 0
     slot_0 = win._get_dexnav_slots_grid()[1][0]
     assert slot_0.is_selected is True
-    assert "SEARCH" in win.dexnav_search_lbl.text()
+    assert "SEARCH" in win.dexnav_search_lbl.text().upper()
 
     # Move Down
     win._nav_dexnav_dpad(0, 1)

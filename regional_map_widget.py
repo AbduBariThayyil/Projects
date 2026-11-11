@@ -28,12 +28,15 @@ import os
 import math
 import sqlite3
 import subprocess
+import shutil
+import queue
+import threading
 from typing import Dict, List, Tuple, Optional, Any, Set
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer, QSize
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QFontMetrics,
-    QPainterPath, QLinearGradient, QRadialGradient, QCursor, QPixmap
+    QPainterPath, QLinearGradient, QRadialGradient, QCursor, QPixmap, QKeyEvent, QMouseEvent
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -42,19 +45,83 @@ from PySide6.QtWidgets import (
 
 PROJECT_DIR = "/home/vibecoder/Projects"
 SFX_DIR = os.path.join(PROJECT_DIR, "assets", "sfx")
+FLOWER_FRAME_PATH = os.path.join(PROJECT_DIR, "assets", "flower_frame_9slice.png")
 
-def play_sfx(name: str):
-    """Play sound effect non-blockingly."""
-    fname = name if name.endswith(".wav") else f"{name}.wav"
-    wav = os.path.join(SFX_DIR, fname)
-    if os.path.exists(wav):
+
+class NonBlockingSoundPlayer:
+    """Thread-safe non-blocking audio dispatcher preventing micro-stutters and zombie processes."""
+    _instance = None
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self._queue = queue.Queue(maxsize=4)
+        self._cmd = None
+        if shutil.which("paplay"):
+            self._cmd = ["paplay"]
+        elif shutil.which("pw-play"):
+            self._cmd = ["pw-play"]
+        elif shutil.which("aplay"):
+            self._cmd = ["aplay", "-q"]
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    @classmethod
+    def get_instance(cls):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+
+    def play(self, wav_path: str):
+        if not self._cmd or not os.path.exists(wav_path):
+            return
         try:
-            subprocess.Popen(["paplay", wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
+            self._queue.put_nowait(wav_path)
+        except queue.Full:
+            pass
+
+    def _run(self):
+        while True:
             try:
-                subprocess.Popen(["pw-play", wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                wav_path = self._queue.get()
+                if wav_path is None:
+                    break
+                subprocess.run(
+                    self._cmd + [wav_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False
+                )
+                self._queue.task_done()
             except Exception:
                 pass
+
+
+def play_sfx(name: str):
+    """Play sound effect non-blockingly with zero process churning."""
+    fname = name if name.endswith(".wav") else f"{name}.wav"
+    wav = os.path.join(SFX_DIR, fname)
+    NonBlockingSoundPlayer.get_instance().play(wav)
+
+
+# Master reference set of iconic legendary encounter nodes across all 4 regions
+LEGENDARY_LOCATIONS = {
+    "Sky Pillar", "Cave of Origin", "Meteor Falls", "New Mauville",
+    "Desert Underpass", "Mirage Tower", "Granite Cave", "Abandoned Ship",
+    "Shoal Cave", "Seafloor Cavern", "Victory Road", "Fiery Path",
+    "Jagged Pass", "Artisan Cave", "Altering Cave", "Safari Zone",
+    "Route 119", "Route 120", "Route 111", "Route 131", "Route 134",
+    "Route 105", "Route 127", "Route 129", "Mossdeep City", "Sootopolis City",
+    "Petalburg Woods", "Southern Island", "Birth Island", "Faraway Island",
+    "Navel Rock", "Island Cave", "Ancient Tomb", "Desert Ruins",
+    # Johto / Kanto / Sevii
+    "Whirl Islands", "Mt. Silver", "Tin Tower", "Bell Tower",
+    "Burned Tower", "Dragon's Den", "Lake of Rage", "Dark Cave",
+    "Power Plant", "Seafoam Islands", "Cerulean Cave", "Mt. Moon",
+    "Rock Tunnel", "Viridian Forest", "Pokemon Mansion",
+    "Mt. Ember", "Icefall Cave", "Dotted Hole", "Pattern Bush",
+    "Lost Cave", "Canyon Entrance", "Ruin Valley"
+}
 
 # ============================================================================
 # CONSTANTS & THEMES
@@ -589,6 +656,8 @@ class MapCanvas(QWidget):
 
     node_clicked = Signal(str, str)   # (location_name, region)
     node_hovered = Signal(str, str)   # (location_name, region)
+    filter_changed = Signal(str)      # (filter_mode)
+    start_menu_requested = Signal()   # Triggered by Space / Button START
 
     VIRTUAL_W = 960.0
     VIRTUAL_H = 640.0
@@ -596,6 +665,13 @@ class MapCanvas(QWidget):
     PAD_Y = 50.0
     GRID_COLS = 28.0
     GRID_ROWS = 20.0
+
+    FILTER_MODES = [
+        ("all", "ALL ROUTES"),
+        ("incomplete", "MISSING ENCOUNTERS"),
+        ("mastered", "COMPLETED (100%)"),
+        ("legendary", "LEGENDARY LOCATIONS"),
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -608,6 +684,7 @@ class MapCanvas(QWidget):
         self.hovered_node: Optional[str] = None
         self.selected_node: Optional[str] = None
         self.mouse_pos = QPointF(0, 0)
+        self.is_retro = False
 
         # Route stats: normalized_name -> (caught_count, total_count)
         self.caught_stats: Dict[str, Tuple[int, int]] = {}
@@ -619,8 +696,19 @@ class MapCanvas(QWidget):
         self.trainers_by_loc: Dict[str, List[Dict[str, str]]] = {}
         # Highlighted locations (set of normalized names)
         self.highlighted_nodes: Set[str] = set()
-        # Filter mode: "all", "incomplete", "mastered"
+
+        # Filter mode: "all", "incomplete", "mastered", "legendary"
         self.filter_mode: str = "all"
+        self.filter_popup_open: bool = False
+        self.filter_popup_idx: int = 0
+        self.legendary_nodes: Set[str] = {normalize_loc(l) for l in LEGENDARY_LOCATIONS}
+        self.filter_pill_rect = QRectF(16, 14, 260, 28)
+        self.filter_popup_rect = QRectF(320, 210, 320, 215)
+
+        # Flower frame 9-slice pixmap
+        self.flower_pm: Optional[QPixmap] = None
+        if os.path.exists(FLOWER_FRAME_PATH):
+            self.flower_pm = QPixmap(FLOWER_FRAME_PATH)
 
         # Interactive Pan & Zoom Controls
         self.zoom_factor = 1.0
@@ -651,6 +739,121 @@ class MapCanvas(QWidget):
         self.pulse_timer = QTimer(self)
         self.pulse_timer.timeout.connect(self._on_pulse)
         self.pulse_timer.start(50)  # ~20 FPS for gentle pulse
+
+    def _is_legendary(self, name: str) -> bool:
+        """Check whether location is home to a legendary encounter."""
+        norm = normalize_loc(name)
+        if norm in self.legendary_nodes:
+            return True
+        for leg in LEGENDARY_LOCATIONS:
+            nleg = normalize_loc(leg)
+            if norm == nleg or norm in nleg or nleg in norm:
+                return True
+        return False
+
+    def _matches_filter(self, name: str) -> bool:
+        """Check whether node matches current filter criteria."""
+        if self.filter_mode == "all":
+            return True
+        status = self._get_status(name)
+        if self.filter_mode == "incomplete":
+            return status != "complete"
+        elif self.filter_mode == "mastered":
+            return status == "complete"
+        elif self.filter_mode == "legendary":
+            return self._is_legendary(name)
+        return True
+
+    def _count_matching(self, mode: str) -> int:
+        """Count locations in current region matching filter mode."""
+        nodes = REGIONAL_MAP_DATA.get(self.region, {}).get("nodes", {})
+        if mode == "all":
+            return len(nodes)
+        cnt = 0
+        for name in nodes.keys():
+            status = self._get_status(name)
+            if mode == "incomplete" and status != "complete":
+                cnt += 1
+            elif mode == "mastered" and status == "complete":
+                cnt += 1
+            elif mode == "legendary" and self._is_legendary(name):
+                cnt += 1
+        return cnt
+
+    def set_filter_mode(self, mode: str):
+        """Set route filtering mode and sync popup selection."""
+        valid = [k for k, _ in self.FILTER_MODES]
+        if mode not in valid:
+            mode = "all"
+        self.filter_mode = mode
+        for idx, (k, _) in enumerate(self.FILTER_MODES):
+            if k == mode:
+                self.filter_popup_idx = idx
+                break
+        self.filter_changed.emit(mode)
+        self.update()
+
+    def toggle_filter_popup(self):
+        """Toggle retro GBA filter modal popup."""
+        self.filter_popup_open = not self.filter_popup_open
+        if self.filter_popup_open:
+            for idx, (k, _) in enumerate(self.FILTER_MODES):
+                if k == self.filter_mode:
+                    self.filter_popup_idx = idx
+                    break
+            play_sfx("menu_select.wav")
+        else:
+            play_sfx("menu_cancel.wav")
+        self.update()
+
+    def _jump_node(self, direction: int):
+        """Sequential route jump (Button L / R), filtering by active mode."""
+        nodes = REGIONAL_MAP_DATA.get(self.region, {}).get("nodes", {})
+        if not nodes:
+            return
+
+        node_keys = list(nodes.keys())
+        if self.filter_mode != "all":
+            filtered = [k for k in node_keys if self._matches_filter(k)]
+            target_list = filtered if filtered else node_keys
+        else:
+            target_list = node_keys
+
+        if not self.selected_node or self.selected_node not in target_list:
+            next_node = target_list[0] if direction > 0 else target_list[-1]
+        else:
+            curr_idx = target_list.index(self.selected_node)
+            next_idx = (curr_idx + direction) % len(target_list)
+            next_node = target_list[next_idx]
+
+        self.selected_node = next_node
+        play_sfx("menu_move.wav")
+        self.update()
+
+    def draw_flower_card(self, painter: QPainter, rect: QRectF, tile_size: float = 24.0):
+        """Draw authentic 9-slice flower frame or clean fallback GBA frame."""
+        x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+        if self.flower_pm and not self.flower_pm.isNull():
+            s = self.flower_pm.width() / 3.0
+            painter.setBrush(QColor("#ffffff"))
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(QRectF(x + tile_size - 2, y + tile_size - 2, w - 2*tile_size + 4, h - 2*tile_size + 4))
+
+            # Corners
+            painter.drawPixmap(QRectF(x, y, tile_size, tile_size), self.flower_pm, QRectF(0, 0, s, s))
+            painter.drawPixmap(QRectF(x + w - tile_size, y, tile_size, tile_size), self.flower_pm, QRectF(s*2, 0, s, s))
+            painter.drawPixmap(QRectF(x, y + h - tile_size, tile_size, tile_size), self.flower_pm, QRectF(0, s*2, s, s))
+            painter.drawPixmap(QRectF(x + w - tile_size, y + h - tile_size, tile_size, tile_size), self.flower_pm, QRectF(s*2, s*2, s, s))
+
+            # Edges
+            painter.drawPixmap(QRectF(x + tile_size, y, w - 2*tile_size, tile_size), self.flower_pm, QRectF(s, 0, s, s))
+            painter.drawPixmap(QRectF(x + tile_size, y + h - tile_size, w - 2*tile_size, tile_size), self.flower_pm, QRectF(s, s*2, s, s))
+            painter.drawPixmap(QRectF(x, y + tile_size, tile_size, h - 2*tile_size), self.flower_pm, QRectF(0, s, s, s))
+            painter.drawPixmap(QRectF(x + w - tile_size, y + tile_size, tile_size, h - 2*tile_size), self.flower_pm, QRectF(s*2, s, s, s))
+        else:
+            painter.setBrush(QColor("#ffffff"))
+            painter.setPen(QPen(QColor("#0f172a"), 2.5))
+            painter.drawRoundedRect(rect, 6.0, 6.0)
 
     def _on_pulse(self):
         if self.highlighted_nodes:
@@ -751,6 +954,36 @@ class MapCanvas(QWidget):
             self.update()
 
     def mousePressEvent(self, event):
+        vpos = self._screen_to_virtual(event.position())
+
+        # If Filter Popup is open, handle clicks inside popup
+        if self.filter_popup_open:
+            if hasattr(self, 'filter_popup_rect') and self.filter_popup_rect.contains(vpos):
+                item_y_start = self.filter_popup_rect.y() + 48.0
+                item_h = 30.0
+                clicked_idx = int((vpos.y() - item_y_start) // item_h)
+                if 0 <= clicked_idx < len(self.FILTER_MODES):
+                    self.filter_popup_idx = clicked_idx
+                    mode = self.FILTER_MODES[clicked_idx][0]
+                    self.set_filter_mode(mode)
+                    play_sfx("menu_select.wav")
+                    self.filter_popup_open = False
+                    self.update()
+                    event.accept()
+                    return
+            # Clicked outside popup -> close popup
+            self.filter_popup_open = False
+            play_sfx("menu_cancel.wav")
+            self.update()
+            event.accept()
+            return
+
+        # Check if clicked on Retro Filter Pill
+        if (self.is_retro or self.filter_mode != "all") and hasattr(self, 'filter_pill_rect') and self.filter_pill_rect.contains(vpos):
+            self.toggle_filter_popup()
+            event.accept()
+            return
+
         if event.button() in (Qt.MiddleButton, Qt.RightButton):
             self.is_panning = True
             self.last_mouse_pos = event.position()
@@ -758,10 +991,10 @@ class MapCanvas(QWidget):
             event.accept()
             return
         elif event.button() == Qt.LeftButton:
-            vpos = self._screen_to_virtual(event.position())
             clicked = self._find_node_at(vpos)
             if clicked:
                 self.selected_node = clicked
+                play_sfx("menu_select.wav")
                 self.node_clicked.emit(clicked, self.region)
                 self.update()
             else:
@@ -782,28 +1015,100 @@ class MapCanvas(QWidget):
             self.update()
 
     def keyPressEvent(self, event):
-        """D-Pad navigation and GBA controller interaction."""
+        """Authentic GBA navigation per user keymapping:
+        WASD = D-Pad (W=Up, S=Down, A=Left, D=Right)
+        Up Arrow = Button A (Confirm / Inspect / Select) -> menu_select.wav
+        Down Arrow = Button B (Cancel / Back / Close) -> menu_cancel.wav
+        Left Arrow = Button L (Prev route / Fast jump)
+        Right Arrow = Button R (Next route / Fast jump)
+        Space = Button START (Toggle Start Menu)
+        F = Toggle Retro Filter Popup
+        """
         key = event.key()
-        if key in (Qt.Key_Up, Qt.Key_K):
+
+        # --- IF RETRO FILTER POPUP IS OPEN ---
+        if self.filter_popup_open:
+            # D-Pad Up (W, K)
+            if key in (Qt.Key_W, Qt.Key_K):
+                play_sfx("menu_move.wav")
+                self.filter_popup_idx = (self.filter_popup_idx - 1) % len(self.FILTER_MODES)
+                self.update()
+                event.accept()
+                return
+
+            # D-Pad Down (S, J)
+            elif key in (Qt.Key_S, Qt.Key_J):
+                play_sfx("menu_move.wav")
+                self.filter_popup_idx = (self.filter_popup_idx + 1) % len(self.FILTER_MODES)
+                self.update()
+                event.accept()
+                return
+
+            # Button A (Confirm / Apply filter) -> Up Arrow, Return, Enter, Z
+            elif key in (Qt.Key_Up, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z):
+                mode = self.FILTER_MODES[self.filter_popup_idx][0]
+                self.set_filter_mode(mode)
+                play_sfx("menu_select.wav")
+                self.filter_popup_open = False
+                self.update()
+                event.accept()
+                return
+
+            # Button B (Cancel / Close filter popup) -> Down Arrow, Escape, Backspace, X, F
+            elif key in (Qt.Key_Down, Qt.Key_Escape, Qt.Key_Backspace, Qt.Key_X, Qt.Key_F):
+                play_sfx("menu_cancel.wav")
+                self.filter_popup_open = False
+                self.update()
+                event.accept()
+                return
+
+        # --- NORMAL MAP NAVIGATION ---
+        # D-Pad: W (Up), S (Down), A (Left), D (Right) [also vim K, J, H, L]
+        if key in (Qt.Key_W, Qt.Key_K):
             self._move_dpad(0, -1)
             event.accept()
-        elif key in (Qt.Key_Down, Qt.Key_J):
+        elif key in (Qt.Key_S, Qt.Key_J):
             self._move_dpad(0, 1)
             event.accept()
-        elif key in (Qt.Key_Left, Qt.Key_H):
+        elif key in (Qt.Key_A, Qt.Key_H):
             self._move_dpad(-1, 0)
             event.accept()
-        elif key in (Qt.Key_Right, Qt.Key_L):
+        elif key in (Qt.Key_D, Qt.Key_L):
             self._move_dpad(1, 0)
             event.accept()
-        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z):
+
+        # Button A: Up Arrow, Return, Enter, Z -> Confirm / Inspect / Select
+        elif key in (Qt.Key_Up, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z):
             if self.selected_node:
                 play_sfx("menu_select.wav")
                 self.node_clicked.emit(self.selected_node, self.region)
             event.accept()
-        elif key in (Qt.Key_Escape, Qt.Key_X):
+
+        # Button B: Down Arrow, Escape, Backspace, X -> Cancel / Back
+        elif key in (Qt.Key_Down, Qt.Key_Escape, Qt.Key_Backspace, Qt.Key_X):
             play_sfx("menu_cancel.wav")
             event.accept()
+
+        # Button L: Left Arrow, Q, BracketLeft, PageUp -> Prev Route / Fast jump
+        elif key in (Qt.Key_Left, Qt.Key_Q, Qt.Key_BracketLeft, Qt.Key_PageUp):
+            self._jump_node(-1)
+            event.accept()
+
+        # Button R: Right Arrow, E, BracketRight, PageDown -> Next Route / Fast jump
+        elif key in (Qt.Key_Right, Qt.Key_E, Qt.Key_BracketRight, Qt.Key_PageDown):
+            self._jump_node(1)
+            event.accept()
+
+        # Toggle Retro Filter Popup: F
+        elif key == Qt.Key_F:
+            self.toggle_filter_popup()
+            event.accept()
+
+        # Button START: Space -> emit start_menu_requested
+        elif key == Qt.Key_Space:
+            self.start_menu_requested.emit()
+            event.accept()
+
         else:
             super().keyPressEvent(event)
 
@@ -900,6 +1205,106 @@ class MapCanvas(QWidget):
             # 5. Floating Hover Tooltip Card
             if self.hovered_node:
                 self._draw_hover_card(painter, self.hovered_node)
+
+        # 6. Authentic GBA Retro Filter Pill & Modal Popup
+        if self.is_retro or self.filter_mode != "all":
+            self._draw_retro_filter_pill(painter)
+
+        if self.filter_popup_open:
+            self._draw_retro_filter_popup(painter)
+
+        painter.restore()
+
+    def _draw_retro_filter_pill(self, painter: QPainter):
+        """Draws compact GBA filter pill at top-left of canvas."""
+        rect = self.filter_pill_rect
+        painter.save()
+
+        # Background badge
+        painter.setBrush(QColor(11, 15, 23, 235))
+        border_clr = QColor("#38bdf8")
+        if self.filter_mode == "mastered":
+            border_clr = QColor("#10b981")
+        elif self.filter_mode == "incomplete":
+            border_clr = QColor("#f59e0b")
+        elif self.filter_mode == "legendary":
+            border_clr = QColor("#fbbf24")
+
+        painter.setPen(QPen(border_clr, 1.8))
+        painter.drawRoundedRect(rect, 5.0, 5.0)
+
+        # Count
+        cnt = self._count_matching(self.filter_mode)
+        mode_label = dict(self.FILTER_MODES).get(self.filter_mode, "ALL ROUTES")
+
+        # Text
+        font = QFont("Monospace", 8, QFont.Bold)
+        painter.setFont(font)
+        painter.setPen(border_clr)
+
+        prefix = "⭐ " if self.filter_mode == "legendary" else "🔍 "
+        txt = f"{prefix}{mode_label} ({cnt}) • [F]"
+        painter.drawText(rect, Qt.AlignCenter, txt)
+        painter.restore()
+
+    def _draw_retro_filter_popup(self, painter: QPainter):
+        """Draws authentic GBA modal filter popup card."""
+        painter.save()
+        # Semi-transparent dark overlay
+        painter.fillRect(QRectF(0, 0, self.VIRTUAL_W, self.VIRTUAL_H), QColor(10, 20, 28, 175))
+
+        rect = self.filter_popup_rect
+        self.draw_flower_card(painter, rect, tile_size=20.0)
+
+        # Header Title
+        title_font = QFont("Monospace", 9, QFont.Bold)
+        painter.setFont(title_font)
+        painter.setPen(QColor("#0f172a"))
+        painter.drawText(QRectF(rect.x() + 20, rect.y() + 18, rect.width() - 40, 22), Qt.AlignCenter, "★ TOWN MAP FILTER ★")
+
+        # Divider line
+        painter.setPen(QPen(QColor("#cbd5e1"), 1.0))
+        painter.drawLine(QPointF(rect.x() + 16, rect.y() + 42), QPointF(rect.right() - 16, rect.y() + 42))
+
+        # Filter items
+        item_y = rect.y() + 48.0
+        item_h = 30.0
+        item_font = QFont("Monospace", 8, QFont.Bold)
+        painter.setFont(item_font)
+
+        for i, (f_mode, f_label) in enumerate(self.FILTER_MODES):
+            row_rect = QRectF(rect.x() + 20, item_y + i * item_h, rect.width() - 40, item_h)
+            is_sel = (i == self.filter_popup_idx)
+            is_active = (f_mode == self.filter_mode)
+            cnt = self._count_matching(f_mode)
+
+            if is_sel:
+                # Row highlight
+                painter.setBrush(QColor("#e2e8f0"))
+                painter.setPen(Qt.NoPen)
+                painter.drawRoundedRect(row_rect, 3.0, 3.0)
+
+                # Cursor arrow
+                painter.setPen(QColor("#ef3131"))
+                painter.drawText(QRectF(row_rect.x() + 6, row_rect.y(), 18, item_h), Qt.AlignLeft | Qt.AlignVCenter, "▶")
+                painter.setPen(QColor("#0f172a"))
+            else:
+                painter.setPen(QColor("#475569"))
+
+            # Label
+            chk = "✓ " if is_active else "  "
+            painter.drawText(QRectF(row_rect.x() + 24, row_rect.y(), row_rect.width() - 80, item_h), Qt.AlignLeft | Qt.AlignVCenter, f"{chk}{f_label}")
+
+            # Count pill
+            painter.setPen(QColor("#0284c7") if is_sel else QColor("#64748b"))
+            painter.drawText(QRectF(row_rect.right() - 60, row_rect.y(), 54, item_h), Qt.AlignRight | Qt.AlignVCenter, f"({cnt})")
+
+        # Bottom Hint
+        hint_font = QFont("SansSerif", 7, QFont.Bold)
+        painter.setFont(hint_font)
+        painter.setPen(QColor("#64748b"))
+        hint_rect = QRectF(rect.x(), rect.bottom() - 26, rect.width(), 20)
+        painter.drawText(hint_rect, Qt.AlignCenter, "[W/S] Move  •  [↑](A) Apply  •  [↓](B) Back")
 
         painter.restore()
 
@@ -1064,17 +1469,21 @@ class MapCanvas(QWidget):
 
         # Filtering dimming
         if self.filter_mode == "incomplete" and status == "complete":
-            alpha = 0.25
+            alpha = 0.22
         elif self.filter_mode == "mastered" and status != "complete":
-            alpha = 0.25
+            alpha = 0.22
+        elif self.filter_mode == "legendary" and not self._is_legendary(name):
+            alpha = 0.22
         else:
             alpha = 1.0
 
         painter.save()
         painter.setOpacity(alpha)
 
-        # Status ring color: 🟢 Green = Mastered, 🟡 Amber = In Progress, ⚪ Slate = Uncaught
-        if status == "complete":
+        # Status ring color: 🟢 Green = Mastered, 🟡 Amber = In Progress, ⚪ Slate = Uncaught, ⭐ Gold = Legendary
+        if self.filter_mode == "legendary" and self._is_legendary(name):
+            ring_color = QColor("#fbbf24")
+        elif status == "complete":
             ring_color = CLR_STATUS_COMPLETE   # #10b981
         elif status == "partial":
             ring_color = CLR_STATUS_PARTIAL    # #f59e0b
@@ -1313,16 +1722,20 @@ class MapCanvas(QWidget):
         font_label = QFont("SansSerif", 7, QFont.DemiBold)
 
         if self.filter_mode == "incomplete" and status == "complete":
-            alpha_mult = 0.25
+            alpha_mult = 0.22
         elif self.filter_mode == "mastered" and status != "complete":
-            alpha_mult = 0.25
+            alpha_mult = 0.22
+        elif self.filter_mode == "legendary" and not self._is_legendary(name):
+            alpha_mult = 0.22
         else:
             alpha_mult = 1.0
 
         scale_node = 1.18 if is_hovered else 1.0
         node_radius = 11.0 * scale_node
 
-        if status == "complete":
+        if self.filter_mode == "legendary" and self._is_legendary(name):
+            status_color = QColor("#fbbf24")
+        elif status == "complete":
             status_color = CLR_STATUS_COMPLETE
         elif status == "partial":
             status_color = CLR_STATUS_PARTIAL
@@ -1631,6 +2044,8 @@ class RegionalMapWidget(QWidget):
     """
 
     route_selected = Signal(str, str)   # (route_name, region)
+    filter_changed = Signal(str)        # (filter_mode)
+    start_menu_requested = Signal()     # Space / START key
 
     def __init__(self, parent=None, db_path: str = "quetzal_database.db"):
         super().__init__(parent)
@@ -1648,6 +2063,9 @@ class RegionalMapWidget(QWidget):
         # Connect canvas signals
         self.canvas.node_clicked.connect(self._on_canvas_node_clicked)
         self.canvas.node_hovered.connect(self._on_canvas_node_hovered)
+        self.canvas.filter_changed.connect(self._sync_filter_buttons)
+        self.canvas.filter_changed.connect(self.filter_changed.emit)
+        self.canvas.start_menu_requested.connect(self.start_menu_requested.emit)
 
         # Automatically load DB if available
         if os.path.exists(self.db_path):
@@ -1779,7 +2197,7 @@ class RegionalMapWidget(QWidget):
         f_layout.setSpacing(2)
 
         self.filter_buttons = []
-        for f_label, f_key in [("All", "all"), ("Incomplete", "incomplete"), ("Mastered", "mastered")]:
+        for f_label, f_key in [("All", "all"), ("Incomplete", "incomplete"), ("Mastered", "mastered"), ("Legendary", "legendary")]:
             f_btn = QPushButton(f_label)
             f_btn.setCheckable(True)
             f_btn.setCursor(Qt.PointingHandCursor)
@@ -2004,6 +2422,10 @@ class RegionalMapWidget(QWidget):
 
     def set_retro_mode(self, is_retro: bool):
         """Toggle clean full-screen retro GBA map view without toolbars."""
+        self.is_retro = is_retro
+        if hasattr(self, 'canvas'):
+            self.canvas.is_retro = is_retro
+            self.canvas.update()
         if hasattr(self, 'top_bar') and hasattr(self, 'bot_bar'):
             if is_retro:
                 self.top_bar.hide()
@@ -2133,6 +2555,16 @@ class RegionalMapWidget(QWidget):
                     trainers_map.setdefault(loc_clean, []).append(entry)
             self.canvas.trainers_by_loc = trainers_map
 
+            # Query legendaries
+            try:
+                c.execute("SELECT DISTINCT location FROM legendaries WHERE location IS NOT NULL")
+                leg_rows = c.fetchall()
+                for (leg_loc,) in leg_rows:
+                    if leg_loc:
+                        self.canvas.legendary_nodes.add(normalize_loc(leg_loc))
+            except Exception:
+                pass
+
             self.canvas.caught_stats = stats
             self.canvas.missing_species = missing_map
             self.canvas.update()
@@ -2144,6 +2576,11 @@ class RegionalMapWidget(QWidget):
     # ========================================================================
     # INTERNAL HANDLERS
     # ========================================================================
+
+    def _sync_filter_buttons(self, mode: str):
+        if hasattr(self, 'filter_buttons'):
+            for btn, k in self.filter_buttons:
+                btn.setChecked(k == mode)
 
     def _toggle_trainers(self, checked: bool):
         self.canvas.show_trainers = checked
@@ -2167,10 +2604,8 @@ class RegionalMapWidget(QWidget):
         pass
 
     def _set_filter_mode(self, mode: str):
-        for btn, k in self.filter_buttons:
-            btn.setChecked(k == mode)
-        self.canvas.filter_mode = mode
-        self.canvas.update()
+        self._sync_filter_buttons(mode)
+        self.canvas.set_filter_mode(mode)
 
     def _on_search_text_changed(self, text: str):
         query = text.strip().upper()

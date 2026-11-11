@@ -21,7 +21,10 @@ or clicking [START] in the companion header:
 """
 
 import os
+import queue
+import shutil
 import subprocess
+import threading
 from typing import Dict, List, Optional, Any
 
 from PySide6.QtWidgets import (
@@ -43,15 +46,60 @@ SFX_DIR = os.path.join(PROJECT_DIR, "assets", "sfx")
 FLOWER_FRAME_PATH = os.path.join(PROJECT_DIR, "assets", "flower_frame_9slice.png")
 
 
-def play_sfx(name: str):
-    """Play sound effect non-blockingly."""
-    wav = os.path.join(SFX_DIR, name)
-    if os.path.exists(wav):
-        cmd = ["paplay", wav] if subprocess.run(["which", "paplay"], capture_output=True).returncode == 0 else ["aplay", "-q", wav]
+class NonBlockingSoundPlayer:
+    """Thread-safe non-blocking audio dispatcher preventing micro-stutters and zombie processes."""
+    _instance = None
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self._queue = queue.Queue(maxsize=4)
+        self._cmd = None
+        if shutil.which("paplay"):
+            self._cmd = ["paplay"]
+        elif shutil.which("pw-play"):
+            self._cmd = ["pw-play"]
+        elif shutil.which("aplay"):
+            self._cmd = ["aplay", "-q"]
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    @classmethod
+    def get_instance(cls):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+
+    def play(self, wav_path: str):
+        if not self._cmd or not os.path.exists(wav_path):
+            return
         try:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
+            self._queue.put_nowait(wav_path)
+        except queue.Full:
             pass
+
+    def _run(self):
+        while True:
+            try:
+                wav_path = self._queue.get()
+                if wav_path is None:
+                    break
+                subprocess.run(
+                    self._cmd + [wav_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False
+                )
+                self._queue.task_done()
+            except Exception:
+                pass
+
+
+def play_sfx(name: str):
+    """Play sound effect non-blockingly with zero process churning."""
+    fname = name if name.endswith(".wav") else f"{name}.wav"
+    wav = os.path.join(SFX_DIR, fname)
+    NonBlockingSoundPlayer.get_instance().play(wav)
 
 
 class GbaStartMenuOverlay(QWidget):
@@ -228,7 +276,7 @@ class GbaStartMenuOverlay(QWidget):
             painter.drawText(QRectF(menu_x + 50.0, cur_y, menu_w - 60.0, item_h), Qt.AlignLeft | Qt.AlignVCenter, item["label"])
 
         # 3. Bottom Controls Hint Pill
-        hint_text = "🎮 [D-PAD / ↑↓] Move  •  [A / Z / ENTER] Select  •  [B / X / ESC] Back  •  [START / SPACE] Close"
+        hint_text = "🎮 [W / S] D-Pad  •  [↑ / ENTER] (A) Select  •  [↓ / ESC] (B) Close  •  [SPACE] (START)"
         font_hint = QFont("JetBrainsMono Nerd Font", 10, QFont.Bold)
         painter.setFont(font_hint)
         painter.setPen(QColor("#e2e8f0"))
@@ -238,26 +286,52 @@ class GbaStartMenuOverlay(QWidget):
     # KEYBOARD & MOUSE CONTROLS
     # -------------------------------------------------------------
     def keyPressEvent(self, event: QKeyEvent):
-        """Authentic GBA keypad navigation."""
+        """Authentic GBA keypad navigation per user keymapping."""
         key = event.key()
 
-        if key in (Qt.Key_Up, Qt.Key_K):
+        # D-Pad Up (W, K)
+        if key in (Qt.Key_W, Qt.Key_K):
             play_sfx("menu_move.wav")
             self.selected_index = (self.selected_index - 1) % len(self.menu_items)
             self.update()
             event.accept()
 
-        elif key in (Qt.Key_Down, Qt.Key_J):
+        # D-Pad Down (S, J)
+        elif key in (Qt.Key_S, Qt.Key_J):
             play_sfx("menu_move.wav")
             self.selected_index = (self.selected_index + 1) % len(self.menu_items)
             self.update()
             event.accept()
 
-        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space, Qt.Key_Z):
+        # Button A (Confirm / Inspect / Select) -> Up Arrow, Return, Enter, Z
+        elif key in (Qt.Key_Up, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z):
             self.activate_selected()
             event.accept()
 
-        elif key in (Qt.Key_Escape, Qt.Key_Backspace, Qt.Key_X):
+        # Button B (Cancel / Back / Close) -> Down Arrow, Escape, Backspace, X
+        elif key in (Qt.Key_Down, Qt.Key_Escape, Qt.Key_Backspace, Qt.Key_X):
+            self.hide_menu()
+            event.accept()
+
+        # Button L (Shoulder L / Fast jump to top) -> Left Arrow, Q, BracketLeft
+        elif key in (Qt.Key_Left, Qt.Key_Q, Qt.Key_BracketLeft, Qt.Key_PageUp):
+            if self.selected_index != 0:
+                play_sfx("menu_move.wav")
+                self.selected_index = 0
+                self.update()
+            event.accept()
+
+        # Button R (Shoulder R / Fast jump to bottom) -> Right Arrow, E, BracketRight
+        elif key in (Qt.Key_Right, Qt.Key_E, Qt.Key_BracketRight, Qt.Key_PageDown):
+            last_idx = len(self.menu_items) - 1
+            if self.selected_index != last_idx:
+                play_sfx("menu_move.wav")
+                self.selected_index = last_idx
+                self.update()
+            event.accept()
+
+        # Button START -> Space
+        elif key == Qt.Key_Space:
             self.hide_menu()
             event.accept()
 
