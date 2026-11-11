@@ -747,8 +747,10 @@ class QuetzalMasterApp(QMainWindow):
         self.setMinimumSize(1220, 780)
         self.setStyleSheet(MODERN_STYLESHEET)
 
-        self.conn = sqlite3.connect(DB_PATH)
+        self.conn = sqlite3.connect(DB_PATH, timeout=15.0)
         self.cur = self.conn.cursor()
+        self.cur.execute("PRAGMA journal_mode=WAL;")
+        self.cur.execute("PRAGMA busy_timeout=10000;")
 
         # Load caught species
         self.cur.execute("SELECT species_id FROM caught_pokemon")
@@ -2157,7 +2159,7 @@ class QuetzalMasterApp(QMainWindow):
         if not os.path.exists(self.save_path):
             return
         try:
-            c_cnt, s_cnt = quetzal_save_reader.update_database_user_pokedex(self.save_path, DB_PATH)
+            c_cnt, s_cnt = quetzal_save_reader.update_database_user_pokedex(self.save_path, DB_PATH, existing_conn=self.conn)
             self.cur.execute("SELECT species_id FROM caught_pokemon")
             self.caught_species = set(r[0] for r in self.cur.fetchall())
 

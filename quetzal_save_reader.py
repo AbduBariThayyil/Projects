@@ -372,7 +372,7 @@ def get_seen_species(save_path: str = DEFAULT_SAVE_PATH) -> Set[int]:
     return parser.get_all_seen_species()
 
 
-def update_database_user_pokedex(save_path: str = DEFAULT_SAVE_PATH, db_path: str = DEFAULT_DB_PATH) -> Tuple[int, int]:
+def update_database_user_pokedex(save_path: str = DEFAULT_SAVE_PATH, db_path: str = DEFAULT_DB_PATH, existing_conn: Optional[sqlite3.Connection] = None) -> Tuple[int, int]:
     """
     Update quetzal_database.db with user_pokedex table populated from active save file.
     Returns (caught_count, seen_count).
@@ -381,8 +381,16 @@ def update_database_user_pokedex(save_path: str = DEFAULT_SAVE_PATH, db_path: st
     caught_set = parser.get_all_caught_species()
     seen_set = parser.get_all_seen_species()
 
-    conn = sqlite3.connect(db_path)
+    should_close = False
+    if existing_conn is not None:
+        conn = existing_conn
+    else:
+        conn = sqlite3.connect(db_path, timeout=15.0)
+        should_close = True
+
     cur = conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA busy_timeout=10000;")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_pokedex (
@@ -407,7 +415,6 @@ def update_database_user_pokedex(save_path: str = DEFAULT_SAVE_PATH, db_path: st
     )
     """)
 
-    cur.execute("BEGIN TRANSACTION")
     for sp_id in db_species:
         c = 1 if sp_id in caught_set else 0
         s = 1 if sp_id in seen_set else 0
@@ -432,7 +439,8 @@ def update_database_user_pokedex(save_path: str = DEFAULT_SAVE_PATH, db_path: st
         """, (sp_id, name))
 
     conn.commit()
-    conn.close()
+    if should_close:
+        conn.close()
 
     return len(caught_set), len(seen_set)
 
