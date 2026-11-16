@@ -31,12 +31,14 @@ trap 'cleanup_session; exit 143' TERM
 
 CONTINUE_MODE=0
 CONTINUE_QUERY=""
+DOWNLOAD_MODE=0
 TARGET_MODE="local"
 DEVICE_NAME="This Device"
 FORCE_TYPE=""
 QUALITY="1080p"
 SEASON=""
 EPISODE=""
+START_TIME=""
 MODE="sub"
 POSITIONAL_ARGS=()
 
@@ -96,6 +98,10 @@ EOF
             else
                 shift
             fi
+            ;;
+        -d|--download)
+            DOWNLOAD_MODE=1
+            shift
             ;;
         -l|--local)
             TARGET_MODE="local"
@@ -171,6 +177,14 @@ EOF
             MODE="dub"
             shift
             ;;
+        -ss|--time|--start|--seek)
+            if [ $# -ge 2 ]; then
+                START_TIME="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
         -ns|--no-sub|--no-subs)
             export OMNIVIEW_NO_SUB=1
             shift
@@ -183,6 +197,15 @@ EOF
 done
 
 QUERY="${POSITIONAL_ARGS[*]}"
+
+# Handle --download
+if [ "$DOWNLOAD_MODE" = "1" ]; then
+    if [ -z "$QUERY" ]; then
+        echo -n -e "\033[1;36mEnter media name to download: \033[0m"
+        read -r QUERY || exit 1
+    fi
+    exec python3 "$BASE_DIR/lib/anicast_engine.py" download "$QUERY" "${SEASON:-1}"
+fi
 
 # Handle --continue
 if [ "$CONTINUE_MODE" = "1" ]; then
@@ -209,6 +232,7 @@ quality = '''$QUALITY'''
 mode = '''$MODE'''
 season_opt = int('''$SEASON''') if '''$SEASON'''.isdigit() else None
 episode_opt = int('''$EPISODE''') if '''$EPISODE'''.isdigit() else None
+start_time = float('''$START_TIME''') if '''$START_TIME'''.replace('.', '', 1).isdigit() else 0.0
 
 cli_runner.run_interactive_selection(
     query,
@@ -219,5 +243,6 @@ cli_runner.run_interactive_selection(
     mode=mode,
     season_opt=season_opt,
     episode_opt=episode_opt,
+    start_time=start_time,
 )
 "

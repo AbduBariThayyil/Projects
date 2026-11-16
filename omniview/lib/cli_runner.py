@@ -28,6 +28,13 @@ ACTION_FILE = os.path.join(RUNTIME_DIR, "omniview_action")
 BASE_DIR = os.path.abspath(os.path.join(LIB_DIR, ".."))
 
 
+def unicast_format_time(seconds: float) -> str:
+    s = int(seconds)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
 def cleanup_session():
     for f in [ACTION_FILE, os.path.join(RUNTIME_DIR, "omniview_next_season_pending"), SESSION_FILE]:
         try:
@@ -60,7 +67,7 @@ def play_local_mpv(stream_url: str, title: str, referer: str = "", sub_url: str 
         f"--force-media-title={title}",
         f"--script={BASE_DIR}/lib/ani_cast_mpv_resume.lua",
         "--keep-open=no",
-        "--msg-level=all=error",  # Suppress internal player debug spew
+        "--msg-level=all=error",
     ]
     if referer:
         cmd.append(f"--referrer={referer}")
@@ -119,6 +126,7 @@ def run_interactive_selection(
     mode: str = "sub",
     season_opt: Optional[int] = None,
     episode_opt: Optional[int] = None,
+    start_time: float = 0.0,
 ):
     ui.print_banner()
 
@@ -134,6 +142,10 @@ def run_interactive_selection(
         print(f" {ui.RED}[!] No search query entered. Exiting.{ui.RESET}")
         sys.exit(1)
 
+    anime_search_query = query
+    if season_opt and season_opt > 1 and "season" not in query.lower():
+        anime_search_query = f"{query} Season {season_opt}"
+
     ui.print_status_box("SEARCH", f"Querying media repositories for '{query}'...", ui.MAUVE)
 
     items: List[Dict[str, Any]] = []
@@ -141,7 +153,9 @@ def run_interactive_selection(
     # 1. Fetch Anime results (unless forced movie/show)
     if force_type in [None, "anime"]:
         try:
-            anime_res = anicast_engine.search_anime(query)
+            anime_res = anicast_engine.search_anime(anime_search_query)
+            if not anime_res and anime_search_query != query:
+                anime_res = anicast_engine.search_anime(query)
             for a in anime_res[:6]:
                 items.append({
                     "title": a["title"],
@@ -173,45 +187,56 @@ def run_interactive_selection(
         print(f"\n {ui.RED}[!] No media found matching '{query}'. Try another search.{ui.RESET}\n")
         sys.exit(1)
 
-    print()
-    ui.render_search_results(items)
-    target_label = "Local Screen (MPV)" if target_mode == "local" else f"Chromecast ({device_name})"
-    ui.render_action_bar(len(items), target_label)
-
-    # User Selection Prompt
     selected_idx = 1
-    action = None
-    while True:
-        try:
-            prompt_str = f" {ui.BOLD}{ui.MAUVE}OmniView ❯{ui.RESET} "
-            choice = input(prompt_str).strip()
-        except (KeyboardInterrupt, EOFError):
-            print()
-            sys.exit(0)
+    skip_prompt = False
 
-        if choice.lower() in ["q", "quit", "exit"]:
-            print(f" {ui.SUBTEXT}Exiting.{ui.RESET}")
-            sys.exit(0)
-        elif choice.lower() in ["l", "local"]:
-            target_mode = "local"
-            ui.print_status_box("MODE", "Switched playback target to Local MPV", ui.GREEN)
-            continue
-        elif choice.lower() in ["c", "cast"]:
-            target_mode = "cast"
-            ui.print_status_box("MODE", f"Switched playback target to Cast TV ({device_name})", ui.SAPPHIRE)
-            continue
-        elif choice.isdigit():
-            idx = int(choice)
-            if 1 <= idx <= len(items):
-                selected_idx = idx
+    # Auto-match season if provided
+    if season_opt:
+        for idx, item in enumerate(items):
+            t_low = item["title"].lower()
+            if f"season {season_opt}" in t_low or f"s{season_opt}" in t_low:
+                selected_idx = idx + 1
+                if episode_opt is not None:
+                    skip_prompt = True
+                break
+
+    if not skip_prompt:
+        print()
+        ui.render_search_results(items)
+        target_label = "Local Screen (MPV)" if target_mode == "local" else f"Chromecast ({device_name})"
+        ui.render_action_bar(len(items), target_label)
+
+        # User Selection Prompt
+        while True:
+            try:
+                prompt_str = f" {ui.BOLD}{ui.MAUVE}OmniView ❯{ui.RESET} "
+                choice = input(prompt_str).strip()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                sys.exit(0)
+
+            if choice.lower() in ["q", "quit", "exit"]:
+                print(f" {ui.SUBTEXT}Exiting.{ui.RESET}")
+                sys.exit(0)
+            elif choice.lower() in ["l", "local"]:
+                target_mode = "local"
+                ui.print_status_box("MODE", "Switched playback target to Local MPV", ui.GREEN)
+                continue
+            elif choice.lower() in ["c", "cast"]:
+                target_mode = "cast"
+                ui.print_status_box("MODE", f"Switched playback target to Cast TV ({device_name})", ui.SAPPHIRE)
+                continue
+            elif choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= len(items):
+                    selected_idx = idx
+                    break
+                else:
+                    print(f" {ui.RED}[!] Please select between 1 and {len(items)}{ui.RESET}")
+            elif choice == "":
                 break
             else:
-                print(f" {ui.RED}[!] Please select between 1 and {len(items)}{ui.RESET}")
-        elif choice == "":
-            selected_idx = 1
-            break
-        else:
-            print(f" {ui.RED}[!] Invalid choice. Enter [1-{len(items)}], [l], [c], or [q]{ui.RESET}")
+                print(f" {ui.RED}[!] Invalid choice. Enter [1-{len(items)}], [l], [c], or [q]{ui.RESET}")
 
     selected_item = items[selected_idx - 1]
     media_type = selected_item["type"]
@@ -222,7 +247,7 @@ def run_interactive_selection(
     # Handle Playback by Media Type
     if media_type == "movie":
         stream_info = movies_engine.resolve_movie_stream(selected_item["id"], title)
-        start_ts = get_resume_position(title)
+        start_ts = start_time or get_resume_position(title)
         if start_ts > 5.0:
             ui.print_status_box("RESUME", f"Resuming from timestamp {unicast_format_time(start_ts)}", ui.YELLOW)
 
@@ -275,7 +300,7 @@ def run_interactive_selection(
 
         full_ep_title = f"{title} S{target_s:02d}E{ep_num:02d}"
         stream_info = movies_engine.resolve_tv_stream(selected_item["id"], target_s, ep_num, title)
-        start_ts = get_resume_position(full_ep_title)
+        start_ts = start_time or get_resume_position(full_ep_title)
         if start_ts > 5.0:
             ui.print_status_box("RESUME", f"Resuming from timestamp {unicast_format_time(start_ts)}", ui.YELLOW)
 
@@ -335,7 +360,7 @@ def run_interactive_selection(
             print(f" {ui.RED}[!] Could not resolve stream.{ui.RESET}")
             sys.exit(1)
 
-        start_ts = get_resume_position(full_ep_title)
+        start_ts = start_time or get_resume_position(full_ep_title)
         if start_ts > 5.0:
             ui.print_status_box("RESUME", f"Resuming from timestamp {unicast_format_time(start_ts)}", ui.YELLOW)
 
@@ -358,13 +383,6 @@ def run_interactive_selection(
             )
 
 
-def unicast_format_time(seconds: float) -> str:
-    s = int(seconds)
-    m, s = divmod(s, 60)
-    h, m = divmod(m, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
-
-
 def handle_continue(query: Optional[str] = None):
     ui.print_banner()
     target = anicast_engine.resolve_continue_target(query)
@@ -373,17 +391,59 @@ def handle_continue(query: Optional[str] = None):
         sys.exit(1)
 
     title = target["anime_base"]
+    search_title = target.get("search_title") or title
     s = target["season"]
     e = target["episode"]
-    ts = target["timestamp"]
-    time_str = target["time_str"]
+    ts = float(target.get("timestamp", 0.0))
+    time_str = target.get("time_str", "00:00")
 
-    if target["was_completed"]:
-        ui.print_status_box("CONTINUE", f"Advancing to Next Episode: {title} S{s}E{e}", ui.GREEN)
+    if target.get("was_completed"):
+        ui.print_status_box("CONTINUE", f"Advancing to Next Episode: {search_title} Episode {e}", ui.GREEN)
     else:
-        ui.print_status_box("CONTINUE", f"Resuming {title} S{s}E{e} from {time_str}", ui.YELLOW)
+        ui.print_status_box("CONTINUE", f"Resuming {search_title} Episode {e} from {time_str}", ui.YELLOW)
 
-    run_interactive_selection(title, season_opt=s, episode_opt=e)
+    # Directly resolve and stream without halting at search table
+    anime_results = anicast_engine.search_anime(search_title)
+    if not anime_results:
+        anime_results = anicast_engine.search_anime(title)
+
+    if not anime_results:
+        print(f" {ui.RED}[!] Could not find anime '{search_title}' on provider.{ui.RESET}")
+        sys.exit(1)
+
+    selected = anime_results[0]
+    episodes = anicast_engine.get_episodes(selected["slug"])
+    if not episodes:
+        print(f" {ui.RED}[!] Could not retrieve episodes for '{selected['title']}'.{ui.RESET}")
+        sys.exit(1)
+
+    ep_obj = next((ep for ep in episodes if int(float(ep["number"])) == e), episodes[0])
+    full_ep_title = f"{selected['title']} Episode {e}"
+    ui.print_status_box("RESOLVING", f"Resolving stream...", ui.MAUVE)
+    stream_info = anicast_engine.resolve_stream(ep_obj["id"], mode="sub", preferred_quality="1080p")
+    if not stream_info:
+        print(f" {ui.RED}[!] Could not resolve stream.{ui.RESET}")
+        sys.exit(1)
+
+    target_mode = os.environ.get("OMNIVIEW_TARGET_MODE", "cast")
+    device_name = os.environ.get("OMNIVIEW_DEVICE", "TV")
+    if os.environ.get("OMNIVIEW_LOCAL") == "1" or target_mode == "local":
+        play_local_mpv(
+            stream_info["video_url"],
+            full_ep_title,
+            referer=stream_info["referer"],
+            sub_url=stream_info.get("sub_url", ""),
+            start_time=ts,
+        )
+    else:
+        play_chromecast(
+            stream_info.get("master_url") or stream_info["video_url"],
+            full_ep_title,
+            device_name=device_name,
+            referer=stream_info["referer"],
+            sub_url=stream_info.get("sub_url", ""),
+            start_time=ts,
+        )
 
 
 if __name__ == "__main__":
