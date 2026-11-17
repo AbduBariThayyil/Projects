@@ -136,7 +136,7 @@ def save_session_device(device_name):
 def parse_time_str(time_str):
     if not time_str:
         return 0.0
-    s = str(time_str).strip().lower().rstrip("s")
+    s = str(time_str).strip().lower().rstrip("s").replace(";", ":")
     if s.endswith("m") or s.endswith("min") or s.endswith("mins"):
         try:
             val = float(s.replace("mins", "").replace("min", "").replace("m", ""))
