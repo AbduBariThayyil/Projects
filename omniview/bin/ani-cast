@@ -287,6 +287,7 @@ while true; do
 
     [ -n "$SELECT_NTH" ] && CLI_ARGS+=("-S" "$SELECT_NTH")
 
+    EPISODE_NUM="${EPISODE:-1}"
     if [ -n "$EPISODE" ]; then
         CLI_ARGS+=("-e" "$EPISODE")
         # Clear episode for subsequent seasons
@@ -295,9 +296,18 @@ while true; do
 
     [ -n "$CURRENT_QUERY" ] && CLI_ARGS+=("$CURRENT_QUERY")
 
-    # Run ani-cli
+    # Run ani-cli with failover protection
+    set +e
     ani-cli --no-detach "${CLI_ARGS[@]}"
     CLI_STATUS=$?
+    set -e
+
+    # If ani-cli exited with error (e.g. curl timeout exit 28 or Cloudflare drop), fallback to native engine
+    if [ "$CLI_STATUS" -ne 0 ]; then
+        echo -e "\n\033[1;33m[!] ani-cli encountered an error (exit $CLI_STATUS). Activating AniCast native engine fallback...\033[0m"
+        python3 "$ENGINE_PY" play "$CURRENT_QUERY" "$EPISODE_NUM" "${QUALITY:-1080p}" "$DUB_FLAG"
+        break
+    fi
 
     # Clear select-nth after first pass so user can select if needed later
     unset SELECT_NTH

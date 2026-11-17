@@ -19,7 +19,7 @@ LEGACY_RESUME_FILE = os.path.expanduser("~/.local/state/ani-cast/resume_state.js
 SESSION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "omniview_current_session.json")
 ACTION_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "omniview_action")
 
-BASE_URL = "https://hianime.at"
+BASE_URL = "https://hianime.fm"
 SEARCH_URL = f"{BASE_URL}/search?keyword="
 EPISODES_URL = f"{BASE_URL}/api/theme/episode/list/"
 SERVERS_URL = f"{BASE_URL}/api/theme/episode/servers?episodeId="
@@ -525,3 +525,46 @@ if __name__ == "__main__":
                 sys.exit(0)
         print(json.dumps({"is_last": False}))
         sys.exit(0)
+
+    elif cmd == "play":
+        query = sys.argv[2] if len(sys.argv) > 2 else ""
+        ep_no = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else 1
+        quality = sys.argv[4] if len(sys.argv) > 4 else "1080p"
+        is_dub = (sys.argv[5] == "1") if len(sys.argv) > 5 else False
+        mode = "dub" if is_dub else "sub"
+
+        print(f"\033[1;36m==>\033[0m Resolving '{query}' Episode {ep_no} via AniCast Engine...")
+        results = search_anime(query)
+        if not results:
+            print(f"\033[1;31m[!] No anime found matching '{query}'.\033[0m")
+            sys.exit(1)
+
+        slug = results[0]["slug"]
+        eps = get_episodes(slug)
+        if not eps:
+            print(f"\033[1;31m[!] Could not retrieve episodes for '{results[0]['title']}'.\033[0m")
+            sys.exit(1)
+
+        target_ep = next((e for e in eps if int(float(e["number"])) == ep_no), eps[0])
+        stream_info = resolve_stream(target_ep["id"], mode=mode, preferred_quality=quality)
+        if not stream_info:
+            print(f"\033[1;31m[!] Failed to resolve stream for Episode {ep_no}.\033[0m")
+            sys.exit(1)
+
+        title = f"{results[0]['title']} Episode {ep_no}"
+        video_url = stream_info.get("video_url") or stream_info.get("master_url")
+        sub_url = stream_info.get("sub_url", "")
+        referer = stream_info.get("referer", "")
+
+        mpv_chromecast = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "mpv-chromecast")
+        args = [
+            mpv_chromecast,
+            f"--force-media-title={title}",
+            video_url,
+        ]
+        if referer:
+            args.insert(1, f"--referrer={referer}")
+        if sub_url:
+            args.insert(1, f"--sub-file={sub_url}")
+
+        os.execv(mpv_chromecast, args)

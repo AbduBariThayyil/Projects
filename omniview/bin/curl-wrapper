@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# High-resilience curl wrapper for ani-cli
+# Auto-redirects hianime.at to primary domain hianime.fm, increases timeout, and adds auto-retry.
+
+REAL_CURL="/usr/bin/curl_firefox135"
+[ ! -x "$REAL_CURL" ] && REAL_CURL="/usr/bin/curl_chrome136"
+[ ! -x "$REAL_CURL" ] && REAL_CURL="/usr/bin/curl"
+
+args=()
+prev=""
+for arg in "$@"; do
+    case "$arg" in
+        https://hianime.at*)
+            args+=("${arg/hianime.at/hianime.fm}")
+            ;;
+        10)
+            if [ "$prev" = "--max-time" ]; then
+                args+=("30" "--connect-timeout" "15" "--retry" "2" "--retry-delay" "1")
+            else
+                args+=("$arg")
+            fi
+            ;;
+        *)
+            args+=("$arg")
+            ;;
+    esac
+    prev="$arg"
+done
+
+exec "$REAL_CURL" "${args[@]}"
