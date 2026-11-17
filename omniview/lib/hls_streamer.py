@@ -203,7 +203,7 @@ SUB_FILE = ""
 TITLE = ""
 m3u8_content = b""
 segment_buffer = None
-direct_cdn = True
+direct_cdn = False
 variant_cache = {}
 variant_lock = threading.Lock()
 session = None
@@ -290,58 +290,72 @@ class SegmentBuffer:
     """
     Intelligent lookahead pre-fetcher and memory ring buffer.
     Buffers 36 segments ahead (~2.5 minutes) with 6 parallel workers, connection pooling, deduplication, and condition variables.
+    Handles both video and audio tracks concurrently with zero segment collisions.
     """
     def __init__(self, session, referer, lookahead=36, lookbehind=10):
         self.session = session
         self.referer = referer
         self.lookahead = lookahead
         self.lookbehind = lookbehind
-        self.segments = []      # List of target URLs in sequential order
-        self.cache = {}         # idx -> bytes
+        self.video_segments = []
+        self.audio_segments = []
+        self.cache = {}         # url -> bytes (prevents audio/video segment collisions)
         self.in_progress = set()
         self.failed_counts = {}
         self.lock = threading.Lock()
         self.cond = threading.Condition(self.lock)
-        self.last_requested_idx = 0
+        self.last_vid_idx = 0
+        self.last_aud_idx = 0
         self.running = True
 
-    def set_segments(self, seg_urls, start_idx=0):
+    @property
+    def segments(self):
+        return self.video_segments
+
+    def set_segments(self, vid_urls, aud_urls=None, start_idx=0):
         with self.lock:
-            self.segments = seg_urls
-            self.last_requested_idx = start_idx
+            self.video_segments = vid_urls or []
+            self.audio_segments = aud_urls or []
+            self.last_vid_idx = start_idx
+            self.last_aud_idx = start_idx
             self.failed_counts.clear()
             self.cond.notify_all()
 
     def seek(self, new_idx):
         with self.lock:
-            self.last_requested_idx = new_idx
+            self.last_vid_idx = new_idx
+            self.last_aud_idx = new_idx
             self.in_progress.clear()
             self.cond.notify_all()
 
-    def get_segment(self, idx, target_url):
+    def get_segment(self, target_url, idx=None, is_audio=False):
         with self.lock:
-            self.last_requested_idx = idx
+            if idx is not None:
+                if is_audio:
+                    self.last_aud_idx = idx
+                else:
+                    self.last_vid_idx = idx
             self.cond.notify_all()  # Wake up prefetch workers to push buffer frontier forward
-            if idx in self.cache:
-                return self.cache[idx]
+            if target_url in self.cache:
+                return self.cache[target_url]
 
             # If already downloading in background worker, wait cleanly on condition variable
-            if idx in self.in_progress:
+            if target_url in self.in_progress:
                 start_wait = time.time()
-                while idx in self.in_progress and (time.time() - start_wait < 15.0):
+                while target_url in self.in_progress and (time.time() - start_wait < 15.0):
                     self.cond.wait(timeout=0.15)
-                if idx in self.cache:
-                    return self.cache[idx]
+                if target_url in self.cache:
+                    return self.cache[target_url]
 
             # Cache miss: claim it so no worker downloads the same segment in duplicate
-            self.in_progress.add(idx)
+            self.in_progress.add(target_url)
 
         data = self._fetch(target_url)
         with self.lock:
-            self.in_progress.discard(idx)
+            self.in_progress.discard(target_url)
             if data:
-                self.cache[idx] = data
-                self._prune(idx)
+                self.cache[target_url] = data
+                self._prune()
             self.cond.notify_all()
         return data
 
@@ -362,40 +376,53 @@ class SegmentBuffer:
             time.sleep(0.08 * (attempt + 1))
         return None
 
-    def _prune(self, current_idx):
-        min_keep = max(0, current_idx - self.lookbehind)
-        max_keep = current_idx + self.lookahead + 16
-        to_del = [i for i in self.cache if i < min_keep or i > max_keep]
-        for i in to_del:
-            del self.cache[i]
+    def _prune(self):
+        # Keep cache bounded to prevent memory growth while ensuring fast re-reads
+        if len(self.cache) > 160:
+            to_del = list(self.cache.keys())[:-100]
+            for u in to_del:
+                del self.cache[u]
 
     def worker_loop(self):
         while self.running:
             target_to_fetch = None
-            target_idx = None
 
             with self.lock:
-                if self.segments:
-                    start = self.last_requested_idx
-                    end = min(len(self.segments), start + self.lookahead + 1)
+                # 1. Lookahead for video segments
+                if self.video_segments:
+                    start = self.last_vid_idx
+                    end = min(len(self.video_segments), start + self.lookahead + 1)
                     for i in range(start, end):
-                        if (i not in self.cache and 
-                            i not in self.in_progress and 
-                            self.failed_counts.get(i, 0) < 4):
-                            target_idx = i
-                            target_to_fetch = self.segments[i]
-                            self.in_progress.add(i)
+                        url_i = self.video_segments[i]
+                        if (url_i not in self.cache and 
+                            url_i not in self.in_progress and 
+                            self.failed_counts.get(url_i, 0) < 4):
+                            target_to_fetch = url_i
+                            self.in_progress.add(url_i)
+                            break
+
+                # 2. Lookahead for audio segments if video queue is caught up
+                if not target_to_fetch and self.audio_segments:
+                    start_a = self.last_aud_idx
+                    end_a = min(len(self.audio_segments), start_a + self.lookahead + 1)
+                    for i in range(start_a, end_a):
+                        url_i = self.audio_segments[i]
+                        if (url_i not in self.cache and 
+                            url_i not in self.in_progress and 
+                            self.failed_counts.get(url_i, 0) < 4):
+                            target_to_fetch = url_i
+                            self.in_progress.add(url_i)
                             break
 
             if target_to_fetch:
                 data = self._fetch(target_to_fetch)
                 with self.lock:
-                    self.in_progress.discard(target_idx)
+                    self.in_progress.discard(target_to_fetch)
                     if data:
-                        self.cache[target_idx] = data
-                        self._prune(self.last_requested_idx)
+                        self.cache[target_to_fetch] = data
+                        self._prune()
                     else:
-                        self.failed_counts[target_idx] = self.failed_counts.get(target_idx, 0) + 1
+                        self.failed_counts[target_to_fetch] = self.failed_counts.get(target_to_fetch, 0) + 1
                     self.cond.notify_all()
                 if not data:
                     time.sleep(0.1)
@@ -403,17 +430,29 @@ class SegmentBuffer:
                 with self.cond:
                     self.cond.wait(timeout=0.25)
 
-    def prewarm(self, count=8, timeout=4.0):
-        """Pre-buffers initial segments so Chromecast begins playback with instant zero-latency cache."""
+    def prewarm(self, count=6, timeout=3.5):
+        """Pre-buffers initial video and audio segments so Chromecast begins playback with instant zero-latency cache."""
         t0 = time.time()
         while time.time() - t0 < timeout:
             with self.lock:
-                start = self.last_requested_idx
-                end = min(len(self.segments), start + count)
-                if end > start:
-                    cached = sum(1 for i in range(start, end) if i in self.cache)
-                    if cached >= min(count, end - start):
-                        return True
+                vid_ok = True
+                if self.video_segments:
+                    start = self.last_vid_idx
+                    end = min(len(self.video_segments), start + count)
+                    if end > start:
+                        cached = sum(1 for i in range(start, end) if self.video_segments[i] in self.cache)
+                        if cached < min(count, end - start):
+                            vid_ok = False
+                aud_ok = True
+                if self.audio_segments:
+                    start_a = self.last_aud_idx
+                    end_a = min(len(self.audio_segments), start_a + count)
+                    if end_a > start_a:
+                        cached = sum(1 for i in range(start_a, end_a) if self.audio_segments[i] in self.cache)
+                        if cached < min(count, end_a - start_a):
+                            aud_ok = False
+                if vid_ok and aud_ok:
+                    return True
             time.sleep(0.08)
         return False
 
@@ -480,8 +519,9 @@ class HLSProxyHandler(http.server.BaseHTTPRequestHandler):
                         s = session or requests.Session()
                         resp = s.get(target_url, headers=h, timeout=12)
                         if resp.status_code == 200:
+                            is_aud_var = "/aud" in target_url or "/audio" in target_url
                             cached_variant = rewrite_variant_playlist(
-                                resp.text, target_url, local_ip, port, direct_cdn=direct_cdn
+                                resp.text, target_url, local_ip, port, direct_cdn=direct_cdn, is_audio=is_aud_var
                             )
                             with variant_lock:
                                 variant_cache[target_url] = cached_variant
@@ -514,7 +554,7 @@ class HLSProxyHandler(http.server.BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, socket.error):
                     return
 
-            elif "/seg_" in self.path:
+            elif any(p in self.path for p in ["/aud_seg_", "/vid_seg_", "/seg_"]):
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
                 if "u" not in qs:
@@ -525,15 +565,19 @@ class HLSProxyHandler(http.server.BaseHTTPRequestHandler):
                     return
 
                 target_url = qs["u"][0]
+                is_audio = "/aud_seg_" in self.path or "/aud" in target_url or "/audio" in target_url
 
                 seg_idx = 0
-                try:
-                    seg_name = self.path.split("/seg_")[1].split(".ts")[0]
-                    seg_idx = int(seg_name)
-                except Exception:
-                    pass
+                for prefix in ["/aud_seg_", "/vid_seg_", "/seg_"]:
+                    if prefix in self.path:
+                        try:
+                            seg_name = self.path.split(prefix)[1].split(".ts")[0]
+                            seg_idx = int(seg_name)
+                            break
+                        except Exception:
+                            pass
 
-                data = segment_buffer.get_segment(seg_idx, target_url) if segment_buffer else None
+                data = segment_buffer.get_segment(target_url, idx=seg_idx, is_audio=is_audio) if segment_buffer else None
 
                 if not data:
                     try:
@@ -986,28 +1030,37 @@ def is_master_playlist(content_str):
     return "#EXT-X-STREAM-INF" in content_str or "#EXT-X-MEDIA" in content_str
 
 def probe_direct_cdn(seg_url):
-    """Checks if CDN segments can be fetched directly by Chromecast without Referer."""
+    """Checks if CDN segments can be fetched directly by Chromecast with gstatic origin."""
     if not seg_url:
         return False
     try:
-        r = requests.head(seg_url, timeout=2.5)
+        h = {"Origin": "https://www.gstatic.com", "User-Agent": "Mozilla/5.0"}
+        r = requests.head(seg_url, headers=h, timeout=2.0)
         if r.status_code in [200, 206]:
-            return True
-        r2 = requests.get(seg_url, headers={"Range": "bytes=0-100"}, timeout=2.5)
-        if r2.status_code in [200, 206]:
             return True
     except Exception:
         pass
     return False
 
-def rewrite_master_playlist(raw_m3u8, host_ip, srv_port, master_url, is_dub=False):
+def rewrite_master_playlist(raw_m3u8, host_ip, srv_port, master_url, is_dub=False, pref_quality="1080p"):
     """
     Rewrites master HLS playlist to proxy audio and video sub-playlists through local server.
     Ensures preferred audio track (Japanese default, or English if --dub) is marked DEFAULT=YES.
+    Places preferred quality variant FIRST so Chromecast starts immediately at chosen resolution.
     """
-    rewritten_lines = []
-    for line in raw_m3u8.splitlines():
+    lines = raw_m3u8.splitlines()
+    header_lines = []
+    audio_lines = []
+    variant_pairs = []
+    other_lines = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         stripped = line.strip()
+        if not stripped:
+            i += 1
+            continue
         if stripped.startswith("#EXT-X-MEDIA:TYPE=AUDIO"):
             uri_match = re.search(r'URI="([^"]+)"', stripped)
             if uri_match:
@@ -1036,24 +1089,52 @@ def rewrite_master_playlist(raw_m3u8, host_ip, srv_port, master_url, is_dub=Fals
                 else:
                     new_line = re.sub(r'DEFAULT=(YES|NO)', 'DEFAULT=NO', new_line)
 
-                rewritten_lines.append(new_line)
+                audio_lines.append(new_line)
             else:
-                rewritten_lines.append(line)
+                audio_lines.append(line)
+            i += 1
         elif stripped.startswith("#EXT-X-STREAM-INF"):
-            rewritten_lines.append(line)
-        elif stripped and not stripped.startswith("#"):
-            abs_uri = urllib.parse.urljoin(master_url, stripped)
-            encoded = urllib.parse.quote(abs_uri)
-            rewritten_lines.append(f"http://{host_ip}:{srv_port}/variant.m3u8?u={encoded}")
+            inf_line = line
+            url_line = ""
+            if i + 1 < len(lines):
+                i += 1
+                nxt = lines[i].strip()
+                abs_uri = urllib.parse.urljoin(master_url, nxt)
+                encoded = urllib.parse.quote(abs_uri)
+                url_line = f"http://{host_ip}:{srv_port}/variant.m3u8?u={encoded}"
+            q_label = ""
+            if "RESOLUTION=" in inf_line:
+                q_label = inf_line.split("RESOLUTION=")[1].split(",")[0].split("x")[-1] + "p"
+            variant_pairs.append((inf_line, url_line, q_label))
+            i += 1
+        elif stripped.startswith("#EXTM3U") or stripped.startswith("#EXT-X-VERSION"):
+            header_lines.append(line)
+            i += 1
         else:
-            rewritten_lines.append(line)
+            other_lines.append(line)
+            i += 1
 
-    return "\n".join(rewritten_lines).encode("utf-8")
+    pref = (pref_quality or "").lower().rstrip("p")
+    matched = [p for p in variant_pairs if pref and pref in p[2].lower()]
+    rest = [p for p in variant_pairs if p not in matched]
+    ordered_variants = matched + rest
 
-def rewrite_variant_playlist(raw_variant, sub_url, host_ip, srv_port, direct_cdn=True):
-    """Rewrites sub-playlist: if direct_cdn is True, keeps direct Cloudflare URLs for 0-buffer streaming."""
+    res = []
+    res.extend(header_lines)
+    res.extend(other_lines)
+    res.extend(audio_lines)
+    for inf_l, u_l, _ in ordered_variants:
+        res.append(inf_l)
+        if u_l:
+            res.append(u_l)
+
+    return "\n".join(res).encode("utf-8")
+
+def rewrite_variant_playlist(raw_variant, sub_url, host_ip, srv_port, direct_cdn=False, is_audio=False):
+    """Rewrites sub-playlist: uses aud_seg_ for audio and vid_seg_ for video to eliminate collisions."""
     lines = []
     seg_idx = 0
+    prefix = "aud_seg" if (is_audio or "/aud" in sub_url or "/audio" in sub_url) else "vid_seg"
     for line in raw_variant.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#"):
@@ -1062,7 +1143,7 @@ def rewrite_variant_playlist(raw_variant, sub_url, host_ip, srv_port, direct_cdn
                 lines.append(abs_seg)
             else:
                 encoded = urllib.parse.quote(abs_seg)
-                lines.append(f"http://{host_ip}:{srv_port}/seg_{seg_idx:05d}.ts?u={encoded}")
+                lines.append(f"http://{host_ip}:{srv_port}/{prefix}_{seg_idx:05d}.ts?u={encoded}")
             seg_idx += 1
         else:
             lines.append(line)
@@ -1263,9 +1344,10 @@ def main():
     seg_start_times = []
     total_manifest_duration = 0.0
     is_master = is_master_playlist(raw_m3u8)
+    aud_seg_urls = []
 
     if is_master:
-        m3u8_content = rewrite_master_playlist(raw_m3u8, local_ip, port, M3U8_URL, is_dub=is_dub)
+        m3u8_content = rewrite_master_playlist(raw_m3u8, local_ip, port, M3U8_URL, is_dub=is_dub, pref_quality=pref_quality)
 
         primary_var_url = extract_primary_variant_url(raw_m3u8, M3U8_URL, pref_quality)
         if primary_var_url:
@@ -1276,9 +1358,31 @@ def main():
                     seg_urls, seg_start_times, total_manifest_duration = parse_variant_metadata(raw_var, primary_var_url)
                     if seg_urls:
                         direct_cdn = probe_direct_cdn(seg_urls[0])
-                    rewritten_primary = rewrite_variant_playlist(raw_var, primary_var_url, local_ip, port, direct_cdn=direct_cdn)
+                    rewritten_primary = rewrite_variant_playlist(raw_var, primary_var_url, local_ip, port, direct_cdn=direct_cdn, is_audio=False)
                     with variant_lock:
                         variant_cache[primary_var_url] = rewritten_primary
+            except Exception:
+                pass
+
+        # Also pre-fetch and pre-cache the matching audio sub-playlist
+        aud_m = None
+        if is_dub:
+            aud_m = re.search(r'#EXT-X-MEDIA:TYPE=AUDIO.*?LANGUAGE="(en|eng)".*?URI="([^"]+)"', raw_m3u8, re.IGNORECASE)
+        else:
+            aud_m = re.search(r'#EXT-X-MEDIA:TYPE=AUDIO.*?LANGUAGE="(ja|jpn)".*?URI="([^"]+)"', raw_m3u8, re.IGNORECASE)
+        if not aud_m:
+            aud_m = re.search(r'#EXT-X-MEDIA:TYPE=AUDIO.*?URI="([^"]+)"', raw_m3u8)
+        if aud_m:
+            aud_rel_uri = aud_m.group(2) if len(aud_m.groups()) >= 2 else aud_m.group(1)
+            aud_abs_url = urllib.parse.urljoin(M3U8_URL, aud_rel_uri)
+            try:
+                resp_aud = session.get(aud_abs_url, headers=req_headers, timeout=12)
+                if resp_aud.status_code == 200:
+                    raw_aud = resp_aud.text
+                    rewritten_aud = rewrite_variant_playlist(raw_aud, aud_abs_url, local_ip, port, direct_cdn=direct_cdn, is_audio=True)
+                    with variant_lock:
+                        variant_cache[aud_abs_url] = rewritten_aud
+                    aud_seg_urls, _, _ = parse_variant_metadata(raw_aud, aud_abs_url)
             except Exception:
                 pass
     else:
@@ -1315,7 +1419,7 @@ def main():
     # Accurate start segment lookup
     start_seg_idx = find_segment_index(seg_start_times, initial_time)
     if not direct_cdn and seg_urls:
-        segment_buffer.set_segments(seg_urls, start_idx=start_seg_idx)
+        segment_buffer.set_segments(seg_urls, aud_urls=aud_seg_urls, start_idx=start_seg_idx)
         # Launch 6 parallel pre-fetch threads to maximize CDN throughput without congestion
         for _ in range(6):
             prefetch_t = threading.Thread(target=segment_buffer.worker_loop, daemon=True)
