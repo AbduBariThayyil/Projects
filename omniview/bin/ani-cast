@@ -23,6 +23,7 @@ unset ANI_CAST_NO_SUB
 unset ANI_CAST_DEVICE
 unset ANI_CAST_LOCAL
 unset ANI_CAST_DOWNLOAD
+unset ANI_CAST_DUB
 
 cleanup_session() {
     trap - EXIT INT TERM
@@ -131,6 +132,7 @@ EOF
             ;;
         --dub)
             DUB_FLAG=1
+            export ANI_CAST_DUB=1
             shift
             ;;
         -ns|--no-sub|--no-subs)
@@ -282,6 +284,9 @@ while true; do
         if [[ ! "${CURRENT_QUERY,,}" =~ season[[:space:]]*[0-9]+ ]]; then
             CURRENT_QUERY="$CURRENT_QUERY Season $CURRENT_SEASON"
         fi
+        [ -z "$SELECT_NTH" ] && SELECT_NTH="1"
+    elif [ -n "$SEASON" ]; then
+        # User explicitly passed -s (e.g. -s 1), auto-select first match to eliminate query prompt
         [ -z "$SELECT_NTH" ] && SELECT_NTH="1"
     fi
 

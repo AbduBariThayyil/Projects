@@ -49,6 +49,17 @@ if [ -z "$VIDEO_URL" ]; then
     exit 1
 fi
 
+# Auto-resolve master playlist if a sub-variant (e.g. 1080/index.m3u8) was passed (preserves audio tracks)
+if [[ "$VIDEO_URL" =~ ^(.*)/([0-9]+p?|ep\.[0-9]+|video|media)/index\.m3u8(\?.*)?$ ]]; then
+    CANDIDATE_MASTER="${BASH_REMATCH[1]}/master.m3u8${BASH_REMATCH[3]}"
+    CHECK_CMD="curl -sI -o /dev/null -w '%{http_code}' --max-time 2.5"
+    [ -n "$REF" ] && CHECK_CMD+=" -e '$REF'"
+    HTTP_CODE=$(eval "$CHECK_CMD '$CANDIDATE_MASTER'" 2>/dev/null || echo "000")
+    if [ "$HTTP_CODE" = "200" ]; then
+        VIDEO_URL="$CANDIDATE_MASTER"
+    fi
+fi
+
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omniview"
 mkdir -p "$CACHE_DIR"
 
@@ -79,7 +90,13 @@ if [ "$ANI_CAST_LOCAL" = "1" ] || [ "$OMNIVIEW_LOCAL" = "1" ] || [ "${TARGET_DEV
     MPV_ARGS=(
         "--force-media-title=$TITLE"
         "--script=$BASE_DIR/lib/ani_cast_mpv_resume.lua"
+        "--demuxer-lavf-o=allowed_segment_extensions=ALL"
     )
+    if [ "$ANI_CAST_DUB" = "1" ] || [ "$OMNIVIEW_DUB" = "1" ]; then
+        MPV_ARGS+=("--alang=eng,en,English")
+    else
+        MPV_ARGS+=("--alang=jpn,ja,Japanese")
+    fi
     [ -n "$REF" ] && MPV_ARGS+=("--referrer=$REF")
     if [ "$ANI_CAST_NO_SUB" = "1" ] || [ "$OMNIVIEW_NO_SUB" = "1" ]; then
         MPV_ARGS+=("--no-sub")

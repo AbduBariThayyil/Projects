@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import sys
 import os
+import re
 import time
 import socket
+import subprocess
 import logging
 import threading
 import select
@@ -201,6 +203,12 @@ SUB_FILE = ""
 TITLE = ""
 m3u8_content = b""
 segment_buffer = None
+direct_cdn = True
+variant_cache = {}
+variant_lock = threading.Lock()
+session = None
+local_ip = "127.0.0.1"
+port = DEFAULT_PORT
 
 class KeyboardController:
     """Non-blocking keyboard listener using cbreak mode for laptop-based controls."""
@@ -450,6 +458,61 @@ class HLSProxyHandler(http.server.BaseHTTPRequestHandler):
                 if not head_only:
                     self.wfile.write(m3u8_content)
                     self.wfile.flush()
+
+            elif self.path.startswith("/variant.m3u8"):
+                parsed = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(parsed.query)
+                if "u" not in qs:
+                    try:
+                        self.send_error(400)
+                    except Exception:
+                        pass
+                    return
+
+                target_url = qs["u"][0]
+                cached_variant = None
+                with variant_lock:
+                    cached_variant = variant_cache.get(target_url)
+
+                if cached_variant is None:
+                    try:
+                        h = {"Referer": REFERER, "User-Agent": "Mozilla/5.0"}
+                        s = session or requests.Session()
+                        resp = s.get(target_url, headers=h, timeout=12)
+                        if resp.status_code == 200:
+                            cached_variant = rewrite_variant_playlist(
+                                resp.text, target_url, local_ip, port, direct_cdn=direct_cdn
+                            )
+                            with variant_lock:
+                                variant_cache[target_url] = cached_variant
+                        else:
+                            try:
+                                self.send_error(resp.status_code)
+                            except Exception:
+                                pass
+                            return
+                    except Exception:
+                        try:
+                            self.send_error(502)
+                        except Exception:
+                            pass
+                        return
+
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Access-Control-Allow-Headers", "*")
+                    self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+                    self.send_header("Connection", "keep-alive")
+                    self.send_header("Keep-Alive", "timeout=60, max=1000")
+                    self.send_header("Content-Length", str(len(cached_variant)))
+                    self.end_headers()
+                    if not head_only:
+                        self.wfile.write(cached_variant)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, socket.error):
+                    return
 
             elif "/seg_" in self.path:
                 parsed = urllib.parse.urlparse(self.path)
@@ -728,7 +791,15 @@ class LocalPlayerController:
             f"--input-ipc-server={self.ipc_sock}",
             f"--force-media-title={title}",
             "--msg-level=all=no",
+            "--demuxer-lavf-o=allowed_segment_extensions=ALL",
         ]
+        if REFERER:
+            cmd.append(f"--referrer={REFERER}")
+        is_dub = os.environ.get("ANI_CAST_DUB") == "1" or os.environ.get("OMNIVIEW_DUB") == "1"
+        if is_dub:
+            cmd.append("--alang=eng,en,English")
+        else:
+            cmd.append("--alang=jpn,ja,Japanese")
         if current_time and float(current_time) > 0:
             cmd.append(f"--start={float(current_time)}")
         if sub_url:
@@ -887,6 +958,162 @@ def discover_chromecast(silent=False, target_device=None):
     cast = connect_chromecast_direct(chosen_info["ip"], chosen_info["name"], timeout=3.5)
     return cast
 
+def resolve_master_url(url, referer=None, req_session=None):
+    """Detects and resolves full HLS master playlist URL from sub-variants (e.g. 1080/index.m3u8)."""
+    if not url:
+        return url
+    if "master.m3u8" in url:
+        return url
+    m = re.match(r'^(.*?)/(?:[0-9]+p?|ep\.[0-9]+|video|media)/index\.m3u8(\?.*)?$', url)
+    if m:
+        candidate = m.group(1) + "/master.m3u8" + (m.group(2) or "")
+        try:
+            s = req_session or requests.Session()
+            h = {"Referer": referer, "User-Agent": "Mozilla/5.0"} if referer else {"User-Agent": "Mozilla/5.0"}
+            r = s.head(candidate, headers=h, timeout=2.5)
+            if r.status_code == 200:
+                return candidate
+            r2 = s.get(candidate, headers=dict(h, Range="bytes=0-100"), timeout=2.5)
+            if r2.status_code in [200, 206]:
+                return candidate
+        except Exception:
+            pass
+    return url
+
+def is_master_playlist(content_str):
+    if not content_str:
+        return False
+    return "#EXT-X-STREAM-INF" in content_str or "#EXT-X-MEDIA" in content_str
+
+def probe_direct_cdn(seg_url):
+    """Checks if CDN segments can be fetched directly by Chromecast without Referer."""
+    if not seg_url:
+        return False
+    try:
+        r = requests.head(seg_url, timeout=2.5)
+        if r.status_code in [200, 206]:
+            return True
+        r2 = requests.get(seg_url, headers={"Range": "bytes=0-100"}, timeout=2.5)
+        if r2.status_code in [200, 206]:
+            return True
+    except Exception:
+        pass
+    return False
+
+def rewrite_master_playlist(raw_m3u8, host_ip, srv_port, master_url, is_dub=False):
+    """
+    Rewrites master HLS playlist to proxy audio and video sub-playlists through local server.
+    Ensures preferred audio track (Japanese default, or English if --dub) is marked DEFAULT=YES.
+    """
+    rewritten_lines = []
+    for line in raw_m3u8.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#EXT-X-MEDIA:TYPE=AUDIO"):
+            uri_match = re.search(r'URI="([^"]+)"', stripped)
+            if uri_match:
+                rel_uri = uri_match.group(1)
+                abs_uri = urllib.parse.urljoin(master_url, rel_uri)
+                encoded = urllib.parse.quote(abs_uri)
+                new_uri = f"http://{host_ip}:{srv_port}/variant.m3u8?u={encoded}"
+                new_line = stripped[:uri_match.start(1)] + new_uri + stripped[uri_match.end(1):]
+
+                is_match = False
+                name_match = re.search(r'NAME="([^"]+)"', stripped)
+                lang_match = re.search(r'LANGUAGE="([^"]+)"', stripped)
+                t_name = name_match.group(1).lower() if name_match else ""
+                t_lang = lang_match.group(1).lower() if lang_match else ""
+
+                if is_dub:
+                    if "en" in t_lang or "english" in t_name or "dub" in t_name:
+                        is_match = True
+                else:
+                    if "ja" in t_lang or "jpn" in t_lang or "japanese" in t_name:
+                        is_match = True
+
+                if is_match:
+                    new_line = re.sub(r'DEFAULT=(YES|NO)', 'DEFAULT=YES', new_line)
+                    new_line = re.sub(r'AUTOSELECT=(YES|NO)', 'AUTOSELECT=YES', new_line)
+                else:
+                    new_line = re.sub(r'DEFAULT=(YES|NO)', 'DEFAULT=NO', new_line)
+
+                rewritten_lines.append(new_line)
+            else:
+                rewritten_lines.append(line)
+        elif stripped.startswith("#EXT-X-STREAM-INF"):
+            rewritten_lines.append(line)
+        elif stripped and not stripped.startswith("#"):
+            abs_uri = urllib.parse.urljoin(master_url, stripped)
+            encoded = urllib.parse.quote(abs_uri)
+            rewritten_lines.append(f"http://{host_ip}:{srv_port}/variant.m3u8?u={encoded}")
+        else:
+            rewritten_lines.append(line)
+
+    return "\n".join(rewritten_lines).encode("utf-8")
+
+def rewrite_variant_playlist(raw_variant, sub_url, host_ip, srv_port, direct_cdn=True):
+    """Rewrites sub-playlist: if direct_cdn is True, keeps direct Cloudflare URLs for 0-buffer streaming."""
+    lines = []
+    seg_idx = 0
+    for line in raw_variant.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            abs_seg = urllib.parse.urljoin(sub_url, stripped)
+            if direct_cdn:
+                lines.append(abs_seg)
+            else:
+                encoded = urllib.parse.quote(abs_seg)
+                lines.append(f"http://{host_ip}:{srv_port}/seg_{seg_idx:05d}.ts?u={encoded}")
+            seg_idx += 1
+        else:
+            lines.append(line)
+    return "\n".join(lines).encode("utf-8")
+
+def extract_primary_variant_url(raw_m3u8, master_url, preferred_quality="1080p"):
+    """Extracts the video sub-playlist matching user quality preference."""
+    lines = raw_m3u8.splitlines()
+    variants = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#EXT-X-STREAM-INF"):
+            q_label = "Auto"
+            if "RESOLUTION=" in stripped:
+                q_label = stripped.split("RESOLUTION=")[1].split(",")[0].split("x")[-1] + "p"
+            if i + 1 < len(lines):
+                nxt = lines[i + 1].strip()
+                if nxt and not nxt.startswith("#"):
+                    abs_url = urllib.parse.urljoin(master_url, nxt)
+                    variants.append((q_label, abs_url))
+    if not variants:
+        return None
+    pref = (preferred_quality or "1080p").lower().rstrip("p")
+    matched = [u for q, u in variants if pref in q.lower()]
+    return matched[0] if matched else variants[-1][1]
+
+def parse_variant_metadata(raw_variant, sub_url):
+    """Parses video segment URLs, start times, and total duration from a variant playlist."""
+    seg_urls = []
+    seg_start_times = []
+    current_time = 0.0
+    pending_duration = None
+    for line in raw_variant.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#EXTINF:"):
+            try:
+                val = stripped.split(":")[1].split(",")[0]
+                pending_duration = float(val)
+            except Exception:
+                pending_duration = 4.0
+        elif stripped and not stripped.startswith("#"):
+            abs_url = urllib.parse.urljoin(sub_url, stripped)
+            seg_urls.append(abs_url)
+            seg_start_times.append(current_time)
+            if pending_duration is not None:
+                current_time += pending_duration
+                pending_duration = None
+            else:
+                current_time += 4.0
+    return seg_urls, seg_start_times, current_time
+
 def parse_and_rewrite_m3u8(raw_m3u8, local_ip, port, m3u8_url):
     rewritten_lines = []
     seg_urls = []
@@ -984,6 +1211,7 @@ def start_playback_on_cast(cast, video_url, sub_url, title, current_time=0.0):
 
 def main():
     global REFERER, M3U8_URL, SUB_FILE, TITLE, m3u8_content, segment_buffer
+    global session, local_ip, port, direct_cdn, variant_cache, variant_lock
 
     if len(sys.argv) < 3:
         print("Usage: hls_streamer.py <referer> <m3u8_url> [sub_file] [title] [start_time]")
@@ -994,13 +1222,14 @@ def main():
     SUB_FILE = sys.argv[3] if len(sys.argv) > 3 else ""
     TITLE = sys.argv[4] if len(sys.argv) > 4 else "Anime Episode"
 
+    is_dub = os.environ.get("ANI_CAST_DUB") == "1" or os.environ.get("OMNIVIEW_DUB") == "1" or "--dub" in sys.argv
+    pref_quality = os.environ.get("ANI_CAST_QUALITY") or os.environ.get("OMNIVIEW_QUALITY") or "1080p"
+
     # Setup persistent HTTP session with connection pooling
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(pool_connections=35, pool_maxsize=35, max_retries=3)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
-
-    segment_buffer = SegmentBuffer(session, REFERER, lookahead=36, lookbehind=10)
 
     # 1. Discover TV (prompts for TV 1 or 2 on initial launch)
     cast = None
@@ -1021,17 +1250,50 @@ def main():
     local_ip = get_local_ip(device_ip)
     port = find_free_port(DEFAULT_PORT)
 
-    # 2. Fetch master stream playlist
+    # 2. Upgrade to master playlist if a sub-variant was passed
+    M3U8_URL = resolve_master_url(M3U8_URL, REFERER, session)
+
+    # 3. Fetch stream playlist
     print(f"\033[1;36m==>\033[0m Connecting to stream: {TITLE}...", flush=True)
     req_headers = {"Referer": REFERER, "User-Agent": "Mozilla/5.0"}
     resp = session.get(M3U8_URL, headers=req_headers, timeout=15)
     raw_m3u8 = resp.text
 
-    m3u8_content, seg_urls, seg_start_times, total_manifest_duration = parse_and_rewrite_m3u8(
-        raw_m3u8, local_ip, port, M3U8_URL
-    )
+    seg_urls = []
+    seg_start_times = []
+    total_manifest_duration = 0.0
+    is_master = is_master_playlist(raw_m3u8)
 
-    # 3. Determine start time: explicit command-line argument vs auto-resume
+    if is_master:
+        m3u8_content = rewrite_master_playlist(raw_m3u8, local_ip, port, M3U8_URL, is_dub=is_dub)
+
+        primary_var_url = extract_primary_variant_url(raw_m3u8, M3U8_URL, pref_quality)
+        if primary_var_url:
+            try:
+                resp_var = session.get(primary_var_url, headers=req_headers, timeout=12)
+                if resp_var.status_code == 200:
+                    raw_var = resp_var.text
+                    seg_urls, seg_start_times, total_manifest_duration = parse_variant_metadata(raw_var, primary_var_url)
+                    if seg_urls:
+                        direct_cdn = probe_direct_cdn(seg_urls[0])
+                    rewritten_primary = rewrite_variant_playlist(raw_var, primary_var_url, local_ip, port, direct_cdn=direct_cdn)
+                    with variant_lock:
+                        variant_cache[primary_var_url] = rewritten_primary
+            except Exception:
+                pass
+    else:
+        m3u8_content, seg_urls, seg_start_times, total_manifest_duration = parse_and_rewrite_m3u8(
+            raw_m3u8, local_ip, port, M3U8_URL
+        )
+        if seg_urls:
+            direct_cdn = probe_direct_cdn(seg_urls[0])
+
+    if direct_cdn:
+        print("\033[1;32m==>\033[0m Direct CDN Edge Delivery enabled (0-latency, 0-buffer multi-track streaming)", flush=True)
+
+    segment_buffer = SegmentBuffer(session, REFERER, lookahead=36, lookbehind=10)
+
+    # 4. Determine start time: explicit command-line argument vs auto-resume
     explicit_time_str = os.environ.get("ANI_CAST_START_TIME")
     if len(sys.argv) > 5 and sys.argv[5]:
         explicit_time_str = sys.argv[5]
@@ -1052,17 +1314,16 @@ def main():
 
     # Accurate start segment lookup
     start_seg_idx = find_segment_index(seg_start_times, initial_time)
-    segment_buffer.set_segments(seg_urls, start_idx=start_seg_idx)
+    if not direct_cdn and seg_urls:
+        segment_buffer.set_segments(seg_urls, start_idx=start_seg_idx)
+        # Launch 6 parallel pre-fetch threads to maximize CDN throughput without congestion
+        for _ in range(6):
+            prefetch_t = threading.Thread(target=segment_buffer.worker_loop, daemon=True)
+            prefetch_t.start()
+        # Pre-buffer first 6 segments so Chromecast receives instant stream responses
+        segment_buffer.prewarm(count=6, timeout=3.5)
 
-    # Launch 6 parallel pre-fetch threads to maximize CDN throughput without congestion
-    for _ in range(6):
-        prefetch_t = threading.Thread(target=segment_buffer.worker_loop, daemon=True)
-        prefetch_t.start()
-
-    # Pre-buffer first 6 segments so Chromecast receives instant stream responses
-    segment_buffer.prewarm(count=6, timeout=3.5)
-
-    # 4. Start local proxy server in background thread
+    # 5. Start local proxy server in background thread
     socketserver.TCPServer.allow_reuse_address = True
     httpd = ThreadedServer(("0.0.0.0", port), HLSProxyHandler)
     server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -1570,12 +1831,14 @@ def main():
                                 print(f"\033[1;32m[+] Re-synced with {device_name}! Playback is continuing on TV (no restart).\033[0m", flush=True)
                             else:
                                 # TV was genuinely stopped/powered off: restart playback from last known position
-                                m3u8_content, seg_urls, seg_start_times, total_manifest_duration = parse_and_rewrite_m3u8(
-                                    raw_m3u8, local_ip, port, M3U8_URL
-                                )
                                 resume_pos = max(0.0, last_known_position - 2.0)
-                                resume_seg_idx = find_segment_index(seg_start_times, resume_pos)
-                                segment_buffer.seek(resume_seg_idx)
+                                if not is_master:
+                                    m3u8_content, seg_urls, seg_start_times, total_manifest_duration = parse_and_rewrite_m3u8(
+                                        raw_m3u8, local_ip, port, M3U8_URL
+                                    )
+                                    resume_seg_idx = find_segment_index(seg_start_times, resume_pos)
+                                    if segment_buffer and not direct_cdn:
+                                        segment_buffer.seek(resume_seg_idx)
 
                                 video_url = f"http://{local_ip}:{port}/playlist.m3u8"
                                 sub_url = f"http://{local_ip}:{port}/subtitles.vtt" if has_subs else None

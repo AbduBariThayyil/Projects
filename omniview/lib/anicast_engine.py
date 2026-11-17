@@ -237,10 +237,14 @@ def resolve_stream(episode_id, mode="sub", preferred_quality="1080p"):
             sub_url = stream_data["subtitles"][0].get("src", "")
 
         # Qualities
+        # Check if master_m3u8 contains multi-track audio (#EXT-X-MEDIA:TYPE=AUDIO)
+        has_audio_track = False
         target_url = master_m3u8
         try:
             m3u8_text = http_get(master_m3u8, headers={"Referer": referer})
             if m3u8_text:
+                if "#EXT-X-MEDIA:TYPE=AUDIO" in m3u8_text:
+                    has_audio_track = True
                 lines = m3u8_text.splitlines()
                 qualities = []
                 for i, line in enumerate(lines):
@@ -259,7 +263,7 @@ def resolve_stream(episode_id, mode="sub", preferred_quality="1080p"):
             pass
 
         return {
-            "video_url": target_url,
+            "video_url": master_m3u8 if has_audio_track else target_url,
             "master_url": master_m3u8,
             "sub_url": sub_url,
             "referer": referer
@@ -532,6 +536,8 @@ if __name__ == "__main__":
         quality = sys.argv[4] if len(sys.argv) > 4 else "1080p"
         is_dub = (sys.argv[5] == "1") if len(sys.argv) > 5 else False
         mode = "dub" if is_dub else "sub"
+        if is_dub:
+            os.environ["ANI_CAST_DUB"] = "1"
 
         print(f"\033[1;36m==>\033[0m Resolving '{query}' Episode {ep_no} via AniCast Engine...")
         results = search_anime(query)
