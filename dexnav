@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 DexNav Quick-Find [R] Configurator & CLI Tool for Pokémon Quetzal
-Allows setting the DexNav quick-search target [R] to any Pokémon by ID or name.
-Updates active mGBA save states (.ss0, .ss1, .ss2) with valid PNG chunk re-encoding.
+Directly configures the in-game cartridge battery save (.sav) and emulator save states (.ss*).
+Updates VAR_0x40F7 (0x3C2) and VAR_0x40F9 (0x3C6) in SaveBlock1 with valid sector checksum recalculation.
 """
 
 import sys
@@ -16,12 +16,14 @@ import subprocess
 
 GBA_DIR = "/home/vibecoder/Games/Console Games/GBA"
 DB_PATH = "/home/vibecoder/Projects/quetzal_database.db"
-ROM_PATH = os.path.join(GBA_DIR, "Moemon Quetzal.gba")
-if not os.path.exists(ROM_PATH):
-    ROM_PATH = os.path.join(GBA_DIR, "Quetzal.gba")
+SECTOR_SIZE = 4096
+SIGNATURE = 0x08012025
 
-# Known offsets in decompressed gbAs chunk
-OFFSETS = [0x1ff82, 0x5c8c8]
+
+def calc_sector_checksum(sector_bytes: bytes) -> int:
+    """Calculate 16-bit checksum of 0xFF4 bytes in a save sector."""
+    s = sum(int.from_bytes(sector_bytes[i:i+4], "little") for i in range(0, 0xFF4, 4)) & 0xFFFFFFFF
+    return ((s >> 16) + (s & 0xFFFF)) & 0xFFFF
 
 
 def get_db_connection():
@@ -63,31 +65,71 @@ def resolve_species(query: str):
     return None, None, None, None
 
 
-def get_current_target(state_path: str):
-    """Read current DexNav target from an mGBA savestate (.ssX)."""
-    if not os.path.exists(state_path):
+def get_current_sav_target(sav_path: str):
+    """Read registered species from in-game .sav file."""
+    if not os.path.exists(sav_path):
         return None
     try:
-        with open(state_path, "rb") as f:
+        with open(sav_path, "rb") as f:
             data = f.read()
-        idx = 8
-        while idx < len(data):
-            length = int.from_bytes(data[idx:idx+4], "big")
-            chunk_type = data[idx+4:idx+8].decode("latin1", "ignore")
-            if chunk_type == "gbAs":
-                chunk_data = data[idx+8:idx+8+length]
-                gbas = zlib.decompress(chunk_data)
-                v1 = int.from_bytes(gbas[0x1ff82:0x1ff84], "little")
-                v2 = int.from_bytes(gbas[0x5c8c8:0x5c8ca], "little")
-                return v1 if v1 != 0 else v2
-            idx += 12 + length
+        for sec_idx in range(len(data) // SECTOR_SIZE):
+            sec = data[sec_idx * SECTOR_SIZE : (sec_idx + 1) * SECTOR_SIZE]
+            sid = int.from_bytes(sec[0xFF4:0xFF6], "little")
+            sig = int.from_bytes(sec[0xFF8:0xFFC], "little")
+            if sid == 1 and sig == SIGNATURE:
+                v = int.from_bytes(sec[0x3C6:0x3C8], "little")
+                if v > 0:
+                    return v
+                v2 = int.from_bytes(sec[0x3C2:0x3C4], "little") & 0x3FFF
+                if v2 > 0:
+                    return v2
     except Exception:
-        return None
+        pass
     return None
 
 
+def patch_sav_file(sav_path: str, species_id: int) -> bool:
+    """Patch the in-game .sav battery save file with checksum recalculation."""
+    if not os.path.exists(sav_path):
+        return False
+
+    backup_path = sav_path + ".bak"
+    shutil.copy2(sav_path, backup_path)
+
+    with open(sav_path, "rb") as f:
+        data = bytearray(f.read())
+
+    patched_any = False
+    sp_bytes = struct.pack("<H", species_id)
+
+    # Patch Sector ID 1 (SaveBlock1) across all save slots (both Slot 0 and Slot 1)
+    for sec_idx in range(len(data) // SECTOR_SIZE):
+        sec_start = sec_idx * SECTOR_SIZE
+        sec_end = sec_start + SECTOR_SIZE
+        sec = data[sec_start:sec_end]
+        sid = int.from_bytes(sec[0xFF4:0xFF6], "little")
+        sig = int.from_bytes(sec[0xFF8:0xFFC], "little")
+
+        if sid == 1 and sig == SIGNATURE:
+            # Write VAR_0x40F7 (species + land habitat 0) and VAR_0x40F9 (species)
+            data[sec_start + 0x3C2 : sec_start + 0x3C4] = sp_bytes
+            data[sec_start + 0x3C6 : sec_start + 0x3C8] = sp_bytes
+
+            # Recalculate 16-bit checksum
+            mod_sec = data[sec_start:sec_end]
+            new_chk = calc_sector_checksum(mod_sec)
+            data[sec_start + 0xFF6 : sec_start + 0xFF8] = struct.pack("<H", new_chk)
+            patched_any = True
+
+    if patched_any:
+        with open(sav_path, "wb") as f:
+            f.write(data)
+        return True
+    return False
+
+
 def patch_savestate(state_path: str, species_id: int) -> bool:
-    """Safely patch mGBA savestate with backup and PNG CRC32 recalculation."""
+    """Patch mGBA savestate (.ss*) if it exists."""
     if not os.path.exists(state_path):
         return False
 
@@ -100,23 +142,21 @@ def patch_savestate(state_path: str, species_id: int) -> bool:
     idx = 8
     patched = False
     new_data = bytearray(data[:8])
+    sp_bytes = struct.pack("<H", species_id)
 
     while idx < len(data):
         length = int.from_bytes(data[idx:idx+4], "big")
         chunk_type = data[idx+4:idx+8]
         chunk_data = data[idx+8:idx+8+length]
-        crc = data[idx+8+length:idx+12+length]
 
         if chunk_type == b"gbAs":
             try:
                 gbas = bytearray(zlib.decompress(chunk_data))
                 # Patch offsets
-                sp_bytes = struct.pack("<H", species_id)
-                for off in OFFSETS:
+                for off in [0x1ff82, 0x5c8c8]:
                     if off + 2 <= len(gbas):
                         gbas[off:off+2] = sp_bytes
 
-                # Recompress
                 comp = zlib.compress(gbas)
                 new_len = len(comp)
                 new_crc = binascii.crc32(b"gbAs" + comp)
@@ -126,8 +166,7 @@ def patch_savestate(state_path: str, species_id: int) -> bool:
                 new_data.extend(comp)
                 new_data.extend(struct.pack(">I", new_crc))
                 patched = True
-            except Exception as e:
-                print(f"Error compressing chunk in {state_path}: {e}", file=sys.stderr)
+            except Exception:
                 new_data.extend(data[idx:idx+12+length])
         else:
             new_data.extend(data[idx:idx+12+length])
@@ -150,24 +189,36 @@ def notify(title: str, msg: str):
 
 
 def show_status():
-    """Print current status of DexNav target across save states."""
-    print("========================================")
-    print("   📡 DEXNAV QUICK-FIND [R] STATUS")
-    print("========================================")
-    found_any = False
+    """Print current status of DexNav target in .sav and save states."""
+    print("==================================================")
+    print("        📡 DEXNAV QUICK-FIND [R] STATUS")
+    print("==================================================")
+    
+    # 1. In-game .sav file
+    for sav_name in ["Moemon Quetzal.sav", "Quetzal.sav"]:
+        p = os.path.join(GBA_DIR, sav_name)
+        real_p = os.path.realpath(p)
+        if os.path.exists(real_p):
+            tgt = get_current_sav_target(real_p)
+            if tgt:
+                _, name, nat, t = resolve_species(str(tgt))
+                print(f" 💾 In-Game Save (.sav): #{tgt:04d} {name} [{t}] (Nat #{nat})")
+            else:
+                print(f" 💾 In-Game Save (.sav): Found ({os.path.basename(real_p)})")
+            break
+
+    # 2. Emulator states
+    found_states = False
     for slot in range(10):
         for prefix in ["Quetzal", "Moemon Quetzal"]:
-            state_file = os.path.join(GBA_DIR, f"{prefix}.ss{slot}")
-            if os.path.exists(state_file):
-                tgt = get_current_target(state_file)
-                if tgt is not None:
-                    _, name, nat, t = resolve_species(str(tgt))
-                    print(f" Slot {slot} ({os.path.basename(state_file)}): #{tgt:04d} {name or 'Unknown'} [{t or '—'}]")
-                    found_any = True
+            sf = os.path.join(GBA_DIR, f"{prefix}.ss{slot}")
+            if os.path.exists(sf):
+                found_states = True
+                print(f" 🕹️  Emulator State Slot {slot}: {os.path.basename(sf)}")
                 break
-    if not found_any:
-        print(" No active save states found in GBA directory.")
-    print("========================================")
+    if not found_states:
+        print(" 🕹️  No emulator save states found.")
+    print("==================================================")
 
 
 def main():
@@ -177,7 +228,7 @@ def main():
         print("  dexnav 250        # Set DexNav quick-find [R] to #250 Ho-Oh")
         print("  dexnav 001        # Set DexNav quick-find [R] to #001 Bulbasaur")
         print("  dexnav ralts      # Set DexNav quick-find [R] to Ralts")
-        print("  dexnav status     # View current DexNav [R] species in save states")
+        print("  dexnav status     # View current DexNav [R] species in .sav and save states")
         print("  dexnav list fire  # Search species database")
         return 0
 
@@ -214,28 +265,40 @@ def main():
     print(f"    Type: {types}  |  National Dex: #{nat}")
     print("==================================================")
 
-    # Find states to patch
-    # Primary active slot is slot 0 (Quetzal.ss0), plus slot 1, 2 if they exist
-    patched_count = 0
-    for slot in [0, 1, 2]:
-        for prefix in ["Quetzal", "Moemon Quetzal"]:
-            state_file = os.path.join(GBA_DIR, f"{prefix}.ss{slot}")
-            if os.path.exists(state_file):
-                if patch_savestate(state_file, sp_id):
-                    print(f" ✓ Patched Save State Slot {slot} ({os.path.basename(state_file)})")
-                    patched_count += 1
+    # 1. Patch In-Game Game Save File (.sav)
+    patched_sav = False
+    for sav_name in ["Moemon Quetzal.sav", "Quetzal.sav"]:
+        p = os.path.join(GBA_DIR, sav_name)
+        real_p = os.path.realpath(p)
+        if os.path.exists(real_p):
+            if patch_sav_file(real_p, sp_id):
+                print(f" ✓ Patched In-Game Battery Save (.sav): {os.path.basename(real_p)}")
+                patched_sav = True
                 break
 
-    if patched_count > 0:
+    # 2. Patch Emulator Save States (.ss*)
+    patched_states = 0
+    for slot in range(10):
+        for prefix in ["Quetzal", "Moemon Quetzal"]:
+            sf = os.path.join(GBA_DIR, f"{prefix}.ss{slot}")
+            if os.path.exists(sf):
+                if patch_savestate(sf, sp_id):
+                    patched_states += 1
+                break
+
+    if patched_sav or patched_states > 0:
         print("--------------------------------------------------")
-        print(" ✨ SUCCESS: DexNav Quick-Find updated!")
-        print(" 👉 In mGBA, press F1 (Load State) to activate immediately!")
-        print(" 👉 Press [R] in-game to search for your registered target!")
+        print(f" ✨ SUCCESS: DexNav Quick-Find set to #{sp_id:04d} {name}!")
+        if patched_sav:
+            print(" 💾 In-Game Save (.sav): Updated with valid checksum!")
+            print("    -> In mGBA, reload in-game save via 'File -> Reset' (Ctrl+R) or soft-reset (A+B+Start+Select) to load the updated .sav file.")
+        if patched_states > 0:
+            print(f" 🕹️  Emulator Quick-Saves (.ss*): {patched_states} slots synchronized.")
         print("==================================================")
-        notify("DexNav [R] Target Updated", f"Set to #{sp_id:04d} {name} ({types}). Press F1 to load!")
+        notify("DexNav [R] Target Updated", f"Set to #{sp_id:04d} {name} ({types}) in .sav file!")
         return 0
     else:
-        print("⚠️ Warning: No active save states (.ss0, .ss1, .ss2) found to patch.", file=sys.stderr)
+        print("❌ Error: Could not find any .sav or .ss save files in GBA directory.", file=sys.stderr)
         return 1
 
 
