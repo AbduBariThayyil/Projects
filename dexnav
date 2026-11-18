@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""
+DexNav Quick-Find [R] Configurator & CLI Tool for Pokémon Quetzal
+Allows setting the DexNav quick-search target [R] to any Pokémon by ID or name.
+Updates active mGBA save states (.ss0, .ss1, .ss2) with valid PNG chunk re-encoding.
+"""
+
+import sys
+import os
+import zlib
+import struct
+import binascii
+import sqlite3
+import shutil
+import subprocess
+
+GBA_DIR = "/home/vibecoder/Games/Console Games/GBA"
+DB_PATH = "/home/vibecoder/Projects/quetzal_database.db"
+ROM_PATH = os.path.join(GBA_DIR, "Moemon Quetzal.gba")
+if not os.path.exists(ROM_PATH):
+    ROM_PATH = os.path.join(GBA_DIR, "Quetzal.gba")
+
+# Known offsets in decompressed gbAs chunk
+OFFSETS = [0x1ff82, 0x5c8c8]
+
+
+def get_db_connection():
+    if os.path.exists(DB_PATH):
+        try:
+            return sqlite3.connect(DB_PATH, timeout=5.0)
+        except Exception:
+            return None
+    return None
+
+
+def resolve_species(query: str):
+    """Resolve an integer ID or species name to (species_id, name, national_dex_num, types)."""
+    conn = get_db_connection()
+    q = query.strip()
+    
+    # Try integer ID
+    if q.isdigit():
+        sp_id = int(q)
+        if conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, name, national_dex_num, type1, type2 FROM pokemon WHERE id = ? OR national_dex_num = ? ORDER BY id ASC LIMIT 1", (sp_id, sp_id))
+            row = cur.fetchone()
+            if row:
+                t = row[3] + (f"/{row[4]}" if row[4] else "")
+                return row[0], row[1], row[2], t
+        return sp_id, f"Species #{sp_id}", sp_id, "Unknown"
+
+    # Try name query
+    if conn:
+        cur = conn.cursor()
+        norm_q = q.replace("-", "%").replace(" ", "%").replace("_", "%")
+        cur.execute("SELECT id, name, national_dex_num, type1, type2 FROM pokemon WHERE name LIKE ? ORDER BY id ASC LIMIT 1", (f"%{norm_q}%",))
+        row = cur.fetchone()
+        if row:
+            t = row[3] + (f"/{row[4]}" if row[4] else "")
+            return row[0], row[1], row[2], t
+
+    return None, None, None, None
+
+
+def get_current_target(state_path: str):
+    """Read current DexNav target from an mGBA savestate (.ssX)."""
+    if not os.path.exists(state_path):
+        return None
+    try:
+        with open(state_path, "rb") as f:
+            data = f.read()
+        idx = 8
+        while idx < len(data):
+            length = int.from_bytes(data[idx:idx+4], "big")
+            chunk_type = data[idx+4:idx+8].decode("latin1", "ignore")
+            if chunk_type == "gbAs":
+                chunk_data = data[idx+8:idx+8+length]
+                gbas = zlib.decompress(chunk_data)
+                v1 = int.from_bytes(gbas[0x1ff82:0x1ff84], "little")
+                v2 = int.from_bytes(gbas[0x5c8c8:0x5c8ca], "little")
+                return v1 if v1 != 0 else v2
+            idx += 12 + length
+    except Exception:
+        return None
+    return None
+
+
+def patch_savestate(state_path: str, species_id: int) -> bool:
+    """Safely patch mGBA savestate with backup and PNG CRC32 recalculation."""
+    if not os.path.exists(state_path):
+        return False
+
+    backup_path = state_path + ".bak"
+    shutil.copy2(state_path, backup_path)
+
+    with open(state_path, "rb") as f:
+        data = bytearray(f.read())
+
+    idx = 8
+    patched = False
+    new_data = bytearray(data[:8])
+
+    while idx < len(data):
+        length = int.from_bytes(data[idx:idx+4], "big")
+        chunk_type = data[idx+4:idx+8]
+        chunk_data = data[idx+8:idx+8+length]
+        crc = data[idx+8+length:idx+12+length]
+
+        if chunk_type == b"gbAs":
+            try:
+                gbas = bytearray(zlib.decompress(chunk_data))
+                # Patch offsets
+                sp_bytes = struct.pack("<H", species_id)
+                for off in OFFSETS:
+                    if off + 2 <= len(gbas):
+                        gbas[off:off+2] = sp_bytes
+
+                # Recompress
+                comp = zlib.compress(gbas)
+                new_len = len(comp)
+                new_crc = binascii.crc32(b"gbAs" + comp)
+
+                new_data.extend(struct.pack(">I", new_len))
+                new_data.extend(b"gbAs")
+                new_data.extend(comp)
+                new_data.extend(struct.pack(">I", new_crc))
+                patched = True
+            except Exception as e:
+                print(f"Error compressing chunk in {state_path}: {e}", file=sys.stderr)
+                new_data.extend(data[idx:idx+12+length])
+        else:
+            new_data.extend(data[idx:idx+12+length])
+
+        idx += 12 + length
+
+    if patched:
+        with open(state_path, "wb") as f:
+            f.write(new_data)
+        return True
+    return False
+
+
+def notify(title: str, msg: str):
+    """Send native desktop notification."""
+    try:
+        subprocess.run(["notify-send", title, msg], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def show_status():
+    """Print current status of DexNav target across save states."""
+    print("========================================")
+    print("   📡 DEXNAV QUICK-FIND [R] STATUS")
+    print("========================================")
+    found_any = False
+    for slot in range(10):
+        for prefix in ["Quetzal", "Moemon Quetzal"]:
+            state_file = os.path.join(GBA_DIR, f"{prefix}.ss{slot}")
+            if os.path.exists(state_file):
+                tgt = get_current_target(state_file)
+                if tgt is not None:
+                    _, name, nat, t = resolve_species(str(tgt))
+                    print(f" Slot {slot} ({os.path.basename(state_file)}): #{tgt:04d} {name or 'Unknown'} [{t or '—'}]")
+                    found_any = True
+                break
+    if not found_any:
+        print(" No active save states found in GBA directory.")
+    print("========================================")
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print("Usage: dexnav <id_or_name> | status | list <search>")
+        print("Examples:")
+        print("  dexnav 250        # Set DexNav quick-find [R] to #250 Ho-Oh")
+        print("  dexnav 001        # Set DexNav quick-find [R] to #001 Bulbasaur")
+        print("  dexnav ralts      # Set DexNav quick-find [R] to Ralts")
+        print("  dexnav status     # View current DexNav [R] species in save states")
+        print("  dexnav list fire  # Search species database")
+        return 0
+
+    cmd = sys.argv[1].lower()
+
+    if cmd == "status":
+        show_status()
+        return 0
+
+    if cmd == "list":
+        query = sys.argv[2] if len(sys.argv) > 2 else ""
+        conn = get_db_connection()
+        if not conn:
+            print("Database not available.")
+            return 1
+        cur = conn.cursor()
+        cur.execute("SELECT id, name, national_dex_num, type1, type2 FROM pokemon WHERE name LIKE ? OR type1 LIKE ? OR type2 LIKE ? LIMIT 20", (f"%{query}%", f"%{query}%", f"%{query}%"))
+        rows = cur.fetchall()
+        print(f"Found {len(rows)} matching Pokémon:")
+        for r in rows:
+            t = r[3] + (f"/{r[4]}" if r[4] else "")
+            print(f"  #{r[0]:04d} (Nat #{r[2]}): {r[1]:<16} [{t}]")
+        return 0
+
+    # Resolve target
+    sp_id, name, nat, types = resolve_species(sys.argv[1])
+    if sp_id is None or sp_id <= 0:
+        print(f"❌ Error: Could not resolve Pokémon '{sys.argv[1]}'.", file=sys.stderr)
+        print("Tip: Use 'dexnav list <name>' to find valid species names and IDs.", file=sys.stderr)
+        return 1
+
+    print("==================================================")
+    print(f" 🎯 Setting DexNav [R] Quick-Find to: #{sp_id:04d} {name}")
+    print(f"    Type: {types}  |  National Dex: #{nat}")
+    print("==================================================")
+
+    # Find states to patch
+    # Primary active slot is slot 0 (Quetzal.ss0), plus slot 1, 2 if they exist
+    patched_count = 0
+    for slot in [0, 1, 2]:
+        for prefix in ["Quetzal", "Moemon Quetzal"]:
+            state_file = os.path.join(GBA_DIR, f"{prefix}.ss{slot}")
+            if os.path.exists(state_file):
+                if patch_savestate(state_file, sp_id):
+                    print(f" ✓ Patched Save State Slot {slot} ({os.path.basename(state_file)})")
+                    patched_count += 1
+                break
+
+    if patched_count > 0:
+        print("--------------------------------------------------")
+        print(" ✨ SUCCESS: DexNav Quick-Find updated!")
+        print(" 👉 In mGBA, press F1 (Load State) to activate immediately!")
+        print(" 👉 Press [R] in-game to search for your registered target!")
+        print("==================================================")
+        notify("DexNav [R] Target Updated", f"Set to #{sp_id:04d} {name} ({types}). Press F1 to load!")
+        return 0
+    else:
+        print("⚠️ Warning: No active save states (.ss0, .ss1, .ss2) found to patch.", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
