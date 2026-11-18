@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
 DexNav Quick-Find [R] Configurator & CLI Tool for Pokémon Quetzal
-Directly configures the in-game cartridge battery save (.sav) and emulator save states (.ss*).
+Purely configures the authentic in-game cartridge battery save (.sav).
 Updates VAR_0x40F7 (0x3C2) and VAR_0x40F9 (0x3C6) in SaveBlock1 with valid sector checksum recalculation.
+Does NOT touch or modify emulator quick-save states (.ss*).
 """
 
 import sys
 import os
-import zlib
 import struct
-import binascii
 import sqlite3
 import shutil
 import subprocess
@@ -128,58 +127,6 @@ def patch_sav_file(sav_path: str, species_id: int) -> bool:
     return False
 
 
-def patch_savestate(state_path: str, species_id: int) -> bool:
-    """Patch mGBA savestate (.ss*) if it exists."""
-    if not os.path.exists(state_path):
-        return False
-
-    backup_path = state_path + ".bak"
-    shutil.copy2(state_path, backup_path)
-
-    with open(state_path, "rb") as f:
-        data = bytearray(f.read())
-
-    idx = 8
-    patched = False
-    new_data = bytearray(data[:8])
-    sp_bytes = struct.pack("<H", species_id)
-
-    while idx < len(data):
-        length = int.from_bytes(data[idx:idx+4], "big")
-        chunk_type = data[idx+4:idx+8]
-        chunk_data = data[idx+8:idx+8+length]
-
-        if chunk_type == b"gbAs":
-            try:
-                gbas = bytearray(zlib.decompress(chunk_data))
-                # Patch offsets
-                for off in [0x1ff82, 0x5c8c8]:
-                    if off + 2 <= len(gbas):
-                        gbas[off:off+2] = sp_bytes
-
-                comp = zlib.compress(gbas)
-                new_len = len(comp)
-                new_crc = binascii.crc32(b"gbAs" + comp)
-
-                new_data.extend(struct.pack(">I", new_len))
-                new_data.extend(b"gbAs")
-                new_data.extend(comp)
-                new_data.extend(struct.pack(">I", new_crc))
-                patched = True
-            except Exception:
-                new_data.extend(data[idx:idx+12+length])
-        else:
-            new_data.extend(data[idx:idx+12+length])
-
-        idx += 12 + length
-
-    if patched:
-        with open(state_path, "wb") as f:
-            f.write(new_data)
-        return True
-    return False
-
-
 def notify(title: str, msg: str):
     """Send native desktop notification."""
     try:
@@ -189,12 +136,11 @@ def notify(title: str, msg: str):
 
 
 def show_status():
-    """Print current status of DexNav target in .sav and save states."""
+    """Print current status of DexNav target in in-game .sav file."""
     print("==================================================")
     print("        📡 DEXNAV QUICK-FIND [R] STATUS")
     print("==================================================")
     
-    # 1. In-game .sav file
     for sav_name in ["Moemon Quetzal.sav", "Quetzal.sav"]:
         p = os.path.join(GBA_DIR, sav_name)
         real_p = os.path.realpath(p)
@@ -206,18 +152,6 @@ def show_status():
             else:
                 print(f" 💾 In-Game Save (.sav): Found ({os.path.basename(real_p)})")
             break
-
-    # 2. Emulator states
-    found_states = False
-    for slot in range(10):
-        for prefix in ["Quetzal", "Moemon Quetzal"]:
-            sf = os.path.join(GBA_DIR, f"{prefix}.ss{slot}")
-            if os.path.exists(sf):
-                found_states = True
-                print(f" 🕹️  Emulator State Slot {slot}: {os.path.basename(sf)}")
-                break
-    if not found_states:
-        print(" 🕹️  No emulator save states found.")
     print("==================================================")
 
 
@@ -225,10 +159,10 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print("Usage: dexnav <id_or_name> | status | list <search>")
         print("Examples:")
-        print("  dexnav 250        # Set DexNav quick-find [R] to #250 Ho-Oh")
-        print("  dexnav 001        # Set DexNav quick-find [R] to #001 Bulbasaur")
-        print("  dexnav ralts      # Set DexNav quick-find [R] to Ralts")
-        print("  dexnav status     # View current DexNav [R] species in .sav and save states")
+        print("  dexnav 250        # Set DexNav quick-find [R] to #250 Ho-Oh in .sav")
+        print("  dexnav 001        # Set DexNav quick-find [R] to #001 Bulbasaur in .sav")
+        print("  dexnav ralts      # Set DexNav quick-find [R] to Ralts in .sav")
+        print("  dexnav status     # View current DexNav [R] species in in-game .sav")
         print("  dexnav list fire  # Search species database")
         return 0
 
@@ -265,7 +199,7 @@ def main():
     print(f"    Type: {types}  |  National Dex: #{nat}")
     print("==================================================")
 
-    # 1. Patch In-Game Game Save File (.sav)
+    # Patch In-Game Game Save File (.sav)
     patched_sav = False
     for sav_name in ["Moemon Quetzal.sav", "Quetzal.sav"]:
         p = os.path.join(GBA_DIR, sav_name)
@@ -276,29 +210,16 @@ def main():
                 patched_sav = True
                 break
 
-    # 2. Patch Emulator Save States (.ss*)
-    patched_states = 0
-    for slot in range(10):
-        for prefix in ["Quetzal", "Moemon Quetzal"]:
-            sf = os.path.join(GBA_DIR, f"{prefix}.ss{slot}")
-            if os.path.exists(sf):
-                if patch_savestate(sf, sp_id):
-                    patched_states += 1
-                break
-
-    if patched_sav or patched_states > 0:
+    if patched_sav:
         print("--------------------------------------------------")
-        print(f" ✨ SUCCESS: DexNav Quick-Find set to #{sp_id:04d} {name}!")
-        if patched_sav:
-            print(" 💾 In-Game Save (.sav): Updated with valid checksum!")
-            print("    -> In mGBA, reload in-game save via 'File -> Reset' (Ctrl+R) or soft-reset (A+B+Start+Select) to load the updated .sav file.")
-        if patched_states > 0:
-            print(f" 🕹️  Emulator Quick-Saves (.ss*): {patched_states} slots synchronized.")
+        print(f" ✨ SUCCESS: In-game save (.sav) updated to #{sp_id:04d} {name}!")
+        print(" 💾 In-Game Save (.sav): Checksum recalculation complete.")
+        print(" 👉 In mGBA, reload your in-game save (Ctrl+R / File->Reset, then select CONTINUE).")
         print("==================================================")
-        notify("DexNav [R] Target Updated", f"Set to #{sp_id:04d} {name} ({types}) in .sav file!")
+        notify("DexNav .sav Updated", f"Set to #{sp_id:04d} {name} ({types}) in .sav file!")
         return 0
     else:
-        print("❌ Error: Could not find any .sav or .ss save files in GBA directory.", file=sys.stderr)
+        print("❌ Error: Could not find .sav file in GBA directory.", file=sys.stderr)
         return 1
 
 

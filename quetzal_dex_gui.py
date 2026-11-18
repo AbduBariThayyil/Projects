@@ -81,6 +81,54 @@ class GbaApplicationEventFilter(QObject):
         return super().eventFilter(watched, event)
 
 
+FEATURED_ROUTE_HIDDEN = {
+    "ROUTE 101": 954,   # Alolan Vulpix
+    "ROUTE 102": 570,   # Zorua
+    "ROUTE 103": 885,   # Dreepy
+    "ROUTE 104": 704,   # Goomy
+    "ROUTE 105": 132,   # Ditto
+    "ROUTE 106": 627,   # Rufflet
+    "ROUTE 107": 629,   # Vullaby
+    "ROUTE 108": 859,   # Impidimp
+    "ROUTE 109": 39,    # Jigglypuff
+    "ROUTE 110": 35,    # Clefairy
+    "ROUTE 111": 371,   # Bagon
+    "ROUTE 112": 216,   # Teddiursa
+    "ROUTE 113": 207,   # Gligar
+    "ROUTE 114": 701,   # Hawlucha
+    "ROUTE 115": 449,   # Hippopotas
+    "ROUTE 116": 551,   # Sandile
+    "ROUTE 117": 1297,  # Orthworm
+    "ROUTE 118": 343,   # Baltoy
+    "ROUTE 119": 328,   # Trapinch
+    "ROUTE 120": 443,   # Gible
+    "ROUTE 121": 868,   # Milcery
+    "ROUTE 122": 546,   # Cottonee
+    "ROUTE 123": 764,   # Comfey
+    "ROUTE 124": 25,    # Pikachu
+    "ROUTE 125": 137,   # Porygon
+    "ROUTE 126": 479,   # Rotom
+    "ROUTE 127": 856,   # Hatenna
+    "ROUTE 128": 1225,  # Voltorb
+    "ROUTE 129": 722,   # Rowlet
+    "ROUTE 130": 102,   # Exeggcute
+    "ROUTE 131": 357,   # Tropius
+    "ROUTE 132": 704,   # Goomy
+    "ROUTE 133": 590,   # Foongus
+    "ROUTE 134": 359,   # Absol
+    "PETALBURG WOODS": 285, # Shroomish
+    "RUSTURF TUNNEL": 290,  # Nincada
+    "GRANITE CAVE": 696,    # Tyrunt
+    "METEOR FALLS": 371,    # Bagon
+    "FIERY PATH": 324,      # Torkoal
+    "JAGGED PASS": 322,     # Numel
+    "MT. PYRE": 92,         # Gastly
+    "SHOAL CAVE": 220,      # Swinub
+    "NEW MAUVILLE": 479,    # Rotom
+    "SAFARI ZONE": 113,     # Chansey
+}
+
+
 class DexNavRetroBackgroundWidget(QWidget):
     """Authentic GBA DexNav background: sky blue #72b8df with cyan pinstripes #92cce8."""
     def paintEvent(self, event):
@@ -762,7 +810,7 @@ class DexNavSlotWidget(QFrame):
         # Scaled up for 1:1 in-game look using nearest-neighbor / FastTransformation
         pm = get_species_pixmap(pid, is_silhouette=(not self.is_caught))
         if pm:
-            scale_sz = (76 if self.habitat == "LAND" else 84) if is_retro() else (42 if self.habitat == "LAND" else 46)
+            scale_sz = (76 if self.habitat == "LAND" else 84) if is_retro() else (64 if self.habitat == "LAND" else 72)
             trans_mode = Qt.FastTransformation if is_retro() else Qt.SmoothTransformation
             self.center_box.setPixmap(pm.scaled(scale_sz, scale_sz, Qt.KeepAspectRatio, trans_mode))
         else:
@@ -4327,10 +4375,22 @@ class QuetzalMasterApp(QMainWindow):
         beach_mons = [d for d in self.current_route_data if "Beach" in d.get("method", "")]
         hidden_mons = [d for d in self.current_route_data if "Hidden" in d.get("method", "")]
 
+        # Prioritize the authentic featured hidden encounter for this route to slot 0
+        target_feat = FEATURED_ROUTE_HIDDEN.get(route.upper())
+        if target_feat:
+            hidden_mons.sort(key=lambda m: 0 if m["species_id"] == target_feat else 1)
+
+        self.all_route_hidden_mons = list(hidden_mons)
+        # The HUD displays the featured hidden encounter
+        hud_hidden = hidden_mons[:1]
+
         self.water_box.populate(water_mons)
         self.land_box.populate(land_mons)
         self.beach_box.populate(beach_mons)
-        self.hidden_box.populate(hidden_mons)
+        self.hidden_box.populate(hud_hidden)
+
+        # Update current_route_data to reflect active HUD slots
+        self.current_route_data = water_mons + land_mons + beach_mons + hud_hidden
 
         self.all_rendered_cards = [
             s for box in [self.water_box, self.land_box, self.beach_box, self.hidden_box]
