@@ -158,6 +158,8 @@ def is_retro() -> bool:
 
 def play_sfx(sfx_name: str):
     """Play a retro chiptune sound effect asynchronously without blocking."""
+    if os.environ.get("MUTE_SFX") or "pytest" in sys.modules:
+        return
     fname = sfx_name if sfx_name.endswith(".wav") else f"{sfx_name}.wav"
     path = os.path.join(SFX_DIR, fname)
     if os.path.exists(path):
