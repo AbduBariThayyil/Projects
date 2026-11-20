@@ -47,6 +47,13 @@ last_updated: 2026-11-20
 > * `Mystic Ticket` -> Navel Rock (Lugia, Ho-Oh)
 > * `Eon Ticket` -> Southern Island (Latios, Latias)
 
+
+> [!caution] **STRICT RESTRICTION: Level 100 & Battle Box Pokémon Immunity**
+> **NEVER teach utility moves** (Psychic Terrain, Toxic, Rest, etc.) to any **Level 100 Pokémon** or any Pokémon in your main battle box (e.g. *Gardevoir, Blaziken, Goodra, Baxcalibur, Hydrapple, Togekiss, Breloom, Linoone, Nidorino*). Their movesets must remain completely untouched! Always use low-level utility Pokémon from PC (e.g. Box 10, Box 13).
+
+> [!tip] **Legendary Re-Catching & Living Dex Rule**
+> In Quetzal, you can freely use your caught legendaries to trigger new ones and freely evolve/breed them (*Cosmog -> Cosmoem -> Solgaleo/Lunala, Kubfu -> Urshifu, Manaphy -> Phione*) because Altering Cave and overworld respawns allow unlimited re-captures to maintain a 100% full Living Pokédex!
+
 ---
 
 ## 2. The 10 High-Efficiency Multi-Catch 5-Mon Sweeps
