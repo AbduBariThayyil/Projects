@@ -1,51 +1,22 @@
-# Context: keyholder-hud (Zero-Latency X11 Overlay HUD)
+# Context: keyholder-hud (Native C Key/Mouse Hold & Spam Suite + Micro-Pill HUD)
 
 ## Overview
-**keyholder-hud** is a high-performance, lightweight native C overlay HUD built with Xlib, Cairo, and Pango. It replaces intrusive desktop notification popups with a floating, non-intrusive on-screen display (HUD) for keystroke locking, mode changes, and key status.
+**keyholder-hud** is a 100% native C automation suite replacing the legacy Python `KeyHolder` script and oversized bottom HUD. It combines a lightweight `epoll` + `uinput` daemon (`KeyHolder`) with a sleek, click-through Catppuccin Mocha micro-pill HUD (`keyholder-hud`) positioned cleanly below Polybar.
 
-## Architecture & Technology
-- **Language**: Pure C (C99/GNU99).
-- **Graphics Pipeline**: Cairo 2D vector graphics with Pango text rendering, 32-bit ARGB TrueColor with rounded corners and Catppuccin Mocha aesthetic.
-- **IPC Mechanism**: Per-user named FIFO pipe at `$XDG_RUNTIME_DIR/keyholder-hud.fifo` (with legacy fallback/symlink at `/tmp/keyholder-hud.fifo`) for sub-millisecond asynchronous message delivery with on-demand daemon autospawning.
-- **Performance**: Sub-1ms render time, cached Pango font descriptions, zero CPU when idle, idle auto-exit with instant CLI wake, <5 MB RSS memory.
+## Architecture & Key Features
+- **Pure C Automation Daemon (`keyholder.c`, `keyholder-core.c`)**:
+  - Single-instance Unix socket (`$XDG_RUNTIME_DIR/keyholder.sock`) + `flock` + `timerfd` + `inotify` device hotplug (zero polling, <2 MB RSS, <1ms CLI response).
+  - **Simultaneous Hold + Spam**: Hold one or more keys (`--hold` / `--multi`) while spamming another (`--spam`) independently.
+  - **No Hold Pulse Bug**: Holds keys continuously without release/repress glitches on unrelated keypresses.
+  - **sxhkd Safe**: Uses non-floated `UInput` (`0x4b48:0x0001/0x0002`, ignored by `sys-input`) so 100% of X11 apps and Wine/evdev games receive inputs, while automatically pausing spam ticks whenever physical `Super` (`Meta`) or `Alt` is held so `sxhkd` binds never misfire.
+  - **Smart Spam Timing**: Separate per-tap press duration (`--hold-ms`, default 15ms) and cycle delay (`--delay` / `--cps`, default 40ms / 25 CPS). Scroll wheel or `+`/`-` adjusts speed live during Listening; `Esc` cancels Listening.
+- **Sleek Click-Through Micro-Pill HUD (`keyholder-hud.c`)**:
+  - Compact 34px-tall dynamic-width Catppuccin Mocha pill centered below Polybar (`y = 52`).
+  - 100% click-through via `XShapeCombineRectangles` (`ShapeInput`) so it never steals clicks in games.
+  - Displays friendly keycap chips (`[←]`, `[LMB]`), pulsing status dot, live CPS, pause indicator, and elapsed timer.
 
-## Key Files
-- `keyholder-hud.c`: Main event loop (Glib `GMainLoop`), X11 window initialization with `_NET_WM_WINDOW_TYPE_NOTIFICATION` / override-redirect, FIFO reader, and Cairo rendering.
-- `KeyHolder`: Standalone Python evdev automation daemon managing high-frequency spamming, latching, and holding of keyboard/mouse inputs with live HUD feedback.
-- `Makefile`: Compilation with `gcc -O2`, linking `x11`, `cairo`, `pango`, `pangocairo`, `glib-2.0`, and installing binaries to `$(PREFIX)/bin` and `~/.config/bspwm/bin`.
-- `keyholder-hud`: Compiled native binary.
-
-## KeyHolder Input Automation & Ignored Binds
-The `KeyHolder` CLI script (`KeyHolder --spam`, `--hold`, `--terminate`, `--inc`, `--dec`) captures evdev input events to latch onto user keys.
-
-### Ignored Key Codes (`IGNORED_CODES`)
-To prevent window manager chords, sxhkd binds, and modifier triggers from being latched onto or interrupting holding sessions:
-- **Modifiers**: `KEY_LEFTMETA`, `KEY_RIGHTMETA`, `KEY_LEFTALT`, `KEY_RIGHTALT`, `KEY_LEFTCTRL`, `KEY_RIGHTCTRL`, `KEY_LEFTSHIFT`, `KEY_RIGHTSHIFT`, `KEY_CAPSLOCK`, `KEY_COMPOSE`.
-- **Mouse Modifiers & Extra Buttons**: `BTN_SIDE` (275 / `mod3`), `BTN_EXTRA` (276 / `mod5`), `BTN_FORWARD` (277), `BTN_BACK` (278), `BTN_TASK` (279).
-- **Keyd / Function Layers**: `KEY_F13` through `KEY_F24` (inclusive).
-- **Multimedia & System Hotkeys**: `KEY_CALC`, `KEY_CALCULATOR`, `KEY_HOMEPAGE`, `KEY_MAIL`, `KEY_POWER`, `KEY_SLEEP`, `KEY_WAKEUP`, `KEY_MUTE`, `KEY_VOLUMEDOWN`, `KEY_VOLUMEUP`, `KEY_PLAYPAUSE`, `KEY_PAUSE`, `KEY_PLAY`, `KEY_PREVIOUSSONG`, `KEY_NEXTSONG`, `KEY_BRIGHTNESSDOWN`, `KEY_BRIGHTNESSUP`, `KEY_SYSRQ`, `KEY_PRINT`.
-- **Touchpad Pseudo-Buttons**: `0x140` through `0x14f`.
-
-### Chord & Pre-Hold Latch Immunity
-`wait_for_latch(sel, devices)` captures `initially_down = set()` across all devices before listening. Any keys already physically held during sxhkd chord invocation (e.g. `mod5 + button1`) are ignored until fully released (`event.value == 0`), preventing false latching onto trigger keys.
-
-### X11 & sxhkd Core Grab Isolation
-To guarantee that virtual keys held or spammed by `KeyHolder` do NOT count towards or trigger `sxhkd` hotkeys, `KeyHolder` automatically detaches its virtual uinput device (`Virtual-KeyHolder-Spam` / `Virtual-KeyHolder-Hold`) from the X11 Virtual Core Keyboard (`xinput float <id>`).
-- **No Modifier Tainting**: Held keys/modifiers do not contaminate the master core keyboard modifier mask, allowing desktop chords (`super + 1`, `super + Return`, etc.) to continue functioning without conflicts.
-- **Zero sxhkd Grab Firing**: Spammed or held keys (such as `space` or `button1`) bypass root-window `XGrabKey` core grabs completely.
-- **Full Evdev Game Delivery**: Games and raw input handlers (Steam, Wine/Proton, Minecraft, SDL2) receive 100% of the inputs directly via kernel `/dev/input/event*` devices at native zero latency.
-- Pass `--no-float` if core X11 master keyboard attachment is ever explicitly needed.
-
-## IPC Protocol
-Send simple newline-terminated strings to `/tmp/keyholder-hud.fifo`:
-```bash
-# Format: <mode>|<title>|<subtitle>
-echo "locked|KeyHolder|Caps Lock ON" > /tmp/keyholder-hud.fifo
-echo "gaming|Macro Mode|Profile 1 Active" > /tmp/keyholder-hud.fifo
-```
-
-## Compilation
+## Build, Test & Install
 ```bash
 cd /home/vibecoder/Projects/keyholder-hud
-make
+make clean && make && make test && make install
 ```
