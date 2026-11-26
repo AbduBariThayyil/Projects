@@ -30,6 +30,7 @@ struct SysInputX11 {
     int xkb_event;
     bool has_xkb;
     bool last_in_game;
+    bool last_in_nfs;
     bool has_game_state;
     double last_sync_sec;
     SysInputGameCtxCb game_cb;
@@ -83,9 +84,11 @@ static bool contains_any_ci(const char *haystack, const char *const *needles, si
     return false;
 }
 
-static bool query_is_in_game(SysInputX11 *x11) {
+static void query_game_context(SysInputX11 *x11, bool *out_in_game, bool *out_in_nfs) {
+    *out_in_game = false;
+    *out_in_nfs = false;
     if (!x11 || !x11->dpy) {
-        return false;
+        return;
     }
 
     Atom actual_type = None;
@@ -104,7 +107,7 @@ static bool query_is_in_game(SysInputX11 *x11) {
     }
 
     if (active_win == None) {
-        return false;
+        return;
     }
 
     unsigned long desk_idx = 0;
@@ -140,31 +143,44 @@ static bool query_is_in_game(SysInputX11 *x11) {
         "sys-lock", "sys-launcher", "sys-notif-center", "sys-alarm", "sys-polkit", "rofi"
     };
     if (contains_any_ci(hay, NON_GAME_OVERLAYS, sizeof(NON_GAME_OVERLAYS) / sizeof(NON_GAME_OVERLAYS[0]))) {
-        return false;
+        return;
+    }
+
+    static const char *const NFS_IDENTIFIERS[] = {
+        "speed.exe", "need for speed"
+    };
+    if (contains_any_ci(hay, NFS_IDENTIFIERS, sizeof(NFS_IDENTIFIERS) / sizeof(NFS_IDENTIFIERS[0]))) {
+        *out_in_game = true;
+        *out_in_nfs = true;
+        return;
     }
 
     if (desk_idx == GAMING_DESKTOP_IDX) {
-        return true;
+        *out_in_game = true;
+        return;
     }
 
     static const char *const GAME_IDENTIFIERS[] = {
         "wine", ".exe", "minecraft", "terraria", "mindustry",
         "retroarch", "steam_app_", "mgba", "gba-crossplay",
         "pegasus-frontend", "lutris", "gamescope", "dolphin-emu",
-        "ppsspp", "pcsx2", "need for speed"
+        "ppsspp", "pcsx2"
     };
-    return contains_any_ci(hay, GAME_IDENTIFIERS, sizeof(GAME_IDENTIFIERS) / sizeof(GAME_IDENTIFIERS[0]));
+    *out_in_game = contains_any_ci(hay, GAME_IDENTIFIERS, sizeof(GAME_IDENTIFIERS) / sizeof(GAME_IDENTIFIERS[0]));
 }
 
 static void check_game_context(SysInputX11 *x11) {
     if (!x11 || !x11->dpy || !x11->game_cb) {
         return;
     }
-    bool in_game = query_is_in_game(x11);
-    if (!x11->has_game_state || in_game != x11->last_in_game) {
+    bool in_game = false;
+    bool in_nfs = false;
+    query_game_context(x11, &in_game, &in_nfs);
+    if (!x11->has_game_state || in_game != x11->last_in_game || in_nfs != x11->last_in_nfs) {
         x11->has_game_state = true;
         x11->last_in_game = in_game;
-        x11->game_cb(x11->game_ctx, in_game);
+        x11->last_in_nfs = in_nfs;
+        x11->game_cb(x11->game_ctx, in_game, in_nfs);
     }
 }
 

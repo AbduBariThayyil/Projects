@@ -26,6 +26,7 @@ typedef struct {
 
 typedef struct {
     bool gaming_mode;
+    bool nfs_mode;
     bool auto_in_game;
     bool fn_lock;
     bool shift_l;
@@ -36,8 +37,10 @@ typedef struct {
     bool backward_held;
     bool forward_held;
     bool forward_used_chord;
-    bool side_passed_through;
-    bool extra_passed_through;
+    uint16_t side_active_code;
+    bool side_active_is_kbd;
+    uint16_t extra_active_code;
+    bool extra_active_is_kbd;
     uint32_t swallowed_mouse_btns;
     bool swallowed_space;
     bool swallowed_f1;
@@ -50,7 +53,7 @@ typedef struct {
 
 void sys_input_init(SysInputState *st, SysInputOps ops, void *ctx);
 void sys_input_handle_event(SysInputState *st, DeviceKind kind, uint16_t type, uint16_t code, int32_t value);
-void sys_input_set_game_context(SysInputState *st, bool in_game);
+void sys_input_set_game_context(SysInputState *st, bool in_game, bool in_nfs);
 void sys_input_on_device_removed(SysInputState *st, DeviceKind kind);
 
 #endif

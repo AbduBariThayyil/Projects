@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 typedef struct SysInputX11 SysInputX11;
-typedef void (*SysInputGameCtxCb)(void *ctx, bool in_game);
+typedef void (*SysInputGameCtxCb)(void *ctx, bool in_game, bool in_nfs);
 
 SysInputX11 *sys_input_x11_create(SysInputGameCtxCb cb, void *ctx);
 void sys_input_x11_destroy(SysInputX11 *x11);

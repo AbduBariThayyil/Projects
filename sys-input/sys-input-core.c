@@ -111,8 +111,12 @@ static const char *backward_btn_cmd(uint16_t code) {
 static void release_desktop_modifiers(SysInputState *st) {
     if (st->backward_held) {
         st->backward_held = false;
-        emit_kbd_ev(st, EV_KEY, KEY_F23, 0);
-        flush_syn(st);
+        if (st->side_active_code == KEY_F23 && st->side_active_is_kbd) {
+            st->side_active_code = 0;
+            st->side_active_is_kbd = false;
+            emit_kbd_ev(st, EV_KEY, KEY_F23, 0);
+            flush_syn(st);
+        }
     }
     st->forward_held = false;
     st->forward_used_chord = false;
@@ -169,20 +173,31 @@ static bool handle_mouse_button(SysInputState *st, uint16_t code, int32_t value)
     if (code == BTN_SIDE) {
         if (value == 1) {
             if (st->gaming_mode) {
-                st->side_passed_through = true;
-                emit_ptr_ev(st, EV_KEY, BTN_SIDE, 1);
+                st->side_active_is_kbd = st->nfs_mode;
+                st->side_active_code = st->nfs_mode ? KEY_J : BTN_SIDE;
+                if (st->side_active_is_kbd) {
+                    emit_kbd_ev(st, EV_KEY, st->side_active_code, 1);
+                } else {
+                    emit_ptr_ev(st, EV_KEY, st->side_active_code, 1);
+                }
             } else {
                 st->backward_held = true;
+                st->side_active_is_kbd = true;
+                st->side_active_code = KEY_F23;
                 emit_kbd_ev(st, EV_KEY, KEY_F23, 1);
             }
         } else if (value == 0) {
-            if (st->side_passed_through) {
-                st->side_passed_through = false;
-                emit_ptr_ev(st, EV_KEY, BTN_SIDE, 0);
-            }
-            if (st->backward_held) {
-                st->backward_held = false;
-                emit_kbd_ev(st, EV_KEY, KEY_F23, 0);
+            st->backward_held = false;
+            if (st->side_active_code != 0) {
+                uint16_t rel = st->side_active_code;
+                bool is_kbd = st->side_active_is_kbd;
+                st->side_active_code = 0;
+                st->side_active_is_kbd = false;
+                if (is_kbd) {
+                    emit_kbd_ev(st, EV_KEY, rel, 0);
+                } else {
+                    emit_ptr_ev(st, EV_KEY, rel, 0);
+                }
             }
         }
         return true;
@@ -191,16 +206,28 @@ static bool handle_mouse_button(SysInputState *st, uint16_t code, int32_t value)
     if (code == BTN_EXTRA) {
         if (value == 1) {
             if (st->gaming_mode) {
-                st->extra_passed_through = true;
-                emit_ptr_ev(st, EV_KEY, BTN_EXTRA, 1);
+                st->extra_active_is_kbd = st->nfs_mode;
+                st->extra_active_code = st->nfs_mode ? KEY_K : BTN_EXTRA;
+                if (st->extra_active_is_kbd) {
+                    emit_kbd_ev(st, EV_KEY, st->extra_active_code, 1);
+                } else {
+                    emit_ptr_ev(st, EV_KEY, st->extra_active_code, 1);
+                }
             } else {
                 st->forward_held = true;
                 st->forward_used_chord = false;
             }
         } else if (value == 0) {
-            if (st->extra_passed_through) {
-                st->extra_passed_through = false;
-                emit_ptr_ev(st, EV_KEY, BTN_EXTRA, 0);
+            if (st->extra_active_code != 0) {
+                uint16_t rel = st->extra_active_code;
+                bool is_kbd = st->extra_active_is_kbd;
+                st->extra_active_code = 0;
+                st->extra_active_is_kbd = false;
+                if (is_kbd) {
+                    emit_kbd_ev(st, EV_KEY, rel, 0);
+                } else {
+                    emit_ptr_ev(st, EV_KEY, rel, 0);
+                }
             } else if (st->forward_held) {
                 bool was_chord = st->forward_used_chord;
                 st->forward_held = false;
@@ -392,7 +419,8 @@ void sys_input_handle_event(SysInputState *st, DeviceKind kind, uint16_t type, u
     }
 }
 
-void sys_input_set_game_context(SysInputState *st, bool in_game) {
+void sys_input_set_game_context(SysInputState *st, bool in_game, bool in_nfs) {
+    st->nfs_mode = in_nfs;
     if (in_game == st->auto_in_game) {
         return;
     }
@@ -409,13 +437,17 @@ void sys_input_set_game_context(SysInputState *st, bool in_game) {
 void sys_input_on_device_removed(SysInputState *st, DeviceKind kind) {
     if (kind == DEV_MOUSE_GM320 || kind == DEV_GENERIC_MOUSE) {
         release_desktop_modifiers(st);
-        if (st->side_passed_through) {
-            st->side_passed_through = false;
-            emit_ptr_ev(st, EV_KEY, BTN_SIDE, 0);
+        if (st->side_active_code != 0) {
+            if (st->side_active_is_kbd) emit_kbd_ev(st, EV_KEY, st->side_active_code, 0);
+            else emit_ptr_ev(st, EV_KEY, st->side_active_code, 0);
+            st->side_active_code = 0;
+            st->side_active_is_kbd = false;
         }
-        if (st->extra_passed_through) {
-            st->extra_passed_through = false;
-            emit_ptr_ev(st, EV_KEY, BTN_EXTRA, 0);
+        if (st->extra_active_code != 0) {
+            if (st->extra_active_is_kbd) emit_kbd_ev(st, EV_KEY, st->extra_active_code, 0);
+            else emit_ptr_ev(st, EV_KEY, st->extra_active_code, 0);
+            st->extra_active_code = 0;
+            st->extra_active_is_kbd = false;
         }
         st->swallowed_mouse_btns = 0;
         flush_syn(st);

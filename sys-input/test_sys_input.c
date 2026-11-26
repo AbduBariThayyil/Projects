@@ -272,20 +272,32 @@ static void test_casue_fn_lock_and_shift_f1(void) {
     assert(strstr(h.cmds[0], "ToggleTouchpad") != NULL);
     assert(strstr(h.cmds[1], "ToggleTouchpad") != NULL);
     assert(strstr(h.cmds[2], "sys-control --vol-inc") != NULL);
-    /* Auto Game Mode: entering game enables, leaving disables, F13 overrides cleanly */
+    /* Auto Game Mode: entering game enables, leaving disables, F13 overrides, NFS maps J/K */
     reset_harness(&h);
     sys_input_init(&st, test_ops(), &h);
-    sys_input_set_game_context(&st, true);
+    sys_input_set_game_context(&st, true, false);
     assert(st.gaming_mode == true && h.notify_len == 1 && h.last_toggle_active == true);
     /* Manual F13 override inside game turns Gaming Mode OFF */
     send_ev(&st, DEV_MOUSE_GM320, EV_KEY, KEY_CALC, 1);
     assert(st.gaming_mode == false && h.notify_len == 2 && h.last_toggle_active == false);
     /* Returning to desktop leaves it OFF cleanly */
-    sys_input_set_game_context(&st, false);
+    sys_input_set_game_context(&st, false, false);
     assert(st.gaming_mode == false && h.notify_len == 2);
-    /* Re-entering game re-enables Gaming Mode */
-    sys_input_set_game_context(&st, true);
-    assert(st.gaming_mode == true && h.notify_len == 3 && h.last_toggle_active == true);
+    /* Entering NFS enables Game Mode + maps Backward=J, Forward=K */
+    sys_input_set_game_context(&st, true, true);
+    assert(st.gaming_mode == true && st.nfs_mode == true && h.notify_len == 3);
+    reset_harness(&h);
+    send_ev(&st, DEV_MOUSE_GM320, EV_KEY, BTN_SIDE, 1);
+    send_ev(&st, DEV_MOUSE_GM320, EV_KEY, BTN_EXTRA, 1);
+    /* Leaving NFS while buttons are held still releases J and K cleanly */
+    sys_input_set_game_context(&st, false, false);
+    send_ev(&st, DEV_MOUSE_GM320, EV_KEY, BTN_SIDE, 0);
+    send_ev(&st, DEV_MOUSE_GM320, EV_KEY, BTN_EXTRA, 0);
+    assert(h.kbd_len == 8);
+    assert(h.kbd[0].code == KEY_J && h.kbd[0].value == 1);
+    assert(h.kbd[2].code == KEY_K && h.kbd[2].value == 1);
+    assert(h.kbd[4].code == KEY_J && h.kbd[4].value == 0);
+    assert(h.kbd[6].code == KEY_K && h.kbd[6].value == 0);
 }
 
 int main(void) {

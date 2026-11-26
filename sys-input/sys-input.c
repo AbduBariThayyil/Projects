@@ -606,9 +606,9 @@ static void cleanup_daemon(DaemonCtx *d) {
     }
 }
 
-static void on_game_ctx_changed(void *ctx, bool in_game) {
+static void on_game_ctx_changed(void *ctx, bool in_game, bool in_nfs) {
     DaemonCtx *d = ctx;
-    sys_input_set_game_context(&d->state, in_game);
+    sys_input_set_game_context(&d->state, in_game, in_nfs);
 }
 
 static int run_x11_smoke_test(void) {
