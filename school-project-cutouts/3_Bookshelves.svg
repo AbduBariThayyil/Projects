@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1130" width="800pt" height="1130pt">
+  <defs>
+    <style>
+      .cut-guide { stroke: #718096; stroke-width: 2.2; stroke-dasharray: 6, 5; fill: none; }
+    </style>
+  </defs>
+  <rect width="800" height="1130" fill="#FFFFFF" />
+  
+        <!-- SNUG CUT LINE: 6px around bookshelf -->
+        <rect x="34" y="54" width="732" height="312" rx="14" class="cut-guide" />
+        
+        <!-- Bookshelf Frame -->
+        <rect x="40" y="60" width="720" height="300" rx="12" fill="#8D5B4C" stroke="#1E293B" stroke-width="3.5" />
+        
+        <!-- Large Open Shelf Cavity: 235px high! Sized to hold 5 books easily -->
+        <rect x="65" y="85" width="670" height="235" rx="8" fill="#FFFDF9" stroke="#CBD5E1" stroke-width="2" />
+        
+        <!-- Solid Wooden Shelf Plank (Bottom Base) -->
+        <rect x="52" y="320" width="696" height="26" rx="4" fill="#A76F53" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Top Crown Molding -->
+        <rect x="36" y="60" width="728" height="18" rx="6" fill="#A76F53" stroke="#1E293B" stroke-width="2.5" />
+        
+
+        <!-- SNUG CUT LINE: 6px around bookshelf -->
+        <rect x="34" y="409" width="732" height="312" rx="14" class="cut-guide" />
+        
+        <!-- Bookshelf Frame -->
+        <rect x="40" y="415" width="720" height="300" rx="12" fill="#795548" stroke="#1E293B" stroke-width="3.5" />
+        
+        <!-- Large Open Shelf Cavity: 235px high! Sized to hold 5 books easily -->
+        <rect x="65" y="440" width="670" height="235" rx="8" fill="#FFFDF9" stroke="#CBD5E1" stroke-width="2" />
+        
+        <!-- Solid Wooden Shelf Plank (Bottom Base) -->
+        <rect x="52" y="675" width="696" height="26" rx="4" fill="#9C786C" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Top Crown Molding -->
+        <rect x="36" y="415" width="728" height="18" rx="6" fill="#9C786C" stroke="#1E293B" stroke-width="2.5" />
+        
+
+        <!-- SNUG CUT LINE: 6px around bookshelf -->
+        <rect x="34" y="764" width="732" height="312" rx="14" class="cut-guide" />
+        
+        <!-- Bookshelf Frame -->
+        <rect x="40" y="770" width="720" height="300" rx="12" fill="#6D4C41" stroke="#1E293B" stroke-width="3.5" />
+        
+        <!-- Large Open Shelf Cavity: 235px high! Sized to hold 5 books easily -->
+        <rect x="65" y="795" width="670" height="235" rx="8" fill="#FFFDF9" stroke="#CBD5E1" stroke-width="2" />
+        
+        <!-- Solid Wooden Shelf Plank (Bottom Base) -->
+        <rect x="52" y="1030" width="696" height="26" rx="4" fill="#8D6E63" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Top Crown Molding -->
+        <rect x="36" y="770" width="728" height="18" rx="6" fill="#8D6E63" stroke="#1E293B" stroke-width="2.5" />
+        
+</svg>

@@ -1,0 +1,388 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1130" width="800pt" height="1130pt">
+  <defs>
+    <style>
+      .cut-guide { stroke: #718096; stroke-width: 2.2; stroke-dasharray: 6, 5; fill: none; }
+    </style>
+  </defs>
+  <rect width="800" height="1130" fill="#FFFFFF" />
+  
+        <!-- SNUG CUT LINE (6px around the person) -->
+        <rect x="49" y="124" width="137" height="242" rx="14" class="cut-guide" />
+        
+        <!-- PERSON ILLUSTRATION -->
+        <g transform="translate(117.5, 200)">
+          <!-- Waving Left Hand -->
+          <path d="M -22 82 Q -38 55 -34 38" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="38" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+          
+          <!-- Right Hand -->
+          <path d="M 22 82 Q 38 98 34 115" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="34" cy="115" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+
+          <!-- Bright Colorful Shirt -->
+          <path d="M -26 78 L 26 78 L 24 145 L -24 145 Z" fill="#FF5400" stroke="#1E293B" stroke-width="3" />
+          <rect x="-8" y="62" width="16" height="20" rx="4" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Shirt Emblems -->
+          <circle cx="0" cy="105" r="5" fill="#FFFFFF" opacity="0.9" />
+          <circle cx="0" cy="122" r="5" fill="#FFFFFF" opacity="0.9" />
+
+          <!-- Head -->
+          <circle cx="0" cy="46" r="28" fill="#FFDFC4" stroke="#1E293B" stroke-width="3" />
+          <circle cx="-28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          <circle cx="28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Eyes -->
+          <circle cx="-10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="-8" cy="42" r="1.5" fill="#FFFFFF" />
+          <circle cx="12" cy="42" r="1.5" fill="#FFFFFF" />
+          
+          <!-- Rosy Cheeks -->
+          <ellipse cx="-16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          <ellipse cx="16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          
+          <!-- Big Smile -->
+          <path d="M -8 56 Q 0 66 8 56" fill="none" stroke="#1E293B" stroke-width="2.8" stroke-linecap="round" />
+          
+          
+            <path d="M -30 45 Q -25 12 0 12 Q 25 12 30 45 C 20 26 0 24 -30 45 Z" fill="#4A2810" stroke="#1E293B" stroke-width="2.5" />
+            <polygon points="-6,12 0,2 6,12" fill="#4A2810" stroke="#1E293B" stroke-width="2" />
+            
+        </g>
+        
+
+        <!-- SNUG CUT LINE (6px around the person) -->
+        <rect x="229" y="124" width="137" height="242" rx="14" class="cut-guide" />
+        
+        <!-- PERSON ILLUSTRATION -->
+        <g transform="translate(297.5, 200)">
+          <!-- Waving Left Hand -->
+          <path d="M -22 82 Q -38 55 -34 38" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="38" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+          
+          <!-- Right Hand -->
+          <path d="M 22 82 Q 38 98 34 115" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="34" cy="115" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+
+          <!-- Bright Colorful Shirt -->
+          <path d="M -26 78 L 26 78 L 24 145 L -24 145 Z" fill="#EC4899" stroke="#1E293B" stroke-width="3" />
+          <rect x="-8" y="62" width="16" height="20" rx="4" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Shirt Emblems -->
+          <circle cx="0" cy="105" r="5" fill="#FFFFFF" opacity="0.9" />
+          <circle cx="0" cy="122" r="5" fill="#FFFFFF" opacity="0.9" />
+
+          <!-- Head -->
+          <circle cx="0" cy="46" r="28" fill="#FFDFC4" stroke="#1E293B" stroke-width="3" />
+          <circle cx="-28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          <circle cx="28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Eyes -->
+          <circle cx="-10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="-8" cy="42" r="1.5" fill="#FFFFFF" />
+          <circle cx="12" cy="42" r="1.5" fill="#FFFFFF" />
+          
+          <!-- Rosy Cheeks -->
+          <ellipse cx="-16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          <ellipse cx="16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          
+          <!-- Big Smile -->
+          <path d="M -8 56 Q 0 66 8 56" fill="none" stroke="#1E293B" stroke-width="2.8" stroke-linecap="round" />
+          
+          
+            <path d="M -30 45 Q -25 16 0 16 Q 25 16 30 45 C 20 28 0 26 -30 45 Z" fill="#FBBF24" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="-36" cy="40" r="14" fill="#FBBF24" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="36" cy="40" r="14" fill="#FBBF24" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="-28" cy="40" r="5" fill="#FF006E" />
+            <circle cx="28" cy="40" r="5" fill="#FF006E" />
+            
+        </g>
+        
+
+        <!-- SNUG CUT LINE (6px around the person) -->
+        <rect x="409" y="124" width="137" height="242" rx="14" class="cut-guide" />
+        
+        <!-- PERSON ILLUSTRATION -->
+        <g transform="translate(477.5, 200)">
+          <!-- Waving Left Hand -->
+          <path d="M -22 82 Q -38 55 -34 38" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="38" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+          
+          <!-- Right Hand -->
+          <path d="M 22 82 Q 38 98 34 115" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="34" cy="115" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+
+          <!-- Bright Colorful Shirt -->
+          <path d="M -26 78 L 26 78 L 24 145 L -24 145 Z" fill="#10B981" stroke="#1E293B" stroke-width="3" />
+          <rect x="-8" y="62" width="16" height="20" rx="4" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Shirt Emblems -->
+          <circle cx="0" cy="105" r="5" fill="#FFFFFF" opacity="0.9" />
+          <circle cx="0" cy="122" r="5" fill="#FFFFFF" opacity="0.9" />
+
+          <!-- Head -->
+          <circle cx="0" cy="46" r="28" fill="#FFDFC4" stroke="#1E293B" stroke-width="3" />
+          <circle cx="-28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          <circle cx="28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Eyes -->
+          <circle cx="-10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="-8" cy="42" r="1.5" fill="#FFFFFF" />
+          <circle cx="12" cy="42" r="1.5" fill="#FFFFFF" />
+          
+          <!-- Rosy Cheeks -->
+          <ellipse cx="-16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          <ellipse cx="16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          
+          <!-- Big Smile -->
+          <path d="M -8 56 Q 0 66 8 56" fill="none" stroke="#1E293B" stroke-width="2.8" stroke-linecap="round" />
+          
+          
+            <circle cx="-18" cy="22" r="14" fill="#1F2937" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="0" cy="15" r="16" fill="#1F2937" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="18" cy="22" r="14" fill="#1F2937" stroke="#1E293B" stroke-width="2.5" />
+            
+        </g>
+        
+
+        <!-- SNUG CUT LINE (6px around the person) -->
+        <rect x="589" y="124" width="137" height="242" rx="14" class="cut-guide" />
+        
+        <!-- PERSON ILLUSTRATION -->
+        <g transform="translate(657.5, 200)">
+          <!-- Waving Left Hand -->
+          <path d="M -22 82 Q -38 55 -34 38" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="38" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+          
+          <!-- Right Hand -->
+          <path d="M 22 82 Q 38 98 34 115" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="34" cy="115" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+
+          <!-- Bright Colorful Shirt -->
+          <path d="M -26 78 L 26 78 L 24 145 L -24 145 Z" fill="#F59E0B" stroke="#1E293B" stroke-width="3" />
+          <rect x="-8" y="62" width="16" height="20" rx="4" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Shirt Emblems -->
+          <circle cx="0" cy="105" r="5" fill="#FFFFFF" opacity="0.9" />
+          <circle cx="0" cy="122" r="5" fill="#FFFFFF" opacity="0.9" />
+
+          <!-- Head -->
+          <circle cx="0" cy="46" r="28" fill="#FFDFC4" stroke="#1E293B" stroke-width="3" />
+          <circle cx="-28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          <circle cx="28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Eyes -->
+          <circle cx="-10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="-8" cy="42" r="1.5" fill="#FFFFFF" />
+          <circle cx="12" cy="42" r="1.5" fill="#FFFFFF" />
+          
+          <!-- Rosy Cheeks -->
+          <ellipse cx="-16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          <ellipse cx="16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          
+          <!-- Big Smile -->
+          <path d="M -8 56 Q 0 66 8 56" fill="none" stroke="#1E293B" stroke-width="2.8" stroke-linecap="round" />
+          
+          
+            <path d="M -30 50 Q -25 16 0 16 Q 25 16 30 50 C 20 30 0 28 -30 50 Z" fill="#6B21A8" stroke="#1E293B" stroke-width="2.5" />
+            <path d="M -28 46 Q 0 22 28 46" fill="none" stroke="#FF007F" stroke-width="6" />
+            <circle cx="-22" cy="36" r="6" fill="#FFE600" />
+            
+        </g>
+        
+
+        <!-- SNUG CUT LINE (6px around the person) -->
+        <rect x="49" y="604" width="137" height="242" rx="14" class="cut-guide" />
+        
+        <!-- PERSON ILLUSTRATION -->
+        <g transform="translate(117.5, 680)">
+          <!-- Waving Left Hand -->
+          <path d="M -22 82 Q -38 55 -34 38" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="38" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+          
+          <!-- Right Hand -->
+          <path d="M 22 82 Q 38 98 34 115" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="34" cy="115" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+
+          <!-- Bright Colorful Shirt -->
+          <path d="M -26 78 L 26 78 L 24 145 L -24 145 Z" fill="#EF4444" stroke="#1E293B" stroke-width="3" />
+          <rect x="-8" y="62" width="16" height="20" rx="4" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Shirt Emblems -->
+          <circle cx="0" cy="105" r="5" fill="#FFFFFF" opacity="0.9" />
+          <circle cx="0" cy="122" r="5" fill="#FFFFFF" opacity="0.9" />
+
+          <!-- Head -->
+          <circle cx="0" cy="46" r="28" fill="#FFDFC4" stroke="#1E293B" stroke-width="3" />
+          <circle cx="-28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          <circle cx="28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Eyes -->
+          <circle cx="-10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="-8" cy="42" r="1.5" fill="#FFFFFF" />
+          <circle cx="12" cy="42" r="1.5" fill="#FFFFFF" />
+          
+          <!-- Rosy Cheeks -->
+          <ellipse cx="-16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          <ellipse cx="16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          
+          <!-- Big Smile -->
+          <path d="M -8 56 Q 0 66 8 56" fill="none" stroke="#1E293B" stroke-width="2.8" stroke-linecap="round" />
+          
+          
+            <path d="M -28 42 Q 0 8 28 42 Z" fill="#EF4444" stroke="#1E293B" stroke-width="2.5" />
+            <path d="M -5 38 L 40 34 L 36 46 L -2 47 Z" fill="#DC2626" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="0" cy="20" r="4" fill="#FFFFFF" />
+            
+        </g>
+        
+
+        <!-- SNUG CUT LINE (6px around the person) -->
+        <rect x="229" y="604" width="137" height="242" rx="14" class="cut-guide" />
+        
+        <!-- PERSON ILLUSTRATION -->
+        <g transform="translate(297.5, 680)">
+          <!-- Waving Left Hand -->
+          <path d="M -22 82 Q -38 55 -34 38" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="38" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+          
+          <!-- Right Hand -->
+          <path d="M 22 82 Q 38 98 34 115" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="34" cy="115" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+
+          <!-- Bright Colorful Shirt -->
+          <path d="M -26 78 L 26 78 L 24 145 L -24 145 Z" fill="#8B5CF6" stroke="#1E293B" stroke-width="3" />
+          <rect x="-8" y="62" width="16" height="20" rx="4" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Shirt Emblems -->
+          <circle cx="0" cy="105" r="5" fill="#FFFFFF" opacity="0.9" />
+          <circle cx="0" cy="122" r="5" fill="#FFFFFF" opacity="0.9" />
+
+          <!-- Head -->
+          <circle cx="0" cy="46" r="28" fill="#FFDFC4" stroke="#1E293B" stroke-width="3" />
+          <circle cx="-28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          <circle cx="28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Eyes -->
+          <circle cx="-10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="-8" cy="42" r="1.5" fill="#FFFFFF" />
+          <circle cx="12" cy="42" r="1.5" fill="#FFFFFF" />
+          
+          <!-- Rosy Cheeks -->
+          <ellipse cx="-16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          <ellipse cx="16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          
+          <!-- Big Smile -->
+          <path d="M -8 56 Q 0 66 8 56" fill="none" stroke="#1E293B" stroke-width="2.8" stroke-linecap="round" />
+          
+          
+            <path d="M -30 46 Q 0 20 30 46 C 20 30 0 30 -30 46 Z" fill="#1E293B" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="-22" cy="12" r="13" fill="#1E293B" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="22" cy="12" r="13" fill="#1E293B" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="-22" cy="22" r="4" fill="#00F5D4" />
+            <circle cx="22" cy="22" r="4" fill="#00F5D4" />
+            
+        </g>
+        
+
+        <!-- SNUG CUT LINE (6px around the person) -->
+        <rect x="409" y="604" width="137" height="242" rx="14" class="cut-guide" />
+        
+        <!-- PERSON ILLUSTRATION -->
+        <g transform="translate(477.5, 680)">
+          <!-- Waving Left Hand -->
+          <path d="M -22 82 Q -38 55 -34 38" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="38" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+          
+          <!-- Right Hand -->
+          <path d="M 22 82 Q 38 98 34 115" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="34" cy="115" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+
+          <!-- Bright Colorful Shirt -->
+          <path d="M -26 78 L 26 78 L 24 145 L -24 145 Z" fill="#06B6D4" stroke="#1E293B" stroke-width="3" />
+          <rect x="-8" y="62" width="16" height="20" rx="4" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Shirt Emblems -->
+          <circle cx="0" cy="105" r="5" fill="#FFFFFF" opacity="0.9" />
+          <circle cx="0" cy="122" r="5" fill="#FFFFFF" opacity="0.9" />
+
+          <!-- Head -->
+          <circle cx="0" cy="46" r="28" fill="#FFDFC4" stroke="#1E293B" stroke-width="3" />
+          <circle cx="-28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          <circle cx="28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Eyes -->
+          <circle cx="-10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="-8" cy="42" r="1.5" fill="#FFFFFF" />
+          <circle cx="12" cy="42" r="1.5" fill="#FFFFFF" />
+          
+          <!-- Rosy Cheeks -->
+          <ellipse cx="-16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          <ellipse cx="16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          
+          <!-- Big Smile -->
+          <path d="M -8 56 Q 0 66 8 56" fill="none" stroke="#1E293B" stroke-width="2.8" stroke-linecap="round" />
+          
+          
+            <path d="M -30 45 Q -20 16 0 16 Q 20 16 30 45 C 15 26 0 26 -30 45 Z" fill="#92400E" stroke="#1E293B" stroke-width="2.5" />
+            <rect x="-20" y="38" width="17" height="15" rx="4" fill="none" stroke="#3B82F6" stroke-width="3" />
+            <rect x="3" y="38" width="17" height="15" rx="4" fill="none" stroke="#3B82F6" stroke-width="3" />
+            <line x1="-3" y1="46" x2="3" y2="46" stroke="#3B82F6" stroke-width="3" />
+            
+        </g>
+        
+
+        <!-- SNUG CUT LINE (6px around the person) -->
+        <rect x="589" y="604" width="137" height="242" rx="14" class="cut-guide" />
+        
+        <!-- PERSON ILLUSTRATION -->
+        <g transform="translate(657.5, 680)">
+          <!-- Waving Left Hand -->
+          <path d="M -22 82 Q -38 55 -34 38" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="38" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+          
+          <!-- Right Hand -->
+          <path d="M 22 82 Q 38 98 34 115" stroke="#1E293B" stroke-width="10" stroke-linecap="round" fill="none" />
+          <circle cx="34" cy="115" r="7" fill="#FFDFC4" stroke="#1E293B" stroke-width="2.5" />
+
+          <!-- Bright Colorful Shirt -->
+          <path d="M -26 78 L 26 78 L 24 145 L -24 145 Z" fill="#F43F5E" stroke="#1E293B" stroke-width="3" />
+          <rect x="-8" y="62" width="16" height="20" rx="4" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Shirt Emblems -->
+          <circle cx="0" cy="105" r="5" fill="#FFFFFF" opacity="0.9" />
+          <circle cx="0" cy="122" r="5" fill="#FFFFFF" opacity="0.9" />
+
+          <!-- Head -->
+          <circle cx="0" cy="46" r="28" fill="#FFDFC4" stroke="#1E293B" stroke-width="3" />
+          <circle cx="-28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          <circle cx="28" cy="48" r="5.5" fill="#FFDFC4" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Eyes -->
+          <circle cx="-10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="10" cy="44" r="4" fill="#1E293B" />
+          <circle cx="-8" cy="42" r="1.5" fill="#FFFFFF" />
+          <circle cx="12" cy="42" r="1.5" fill="#FFFFFF" />
+          
+          <!-- Rosy Cheeks -->
+          <ellipse cx="-16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          <ellipse cx="16" cy="52" rx="4.5" ry="3" fill="#FF8FA3" />
+          
+          <!-- Big Smile -->
+          <path d="M -8 56 Q 0 66 8 56" fill="none" stroke="#1E293B" stroke-width="2.8" stroke-linecap="round" />
+          
+          
+            <path d="M -30 46 Q -25 16 0 16 Q 25 16 30 46 C 20 28 0 26 -30 46 Z" fill="#C2410C" stroke="#1E293B" stroke-width="2.5" />
+            <path d="M 24 35 Q 44 22 42 56 Q 33 46 24 42 Z" fill="#C2410C" stroke="#1E293B" stroke-width="2.5" />
+            <circle cx="26" cy="38" r="5" fill="#3B82F6" />
+            
+        </g>
+        
+</svg>

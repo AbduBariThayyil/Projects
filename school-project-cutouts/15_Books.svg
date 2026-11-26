@@ -1,0 +1,343 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1130" width="800pt" height="1130pt">
+  <defs>
+    <style>
+      .cut-guide { stroke: #718096; stroke-width: 2.2; stroke-dasharray: 6, 5; fill: none; }
+    </style>
+  </defs>
+  <rect width="800" height="1130" fill="#FFFFFF" />
+  
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="36" y="59" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="42" y="65" width="95" height="220" rx="8" fill="#FF1654" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="42" y="65" width="18" height="220" rx="6" fill="#FFE600" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="46" y1="100" x2="56" y2="100" stroke="#1E293B" stroke-width="2" />
+        <line x1="46" y1="250" x2="56" y2="250" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <polygon points="97.5,153.0 103.4,166.9 118.4,168.2 107.0,178.1 110.4,192.8 97.5,185.0 84.6,192.8 88.0,178.1 76.6,168.2 91.6,166.9" fill="#FFE600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="113,65 129,65 129,103 121,93 113,103" fill="#FFE600" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="60" y="273" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="182" y="59" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="188" y="65" width="95" height="220" rx="8" fill="#3A86FF" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="188" y="65" width="18" height="220" rx="6" fill="#FFD166" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="192" y1="100" x2="202" y2="100" stroke="#1E293B" stroke-width="2" />
+        <line x1="192" y1="250" x2="202" y2="250" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <path d="M 243.5 195.0 
+                            C 219.5 169.0, 219.5 149.0, 243.5 163.0 
+                            C 267.5 149.0, 267.5 169.0, 243.5 195.0 Z" 
+                            fill="#FFD166" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="259,65 275,65 275,103 267,93 259,103" fill="#FFD166" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="206" y="273" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="328" y="59" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="334" y="65" width="95" height="220" rx="8" fill="#06D6A0" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="334" y="65" width="18" height="220" rx="6" fill="#FFFFFF" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="338" y1="100" x2="348" y2="100" stroke="#1E293B" stroke-width="2" />
+        <line x1="338" y1="250" x2="348" y2="250" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <rect x="356" y="130.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+                            <rect x="356" y="163.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+                            <rect x="356" y="195.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="405,65 421,65 421,103 413,93 405,103" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="352" y="273" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="474" y="59" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="480" y="65" width="95" height="220" rx="8" fill="#FF5400" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="480" y="65" width="18" height="220" rx="6" fill="#FFE600" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="484" y1="100" x2="494" y2="100" stroke="#1E293B" stroke-width="2" />
+        <line x1="484" y1="250" x2="494" y2="250" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <circle cx="535.5" cy="149.0" r="15" fill="#FFE600" stroke="#1E293B" stroke-width="2" />
+                            <circle cx="535.5" cy="201.0" r="15" fill="#FFE600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="551,65 567,65 567,103 559,93 551,103" fill="#FFE600" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="498" y="273" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="620" y="59" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="626" y="65" width="95" height="220" rx="8" fill="#9B5DE5" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="626" y="65" width="18" height="220" rx="6" fill="#F15BB5" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="630" y1="100" x2="640" y2="100" stroke="#1E293B" stroke-width="2" />
+        <line x1="630" y1="250" x2="640" y2="250" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <polygon points="681.5,149.0 701.5,175.0 681.5,201.0 661.5,175.0" fill="#F15BB5" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="697,65 713,65 713,103 705,93 697,103" fill="#F15BB5" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="644" y="273" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="36" y="409" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="42" y="415" width="95" height="220" rx="8" fill="#00BBF9" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="42" y="415" width="18" height="220" rx="6" fill="#FFFFFF" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="46" y1="450" x2="56" y2="450" stroke="#1E293B" stroke-width="2" />
+        <line x1="46" y1="600" x2="56" y2="600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <rect x="64" y="480.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+                            <rect x="64" y="513.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+                            <rect x="64" y="545.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="113,415 129,415 129,453 121,443 113,453" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="60" y="623" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="182" y="409" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="188" y="415" width="95" height="220" rx="8" fill="#F72585" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="188" y="415" width="18" height="220" rx="6" fill="#FFE600" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="192" y1="450" x2="202" y2="450" stroke="#1E293B" stroke-width="2" />
+        <line x1="192" y1="600" x2="202" y2="600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <polygon points="243.5,503.0 249.4,516.9 264.4,518.2 253.0,528.1 256.4,542.8 243.5,535.0 230.6,542.8 234.0,528.1 222.6,518.2 237.6,516.9" fill="#FFE600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="259,415 275,415 275,453 267,443 259,453" fill="#FFE600" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="206" y="623" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="328" y="409" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="334" y="415" width="95" height="220" rx="8" fill="#38B000" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="334" y="415" width="18" height="220" rx="6" fill="#FFFFFF" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="338" y1="450" x2="348" y2="450" stroke="#1E293B" stroke-width="2" />
+        <line x1="338" y1="600" x2="348" y2="600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <path d="M 389.5 545.0 
+                            C 365.5 519.0, 365.5 499.0, 389.5 513.0 
+                            C 413.5 499.0, 413.5 519.0, 389.5 545.0 Z" 
+                            fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="405,415 421,415 421,453 413,443 405,453" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="352" y="623" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="474" y="409" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="480" y="415" width="95" height="220" rx="8" fill="#FFB703" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="480" y="415" width="18" height="220" rx="6" fill="#7209B7" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="484" y1="450" x2="494" y2="450" stroke="#1E293B" stroke-width="2" />
+        <line x1="484" y1="600" x2="494" y2="600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <circle cx="535.5" cy="499.0" r="15" fill="#7209B7" stroke="#1E293B" stroke-width="2" />
+                            <circle cx="535.5" cy="551.0" r="15" fill="#7209B7" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="551,415 567,415 567,453 559,443 551,453" fill="#7209B7" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="498" y="623" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="620" y="409" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="626" y="415" width="95" height="220" rx="8" fill="#E63946" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="626" y="415" width="18" height="220" rx="6" fill="#FFFFFF" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="630" y1="450" x2="640" y2="450" stroke="#1E293B" stroke-width="2" />
+        <line x1="630" y1="600" x2="640" y2="600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <rect x="648" y="480.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+                            <rect x="648" y="513.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+                            <rect x="648" y="545.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="697,415 713,415 713,453 705,443 697,453" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="644" y="623" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="36" y="759" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="42" y="765" width="95" height="220" rx="8" fill="#4361EE" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="42" y="765" width="18" height="220" rx="6" fill="#4CC9F0" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="46" y1="800" x2="56" y2="800" stroke="#1E293B" stroke-width="2" />
+        <line x1="46" y1="950" x2="56" y2="950" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <polygon points="97.5,849.0 117.5,875.0 97.5,901.0 77.5,875.0" fill="#4CC9F0" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="113,765 129,765 129,803 121,793 113,803" fill="#4CC9F0" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="60" y="973" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="182" y="759" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="188" y="765" width="95" height="220" rx="8" fill="#D81159" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="188" y="765" width="18" height="220" rx="6" fill="#FFE600" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="192" y1="800" x2="202" y2="800" stroke="#1E293B" stroke-width="2" />
+        <line x1="192" y1="950" x2="202" y2="950" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <polygon points="243.5,853.0 249.4,866.9 264.4,868.2 253.0,878.1 256.4,892.8 243.5,885.0 230.6,892.8 234.0,878.1 222.6,868.2 237.6,866.9" fill="#FFE600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="259,765 275,765 275,803 267,793 259,803" fill="#FFE600" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="206" y="973" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="328" y="759" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="334" y="765" width="95" height="220" rx="8" fill="#2EC4B6" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="334" y="765" width="18" height="220" rx="6" fill="#FF9F1C" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="338" y1="800" x2="348" y2="800" stroke="#1E293B" stroke-width="2" />
+        <line x1="338" y1="950" x2="348" y2="950" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <path d="M 389.5 895.0 
+                            C 365.5 869.0, 365.5 849.0, 389.5 863.0 
+                            C 413.5 849.0, 413.5 869.0, 389.5 895.0 Z" 
+                            fill="#FF9F1C" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="405,765 421,765 421,803 413,793 405,803" fill="#FF9F1C" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="352" y="973" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="474" y="759" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="480" y="765" width="95" height="220" rx="8" fill="#7209B7" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="480" y="765" width="18" height="220" rx="6" fill="#FFFFFF" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="484" y1="800" x2="494" y2="800" stroke="#1E293B" stroke-width="2" />
+        <line x1="484" y1="950" x2="494" y2="950" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <rect x="502" y="830.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+                            <rect x="502" y="863.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+                            <rect x="502" y="895.0" width="65" height="14" rx="2" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="551,765 567,765 567,803 559,793 551,803" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="498" y="973" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+
+        <!-- SNUG CUT LINE (Directly wrapping the book with 6px margin) -->
+        <rect x="620" y="759" width="107" height="232" rx="12" class="cut-guide" />
+        
+        <!-- Book Cover -->
+        <rect x="626" y="765" width="95" height="220" rx="8" fill="#FB5607" stroke="#1E293B" stroke-width="3" />
+        
+        <!-- Spine on Left -->
+        <rect x="626" y="765" width="18" height="220" rx="6" fill="#FFE600" stroke="#1E293B" stroke-width="2.2" />
+        <line x1="630" y1="800" x2="640" y2="800" stroke="#1E293B" stroke-width="2" />
+        <line x1="630" y1="950" x2="640" y2="950" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Motif Art Centered -->
+        <circle cx="681.5" cy="849.0" r="15" fill="#FFE600" stroke="#1E293B" stroke-width="2" />
+                            <circle cx="681.5" cy="901.0" r="15" fill="#FFE600" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="697,765 713,765 713,803 705,793 697,803" fill="#FFE600" stroke="#1E293B" stroke-width="1.8" />
+        
+        <!-- Bottom Pages Trim -->
+        <rect x="644" y="973" width="75" height="10" rx="1" fill="#FFFFFF" stroke="#1E293B" stroke-width="2" />
+        
+</svg>
