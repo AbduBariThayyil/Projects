@@ -1,423 +1,366 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1130" width="800pt" height="1130pt">
   <defs>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&amp;family=Quicksand:wght@600;700&amp;display=swap');
-      text { font-family: 'Fredoka One', 'Quicksand', 'Nunito', 'Segoe UI', Arial, sans-serif; }
-      .title { font-size: 26px; font-weight: bold; fill: #1E293B; text-anchor: middle; }
-      .subtitle { font-size: 14px; font-weight: 600; fill: #475569; text-anchor: middle; }
-      .cut-guide { stroke: #94A3B8; stroke-width: 1.8; stroke-dasharray: 6, 5; fill: none; }
-      .cut-text { font-size: 11px; fill: #64748B; font-weight: bold; }
+      .cut-guide { stroke: #A0AEC0; stroke-width: 2; stroke-dasharray: 8, 6; fill: none; }
     </style>
   </defs>
-  <!-- Background -->
-  <rect width="800" height="1130" fill="#FCFDFD" />
+  <rect width="800" height="1130" fill="#FFFFFF" />
   
-  <!-- Header Bar -->
-  <rect x="25" y="15" width="750" height="75" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
-  <text x="400.0" y="45" class="title">Option 1: 15 Small Books</text>
-  <text x="400.0" y="72" class="subtitle">✂ Cut along dashed boxes. Glue 5 books on each shelf! (15 ÷ 3 = 5)</text>
-
-        <!-- Book #1 Cutout Box -->
-        <rect x="45" y="110" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(57, 132)">
-      <text x="0" y="0" class="cut-text">✂ Book #1</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="40" y="50" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="86.5" y="175" width="55" height="150" rx="6" fill="#EF476F" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="79.0" y="127.5" width="62" height="175" rx="8" fill="#FF1654" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="86.5" y="175" width="12" height="150" rx="4" fill="#FFD166" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="79.0" y="127.5" width="15" height="175" rx="4" fill="#FFE600" stroke="#2D3748" stroke-width="2" />
+        <line x1="82.0" y1="152.5" x2="91.0" y2="152.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="82.0" y1="277.5" x2="91.0" y2="277.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="88.5" y1="200" x2="96.5" y2="200" stroke="#1E293B" stroke-width="2" />
-        <line x1="88.5" y1="300" x2="96.5" y2="300" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="104.5" y="205" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="110.5,235 120.5,225 130.5,235 125.5,250 115.5,250" fill="#FFD166" stroke="#1E293B" stroke-width="1.2" />
+            <polygon points="110.0,182.5 122.0,212.5 150.0,214.5 126.0,231.5 135.0,259.5 110.0,241.5 85.0,259.5 94.0,231.5 70.0,214.5 98.0,212.5" fill="#FFE600" stroke="#2D3748" stroke-width="2" transform="scale(0.55) translate(91.0, 117.5)" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="98.5" y="315" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="121.0,127.5 135.0,127.5 135.0,157.5 128.0,149.5 121.0,157.5" fill="#FFE600" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="114.0" y="408" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #1</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="94.0" y="292.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #2 Cutout Box -->
-        <rect x="191" y="110" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(203, 132)">
-      <text x="0" y="0" class="cut-text">✂ Book #2</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="188" y="50" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="232.5" y="175" width="55" height="150" rx="6" fill="#3A86FF" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="227.0" y="127.5" width="62" height="175" rx="8" fill="#3A86FF" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="232.5" y="175" width="12" height="150" rx="4" fill="#E0F2FE" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="227.0" y="127.5" width="15" height="175" rx="4" fill="#FFBE0B" stroke="#2D3748" stroke-width="2" />
+        <line x1="230.0" y1="152.5" x2="239.0" y2="152.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="230.0" y1="277.5" x2="239.0" y2="277.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="234.5" y1="200" x2="242.5" y2="200" stroke="#1E293B" stroke-width="2" />
-        <line x1="234.5" y1="300" x2="242.5" y2="300" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="250.5" y="205" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="256.5,235 266.5,225 276.5,235 271.5,250 261.5,250" fill="#E0F2FE" stroke="#1E293B" stroke-width="1.2" />
+            <rect x="243.0" y="172.5" width="44" height="14" fill="#FFBE0B" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="243.0" y="202.5" width="44" height="14" fill="#FFBE0B" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="243.0" y="232.5" width="44" height="14" fill="#FFBE0B" stroke="#2D3748" stroke-width="1.5" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="244.5" y="315" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="269.0,127.5 283.0,127.5 283.0,157.5 276.0,149.5 269.0,157.5" fill="#FFBE0B" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="260.0" y="408" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #2</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="242.0" y="292.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #3 Cutout Box -->
-        <rect x="337" y="110" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(349, 132)">
-      <text x="0" y="0" class="cut-text">✂ Book #3</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="336" y="50" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="378.5" y="175" width="55" height="150" rx="6" fill="#06D6A0" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="375.0" y="127.5" width="62" height="175" rx="8" fill="#06D6A0" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="378.5" y="175" width="12" height="150" rx="4" fill="#C7F9CC" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="375.0" y="127.5" width="15" height="175" rx="4" fill="#118AB2" stroke="#2D3748" stroke-width="2" />
+        <line x1="378.0" y1="152.5" x2="387.0" y2="152.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="378.0" y1="277.5" x2="387.0" y2="277.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="380.5" y1="200" x2="388.5" y2="200" stroke="#1E293B" stroke-width="2" />
-        <line x1="380.5" y1="300" x2="388.5" y2="300" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="396.5" y="205" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="402.5,235 412.5,225 422.5,235 417.5,250 407.5,250" fill="#C7F9CC" stroke="#1E293B" stroke-width="1.2" />
+            <circle cx="410.0" cy="187.5" r="14" fill="#118AB2" stroke="#2D3748" stroke-width="2" />
+            <circle cx="410.0" cy="232.5" r="14" fill="#118AB2" stroke="#2D3748" stroke-width="2" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="390.5" y="315" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="417.0,127.5 431.0,127.5 431.0,157.5 424.0,149.5 417.0,157.5" fill="#118AB2" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="406.0" y="408" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #3</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="390.0" y="292.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #4 Cutout Box -->
-        <rect x="483" y="110" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(495, 132)">
-      <text x="0" y="0" class="cut-text">✂ Book #4</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="484" y="50" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="524.5" y="175" width="55" height="150" rx="6" fill="#FFB703" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="523.0" y="127.5" width="62" height="175" rx="8" fill="#FF5400" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="524.5" y="175" width="12" height="150" rx="4" fill="#FFE8D6" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="523.0" y="127.5" width="15" height="175" rx="4" fill="#FFD166" stroke="#2D3748" stroke-width="2" />
+        <line x1="526.0" y1="152.5" x2="535.0" y2="152.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="526.0" y1="277.5" x2="535.0" y2="277.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="526.5" y1="200" x2="534.5" y2="200" stroke="#1E293B" stroke-width="2" />
-        <line x1="526.5" y1="300" x2="534.5" y2="300" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="542.5" y="205" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="548.5,235 558.5,225 568.5,235 563.5,250 553.5,250" fill="#FFE8D6" stroke="#1E293B" stroke-width="1.2" />
+            <path d="M 554.0 219.5 C 529.0 187.5, 529.0 167.5, 554.0 185.5 C 579.0 167.5, 579.0 187.5, 554.0 219.5 Z" fill="#FFD166" stroke="#2D3748" stroke-width="2" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="536.5" y="315" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="565.0,127.5 579.0,127.5 579.0,157.5 572.0,149.5 565.0,157.5" fill="#FFD166" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="552.0" y="408" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #4</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="538.0" y="292.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #5 Cutout Box -->
-        <rect x="629" y="110" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(641, 132)">
-      <text x="0" y="0" class="cut-text">✂ Book #5</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="632" y="50" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="670.5" y="175" width="55" height="150" rx="6" fill="#8338EC" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="671.0" y="127.5" width="62" height="175" rx="8" fill="#9B5DE5" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="670.5" y="175" width="12" height="150" rx="4" fill="#E0AAFF" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="671.0" y="127.5" width="15" height="175" rx="4" fill="#F15BB5" stroke="#2D3748" stroke-width="2" />
+        <line x1="674.0" y1="152.5" x2="683.0" y2="152.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="674.0" y1="277.5" x2="683.0" y2="277.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="672.5" y1="200" x2="680.5" y2="200" stroke="#1E293B" stroke-width="2" />
-        <line x1="672.5" y1="300" x2="680.5" y2="300" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="688.5" y="205" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="694.5,235 704.5,225 714.5,235 709.5,250 699.5,250" fill="#E0AAFF" stroke="#1E293B" stroke-width="1.2" />
+            <polygon points="702.0,182.5 714.0,212.5 742.0,214.5 718.0,231.5 727.0,259.5 702.0,241.5 677.0,259.5 686.0,231.5 662.0,214.5 690.0,212.5" fill="#F15BB5" stroke="#2D3748" stroke-width="2" transform="scale(0.55) translate(683.0, 117.5)" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="682.5" y="315" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="713.0,127.5 727.0,127.5 727.0,157.5 720.0,149.5 713.0,157.5" fill="#F15BB5" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="698.0" y="408" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #5</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="686.0" y="292.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #6 Cutout Box -->
-        <rect x="45" y="440" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(57, 462)">
-      <text x="0" y="0" class="cut-text">✂ Book #6</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="40" y="400" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="86.5" y="505" width="55" height="150" rx="6" fill="#F72585" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="79.0" y="477.5" width="62" height="175" rx="8" fill="#00F5D4" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="86.5" y="505" width="12" height="150" rx="4" fill="#FFCCD5" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="79.0" y="477.5" width="15" height="175" rx="4" fill="#7B2CBF" stroke="#2D3748" stroke-width="2" />
+        <line x1="82.0" y1="502.5" x2="91.0" y2="502.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="82.0" y1="627.5" x2="91.0" y2="627.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="88.5" y1="530" x2="96.5" y2="530" stroke="#1E293B" stroke-width="2" />
-        <line x1="88.5" y1="630" x2="96.5" y2="630" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="104.5" y="535" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="110.5,565 120.5,555 130.5,565 125.5,580 115.5,580" fill="#FFCCD5" stroke="#1E293B" stroke-width="1.2" />
+            <rect x="95.0" y="522.5" width="44" height="14" fill="#7B2CBF" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="95.0" y="552.5" width="44" height="14" fill="#7B2CBF" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="95.0" y="582.5" width="44" height="14" fill="#7B2CBF" stroke="#2D3748" stroke-width="1.5" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="98.5" y="645" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="121.0,477.5 135.0,477.5 135.0,507.5 128.0,499.5 121.0,507.5" fill="#7B2CBF" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="114.0" y="738" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #6</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="94.0" y="642.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #7 Cutout Box -->
-        <rect x="191" y="440" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(203, 462)">
-      <text x="0" y="0" class="cut-text">✂ Book #7</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="188" y="400" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="232.5" y="505" width="55" height="150" rx="6" fill="#FB8500" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="227.0" y="477.5" width="62" height="175" rx="8" fill="#F72585" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="232.5" y="505" width="12" height="150" rx="4" fill="#FEF3C7" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="227.0" y="477.5" width="15" height="175" rx="4" fill="#7209B7" stroke="#2D3748" stroke-width="2" />
+        <line x1="230.0" y1="502.5" x2="239.0" y2="502.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="230.0" y1="627.5" x2="239.0" y2="627.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="234.5" y1="530" x2="242.5" y2="530" stroke="#1E293B" stroke-width="2" />
-        <line x1="234.5" y1="630" x2="242.5" y2="630" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="250.5" y="535" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="256.5,565 266.5,555 276.5,565 271.5,580 261.5,580" fill="#FEF3C7" stroke="#1E293B" stroke-width="1.2" />
+            <path d="M 258.0 569.5 C 233.0 537.5, 233.0 517.5, 258.0 535.5 C 283.0 517.5, 283.0 537.5, 258.0 569.5 Z" fill="#7209B7" stroke="#2D3748" stroke-width="2" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="244.5" y="645" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="269.0,477.5 283.0,477.5 283.0,507.5 276.0,499.5 269.0,507.5" fill="#7209B7" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="260.0" y="738" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #7</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="242.0" y="642.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #8 Cutout Box -->
-        <rect x="337" y="440" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(349, 462)">
-      <text x="0" y="0" class="cut-text">✂ Book #8</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="336" y="400" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="378.5" y="505" width="55" height="150" rx="6" fill="#2A9D8F" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="375.0" y="477.5" width="62" height="175" rx="8" fill="#38B000" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="378.5" y="505" width="12" height="150" rx="4" fill="#D1FAE5" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="375.0" y="477.5" width="15" height="175" rx="4" fill="#CCFF33" stroke="#2D3748" stroke-width="2" />
+        <line x1="378.0" y1="502.5" x2="387.0" y2="502.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="378.0" y1="627.5" x2="387.0" y2="627.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="380.5" y1="530" x2="388.5" y2="530" stroke="#1E293B" stroke-width="2" />
-        <line x1="380.5" y1="630" x2="388.5" y2="630" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="396.5" y="535" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="402.5,565 412.5,555 422.5,565 417.5,580 407.5,580" fill="#D1FAE5" stroke="#1E293B" stroke-width="1.2" />
+            <circle cx="410.0" cy="537.5" r="14" fill="#CCFF33" stroke="#2D3748" stroke-width="2" />
+            <circle cx="410.0" cy="582.5" r="14" fill="#CCFF33" stroke="#2D3748" stroke-width="2" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="390.5" y="645" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="417.0,477.5 431.0,477.5 431.0,507.5 424.0,499.5 417.0,507.5" fill="#CCFF33" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="406.0" y="738" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #8</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="390.0" y="642.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #9 Cutout Box -->
-        <rect x="483" y="440" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(495, 462)">
-      <text x="0" y="0" class="cut-text">✂ Book #9</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="484" y="400" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="524.5" y="505" width="55" height="150" rx="6" fill="#118AB2" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="523.0" y="477.5" width="62" height="175" rx="8" fill="#FFB703" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="524.5" y="505" width="12" height="150" rx="4" fill="#A2D2FF" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="523.0" y="477.5" width="15" height="175" rx="4" fill="#FB8500" stroke="#2D3748" stroke-width="2" />
+        <line x1="526.0" y1="502.5" x2="535.0" y2="502.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="526.0" y1="627.5" x2="535.0" y2="627.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="526.5" y1="530" x2="534.5" y2="530" stroke="#1E293B" stroke-width="2" />
-        <line x1="526.5" y1="630" x2="534.5" y2="630" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="542.5" y="535" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="548.5,565 558.5,555 568.5,565 563.5,580 553.5,580" fill="#A2D2FF" stroke="#1E293B" stroke-width="1.2" />
+            <rect x="539.0" y="522.5" width="44" height="14" fill="#FB8500" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="539.0" y="552.5" width="44" height="14" fill="#FB8500" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="539.0" y="582.5" width="44" height="14" fill="#FB8500" stroke="#2D3748" stroke-width="1.5" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="536.5" y="645" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="565.0,477.5 579.0,477.5 579.0,507.5 572.0,499.5 565.0,507.5" fill="#FB8500" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="552.0" y="738" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #9</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="538.0" y="642.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #10 Cutout Box -->
-        <rect x="629" y="440" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(641, 462)">
-      <text x="0" y="0" class="cut-text">✂ Book #10</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="632" y="400" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="670.5" y="505" width="55" height="150" rx="6" fill="#D90429" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="671.0" y="477.5" width="62" height="175" rx="8" fill="#E63946" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="670.5" y="505" width="12" height="150" rx="4" fill="#FFCCD5" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="671.0" y="477.5" width="15" height="175" rx="4" fill="#A8DADC" stroke="#2D3748" stroke-width="2" />
+        <line x1="674.0" y1="502.5" x2="683.0" y2="502.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="674.0" y1="627.5" x2="683.0" y2="627.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="672.5" y1="530" x2="680.5" y2="530" stroke="#1E293B" stroke-width="2" />
-        <line x1="672.5" y1="630" x2="680.5" y2="630" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="688.5" y="535" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="694.5,565 704.5,555 714.5,565 709.5,580 699.5,580" fill="#FFCCD5" stroke="#1E293B" stroke-width="1.2" />
+            <polygon points="702.0,532.5 714.0,562.5 742.0,564.5 718.0,581.5 727.0,609.5 702.0,591.5 677.0,609.5 686.0,581.5 662.0,564.5 690.0,562.5" fill="#A8DADC" stroke="#2D3748" stroke-width="2" transform="scale(0.55) translate(683.0, 467.5)" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="682.5" y="645" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="713.0,477.5 727.0,477.5 727.0,507.5 720.0,499.5 713.0,507.5" fill="#A8DADC" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="698.0" y="738" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #10</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="686.0" y="642.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #11 Cutout Box -->
-        <rect x="45" y="770" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(57, 792)">
-      <text x="0" y="0" class="cut-text">✂ Book #11</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="40" y="750" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="86.5" y="835" width="55" height="150" rx="6" fill="#48CAE4" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="79.0" y="827.5" width="62" height="175" rx="8" fill="#4361EE" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="86.5" y="835" width="12" height="150" rx="4" fill="#CAF0F8" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="79.0" y="827.5" width="15" height="175" rx="4" fill="#4CC9F0" stroke="#2D3748" stroke-width="2" />
+        <line x1="82.0" y1="852.5" x2="91.0" y2="852.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="82.0" y1="977.5" x2="91.0" y2="977.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="88.5" y1="860" x2="96.5" y2="860" stroke="#1E293B" stroke-width="2" />
-        <line x1="88.5" y1="960" x2="96.5" y2="960" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="104.5" y="865" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="110.5,895 120.5,885 130.5,895 125.5,910 115.5,910" fill="#CAF0F8" stroke="#1E293B" stroke-width="1.2" />
+            <path d="M 110.0 919.5 C 85.0 887.5, 85.0 867.5, 110.0 885.5 C 135.0 867.5, 135.0 887.5, 110.0 919.5 Z" fill="#4CC9F0" stroke="#2D3748" stroke-width="2" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="98.5" y="975" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="121.0,827.5 135.0,827.5 135.0,857.5 128.0,849.5 121.0,857.5" fill="#4CC9F0" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="114.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #11</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="94.0" y="992.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #12 Cutout Box -->
-        <rect x="191" y="770" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(203, 792)">
-      <text x="0" y="0" class="cut-text">✂ Book #12</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="188" y="750" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="232.5" y="835" width="55" height="150" rx="6" fill="#FF006E" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="227.0" y="827.5" width="62" height="175" rx="8" fill="#D81159" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="232.5" y="835" width="12" height="150" rx="4" fill="#FFBE0B" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="227.0" y="827.5" width="15" height="175" rx="4" fill="#FFBC42" stroke="#2D3748" stroke-width="2" />
+        <line x1="230.0" y1="852.5" x2="239.0" y2="852.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="230.0" y1="977.5" x2="239.0" y2="977.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="234.5" y1="860" x2="242.5" y2="860" stroke="#1E293B" stroke-width="2" />
-        <line x1="234.5" y1="960" x2="242.5" y2="960" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="250.5" y="865" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="256.5,895 266.5,885 276.5,895 271.5,910 261.5,910" fill="#FFBE0B" stroke="#1E293B" stroke-width="1.2" />
+            <rect x="243.0" y="872.5" width="44" height="14" fill="#FFBC42" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="243.0" y="902.5" width="44" height="14" fill="#FFBC42" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="243.0" y="932.5" width="44" height="14" fill="#FFBC42" stroke="#2D3748" stroke-width="1.5" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="244.5" y="975" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="269.0,827.5 283.0,827.5 283.0,857.5 276.0,849.5 269.0,857.5" fill="#FFBC42" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="260.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #12</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="242.0" y="992.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #13 Cutout Box -->
-        <rect x="337" y="770" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(349, 792)">
-      <text x="0" y="0" class="cut-text">✂ Book #13</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="336" y="750" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="378.5" y="835" width="55" height="150" rx="6" fill="#2B9348" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="375.0" y="827.5" width="62" height="175" rx="8" fill="#8F2D56" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="378.5" y="835" width="12" height="150" rx="4" fill="#D8F3DC" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="375.0" y="827.5" width="15" height="175" rx="4" fill="#218380" stroke="#2D3748" stroke-width="2" />
+        <line x1="378.0" y1="852.5" x2="387.0" y2="852.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="378.0" y1="977.5" x2="387.0" y2="977.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="380.5" y1="860" x2="388.5" y2="860" stroke="#1E293B" stroke-width="2" />
-        <line x1="380.5" y1="960" x2="388.5" y2="960" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="396.5" y="865" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="402.5,895 412.5,885 422.5,895 417.5,910 407.5,910" fill="#D8F3DC" stroke="#1E293B" stroke-width="1.2" />
+            <circle cx="410.0" cy="887.5" r="14" fill="#218380" stroke="#2D3748" stroke-width="2" />
+            <circle cx="410.0" cy="932.5" r="14" fill="#218380" stroke="#2D3748" stroke-width="2" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="390.5" y="975" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="417.0,827.5 431.0,827.5 431.0,857.5 424.0,849.5 417.0,857.5" fill="#218380" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="406.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #13</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="390.0" y="992.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #14 Cutout Box -->
-        <rect x="483" y="770" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(495, 792)">
-      <text x="0" y="0" class="cut-text">✂ Book #14</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="484" y="750" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="524.5" y="835" width="55" height="150" rx="6" fill="#5A189A" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="523.0" y="827.5" width="62" height="175" rx="8" fill="#7209B7" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="524.5" y="835" width="12" height="150" rx="4" fill="#E0AAFF" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="523.0" y="827.5" width="15" height="175" rx="4" fill="#F72585" stroke="#2D3748" stroke-width="2" />
+        <line x1="526.0" y1="852.5" x2="535.0" y2="852.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="526.0" y1="977.5" x2="535.0" y2="977.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="526.5" y1="860" x2="534.5" y2="860" stroke="#1E293B" stroke-width="2" />
-        <line x1="526.5" y1="960" x2="534.5" y2="960" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="542.5" y="865" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="548.5,895 558.5,885 568.5,895 563.5,910 553.5,910" fill="#E0AAFF" stroke="#1E293B" stroke-width="1.2" />
+            <polygon points="554.0,882.5 566.0,912.5 594.0,914.5 570.0,931.5 579.0,959.5 554.0,941.5 529.0,959.5 538.0,931.5 514.0,914.5 542.0,912.5" fill="#F72585" stroke="#2D3748" stroke-width="2" transform="scale(0.55) translate(535.0, 817.5)" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="536.5" y="975" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="565.0,827.5 579.0,827.5 579.0,857.5 572.0,849.5 565.0,857.5" fill="#F72585" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="552.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #14</text>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="538.0" y="992.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
         
 
-        <!-- Book #15 Cutout Box -->
-        <rect x="629" y="770" width="138" height="320" rx="10" class="cut-guide" />
-        <g transform="translate(641, 792)">
-      <text x="0" y="0" class="cut-text">✂ Book #15</text>
-    </g>
+        <!-- Book Cutout Dotted Box -->
+        <rect x="632" y="750" width="140" height="330" rx="12" class="cut-guide" />
         
-        <!-- Book Cover Body -->
-        <rect x="670.5" y="835" width="55" height="150" rx="6" fill="#E76F51" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Book Base -->
+        <rect x="671.0" y="827.5" width="62" height="175" rx="8" fill="#2EC4B6" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Book Spine on left -->
-        <rect x="670.5" y="835" width="12" height="150" rx="4" fill="#F4A261" stroke="#1E293B" stroke-width="2" />
+        <!-- Spine Stripe -->
+        <rect x="671.0" y="827.5" width="15" height="175" rx="4" fill="#FF9F1C" stroke="#2D3748" stroke-width="2" />
+        <line x1="674.0" y1="852.5" x2="683.0" y2="852.5" stroke="#2D3748" stroke-width="2" />
+        <line x1="674.0" y1="977.5" x2="683.0" y2="977.5" stroke="#2D3748" stroke-width="2" />
         
-        <!-- Decorative Spine Bands -->
-        <line x1="672.5" y1="860" x2="680.5" y2="860" stroke="#1E293B" stroke-width="2" />
-        <line x1="672.5" y1="960" x2="680.5" y2="960" stroke="#1E293B" stroke-width="2" />
+        <!-- Cover Art Pattern -->
         
-        <!-- Simple Cute Cover Accent (Clean star, stripe, or bookmark) -->
-        <rect x="688.5" y="865" width="31" height="65" rx="4" fill="rgba(255,255,255,0.3)" stroke="#1E293B" stroke-width="1.5" />
-        <polygon points="694.5,895 704.5,885 714.5,895 709.5,910 699.5,910" fill="#F4A261" stroke="#1E293B" stroke-width="1.2" />
+            <rect x="687.0" y="872.5" width="44" height="14" fill="#FF9F1C" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="687.0" y="902.5" width="44" height="14" fill="#FF9F1C" stroke="#2D3748" stroke-width="1.5" />
+            <rect x="687.0" y="932.5" width="44" height="14" fill="#FF9F1C" stroke="#2D3748" stroke-width="1.5" />
+            
         
-        <!-- Book Pages Edge on bottom -->
-        <rect x="682.5" y="975" width="41" height="8" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5" />
+        <!-- Bookmark Ribbon -->
+        <polygon points="713.0,827.5 727.0,827.5 727.0,857.5 720.0,849.5 713.0,857.5" fill="#FF9F1C" stroke="#2D3748" stroke-width="1.5" />
         
-        <!-- Cutout Label at bottom -->
-        <text x="698.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Book #15</text>
-        </svg>
+        <!-- Clean Book Page Edge on Bottom -->
+        <rect x="686.0" y="992.5" width="45" height="8" rx="1" fill="#FFFFFF" stroke="#2D3748" stroke-width="1.8" />
+        
+</svg>

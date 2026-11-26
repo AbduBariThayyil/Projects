@@ -1,87 +1,56 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1130" width="800pt" height="1130pt">
   <defs>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&amp;family=Quicksand:wght@600;700&amp;display=swap');
-      text { font-family: 'Fredoka One', 'Quicksand', 'Nunito', 'Segoe UI', Arial, sans-serif; }
-      .title { font-size: 26px; font-weight: bold; fill: #1E293B; text-anchor: middle; }
-      .subtitle { font-size: 14px; font-weight: 600; fill: #475569; text-anchor: middle; }
-      .cut-guide { stroke: #94A3B8; stroke-width: 1.8; stroke-dasharray: 6, 5; fill: none; }
-      .cut-text { font-size: 11px; fill: #64748B; font-weight: bold; }
+      .cut-guide { stroke: #A0AEC0; stroke-width: 2; stroke-dasharray: 8, 6; fill: none; }
     </style>
   </defs>
-  <!-- Background -->
-  <rect width="800" height="1130" fill="#FCFDFD" />
+  <rect width="800" height="1130" fill="#FFFFFF" />
   
-  <!-- Header Bar -->
-  <rect x="25" y="15" width="750" height="75" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
-  <text x="400.0" y="45" class="title">Option 1: 3 Empty Bookshelves</text>
-  <text x="400.0" y="72" class="subtitle">✂ Cut along dashed lines. Glue 5 books onto each bookshelf! (15 ÷ 3 = 5)</text>
-
-        <!-- Bookshelf 1 Container with Dotted Cut Line -->
-        <rect x="30" y="100" width="740" height="300" rx="14" class="cut-guide" />
-        <g transform="translate(45, 116)">
-      <text x="0" y="0" class="cut-text">✂ Cut Bookshelf #1</text>
-    </g>
+        <!-- Bookshelf 1 Dotted Cut Box -->
+        <rect x="25" y="40" width="750" height="320" rx="16" class="cut-guide" />
         
-        <!-- Shelf Outer Wooden Frame -->
-        <rect x="45" y="128" width="720" height="270" rx="14" fill="#8D5B4C" stroke="#1E293B" stroke-width="3" />
+        <!-- Bookshelf Outer Frame -->
+        <rect x="40" y="55" width="730" height="290" rx="14" fill="#8D5B4C" stroke="#2D3748" stroke-width="3.5" />
         
-        <!-- Shelf Cavity (Huge open wooden shelf: 195px high, 660px wide - PLENTY of room for books!) -->
-        <rect x="65" y="155" width="680" height="195" rx="8" fill="#FDF6EE" stroke="#CBD5E1" stroke-width="2" />
+        <!-- Big Open Shelf Interior (220px high - plenty of room for books) -->
+        <rect x="60" y="75" width="690" height="220" rx="8" fill="#FFF8EE" stroke="#CBD5E1" stroke-width="2" />
         
-        <!-- Bottom Base Board / Shelf Plank (Solid base for books to stand on) -->
-        <rect x="55" y="350" width="700" height="28" rx="4" fill="#A76F53" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Solid Base Shelf Board -->
+        <rect x="50" y="295" width="710" height="25" rx="4" fill="#A76F53" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Shelf Guideline (Dashed guide showing 5 book spots) -->
-        <line x1="85" y1="348" x2="725" y2="348" stroke="#E2E8F0" stroke-width="2" stroke-dasharray="10,6" />
-        
-        <!-- Name Badge -->
-        <rect x="270" y="130" width="260" height="24" rx="12" fill="#FEF3C7" stroke="#1E293B" stroke-width="1.5" />
-        <text x="400" y="147" font-size="13" font-weight="bold" fill="#78350F" text-anchor="middle">📚 Bookshelf #1 — Glue 5 Books Here</text>
+        <!-- Top Crown Molding -->
+        <rect x="35" y="52" width="740" height="18" rx="6" fill="#A76F53" stroke="#2D3748" stroke-width="2.5" />
         
 
-        <!-- Bookshelf 2 Container with Dotted Cut Line -->
-        <rect x="30" y="435" width="740" height="300" rx="14" class="cut-guide" />
-        <g transform="translate(45, 451)">
-      <text x="0" y="0" class="cut-text">✂ Cut Bookshelf #2</text>
-    </g>
+        <!-- Bookshelf 2 Dotted Cut Box -->
+        <rect x="25" y="400" width="750" height="320" rx="16" class="cut-guide" />
         
-        <!-- Shelf Outer Wooden Frame -->
-        <rect x="45" y="463" width="720" height="270" rx="14" fill="#8D5B4C" stroke="#1E293B" stroke-width="3" />
+        <!-- Bookshelf Outer Frame -->
+        <rect x="40" y="415" width="730" height="290" rx="14" fill="#795548" stroke="#2D3748" stroke-width="3.5" />
         
-        <!-- Shelf Cavity (Huge open wooden shelf: 195px high, 660px wide - PLENTY of room for books!) -->
-        <rect x="65" y="490" width="680" height="195" rx="8" fill="#FDF6EE" stroke="#CBD5E1" stroke-width="2" />
+        <!-- Big Open Shelf Interior (220px high - plenty of room for books) -->
+        <rect x="60" y="435" width="690" height="220" rx="8" fill="#FFF3E0" stroke="#CBD5E1" stroke-width="2" />
         
-        <!-- Bottom Base Board / Shelf Plank (Solid base for books to stand on) -->
-        <rect x="55" y="685" width="700" height="28" rx="4" fill="#A76F53" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Solid Base Shelf Board -->
+        <rect x="50" y="655" width="710" height="25" rx="4" fill="#9C786C" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Shelf Guideline (Dashed guide showing 5 book spots) -->
-        <line x1="85" y1="683" x2="725" y2="683" stroke="#E2E8F0" stroke-width="2" stroke-dasharray="10,6" />
-        
-        <!-- Name Badge -->
-        <rect x="270" y="465" width="260" height="24" rx="12" fill="#FEF3C7" stroke="#1E293B" stroke-width="1.5" />
-        <text x="400" y="482" font-size="13" font-weight="bold" fill="#78350F" text-anchor="middle">📚 Bookshelf #2 — Glue 5 Books Here</text>
+        <!-- Top Crown Molding -->
+        <rect x="35" y="412" width="740" height="18" rx="6" fill="#9C786C" stroke="#2D3748" stroke-width="2.5" />
         
 
-        <!-- Bookshelf 3 Container with Dotted Cut Line -->
-        <rect x="30" y="770" width="740" height="300" rx="14" class="cut-guide" />
-        <g transform="translate(45, 786)">
-      <text x="0" y="0" class="cut-text">✂ Cut Bookshelf #3</text>
-    </g>
+        <!-- Bookshelf 3 Dotted Cut Box -->
+        <rect x="25" y="760" width="750" height="320" rx="16" class="cut-guide" />
         
-        <!-- Shelf Outer Wooden Frame -->
-        <rect x="45" y="798" width="720" height="270" rx="14" fill="#8D5B4C" stroke="#1E293B" stroke-width="3" />
+        <!-- Bookshelf Outer Frame -->
+        <rect x="40" y="775" width="730" height="290" rx="14" fill="#6D4C41" stroke="#2D3748" stroke-width="3.5" />
         
-        <!-- Shelf Cavity (Huge open wooden shelf: 195px high, 660px wide - PLENTY of room for books!) -->
-        <rect x="65" y="825" width="680" height="195" rx="8" fill="#FDF6EE" stroke="#CBD5E1" stroke-width="2" />
+        <!-- Big Open Shelf Interior (220px high - plenty of room for books) -->
+        <rect x="60" y="795" width="690" height="220" rx="8" fill="#EFEBE9" stroke="#CBD5E1" stroke-width="2" />
         
-        <!-- Bottom Base Board / Shelf Plank (Solid base for books to stand on) -->
-        <rect x="55" y="1020" width="700" height="28" rx="4" fill="#A76F53" stroke="#1E293B" stroke-width="2.5" />
+        <!-- Solid Base Shelf Board -->
+        <rect x="50" y="1015" width="710" height="25" rx="4" fill="#8D6E63" stroke="#2D3748" stroke-width="3" />
         
-        <!-- Shelf Guideline (Dashed guide showing 5 book spots) -->
-        <line x1="85" y1="1018" x2="725" y2="1018" stroke="#E2E8F0" stroke-width="2" stroke-dasharray="10,6" />
+        <!-- Top Crown Molding -->
+        <rect x="35" y="772" width="740" height="18" rx="6" fill="#8D6E63" stroke="#2D3748" stroke-width="2.5" />
         
-        <!-- Name Badge -->
-        <rect x="270" y="800" width="260" height="24" rx="12" fill="#FEF3C7" stroke="#1E293B" stroke-width="1.5" />
-        <text x="400" y="817" font-size="13" font-weight="bold" fill="#78350F" text-anchor="middle">📚 Bookshelf #3 — Glue 5 Books Here</text>
-        </svg>
+</svg>
