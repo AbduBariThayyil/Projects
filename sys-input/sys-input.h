@@ -21,7 +21,7 @@ typedef struct {
     void (*schedule_ptr_tap_release)(void *ctx, uint16_t code, int delay_ms);
     void (*set_casue_scroll_led)(void *ctx, bool on);
     void (*run_cmd)(void *ctx, const char *cmd);
-    void (*notify)(void *ctx, const char *title, const char *body, const char *icon);
+    void (*notify_toggle)(void *ctx, const char *kind, bool active);
 } SysInputOps;
 
 typedef struct {

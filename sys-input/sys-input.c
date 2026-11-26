@@ -216,16 +216,13 @@ static void cb_run_cmd(void *ctx, const char *cmd) {
     spawn_detached(sh_argv);
 }
 
-static void cb_notify(void *ctx, const char *title, const char *body, const char *icon) {
+static void cb_notify_toggle(void *ctx, const char *kind, bool active) {
     (void)ctx;
     const char *argv[] = {
-        "notify-send",
-        "-a", "sys-input",
-        "-i", icon ? icon : "input-keyboard",
-        "-t", "1500",
-        "-h", "string:x-canonical-private-synchronous:sys-input-mode",
-        title ? title : "sys-input",
-        body ? body : "",
+        "/home/vibecoder/.local/bin/sys-notif",
+        "--osd",
+        kind ? kind : "gaming",
+        active ? "100" : "0",
         NULL
     };
     spawn_detached(argv);
@@ -702,7 +699,7 @@ int main(int argc, char **argv) {
         .schedule_ptr_tap_release = cb_schedule_tap_release,
         .set_casue_scroll_led = cb_set_casue_scroll_led,
         .run_cmd = cb_run_cmd,
-        .notify = cb_notify,
+        .notify_toggle = cb_notify_toggle,
     };
     sys_input_init(&d.state, ops, &d);
 

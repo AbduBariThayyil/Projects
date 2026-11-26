@@ -13,7 +13,7 @@
   - **Gaming Mode**:
     - Mouse Backward/Forward/Corner emit pure `BTN_SIDE`, `BTN_EXTRA`, `KEY_F15` with zero tap delay and no held `mod3`.
 - **External `CASUE USB KB` Fn-Lock (`KEY_SCROLLLOCK`)**:
-  - Toggles `F1`–`F8` between standard function keys and music/media controls (`qt-music`, `vol-dec`, `vol-inc`, `vol-toggle`, `stop`, `previous`, `toggle`, `next`), synchronized with the keyboard's Scroll Lock LED.
+  - Toggles `F1`–`F10` / `F12` between standard function keys and music/media/utility actions (`qt-music`, `vol-dec`, `vol-inc`, `vol-toggle`, `stop`, `previous`, `toggle`, `next`, `KeyHolder --hold`, `KeyHolder --spam`, `calc`; `F11` unchanged), synchronized with the keyboard's Scroll Lock LED and sleek `sys-notif --osd` highlight pills.
 - **Global Hardware Keys**:
   - `Shift + F1` triggers `BacklightToggle` across all keyboards (including lockscreens and fullscreen games).
   - Hardware `XF86Audio*`, `XF86MonBrightness*`, and Toshiba `KEY_TOUCHPAD_TOGGLE` / `KEY_UNKNOWN` execute directly from `evdev`.

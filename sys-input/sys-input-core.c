@@ -12,6 +12,8 @@
 #define CMD_BACKLIGHT_TOGGLE "/home/vibecoder/.config/bspwm/bin/BacklightToggle"
 #define CMD_TOUCHPAD_TOGGLE  "/home/vibecoder/.config/bspwm/bin/ToggleTouchpad"
 #define CMD_MUSIC_APP        "/home/vibecoder/.config/bspwm/bin/LyricViewLauncher"
+#define CMD_KEYHOLDER        "/home/vibecoder/.local/bin/KeyHolder"
+#define CMD_CALCULATOR       "/home/vibecoder/.local/bin/calc"
 
 typedef struct {
     uint16_t code;
@@ -35,14 +37,17 @@ static const KeyCmdRule GLOBAL_MEDIA_RULES[] = {
 };
 
 static const KeyCmdRule CASUE_FN_LOCK_RULES[] = {
-    { KEY_F1, CMD_MUSIC_APP,               false },
-    { KEY_F2, CMD_SYS_CTL " --vol-dec",    true  },
-    { KEY_F3, CMD_SYS_CTL " --vol-inc",    true  },
-    { KEY_F4, CMD_SYS_CTL " --vol-toggle", false },
-    { KEY_F5, CMD_SYS_CTL " --stop",       false },
-    { KEY_F6, CMD_SYS_CTL " --previous",   false },
-    { KEY_F7, CMD_SYS_CTL " --toggle",     false },
-    { KEY_F8, CMD_SYS_CTL " --next",       false },
+    { KEY_F1,  CMD_MUSIC_APP,               false },
+    { KEY_F2,  CMD_SYS_CTL " --vol-dec",    true  },
+    { KEY_F3,  CMD_SYS_CTL " --vol-inc",    true  },
+    { KEY_F4,  CMD_SYS_CTL " --vol-toggle", false },
+    { KEY_F5,  CMD_SYS_CTL " --stop",       false },
+    { KEY_F6,  CMD_SYS_CTL " --previous",   false },
+    { KEY_F7,  CMD_SYS_CTL " --toggle",     false },
+    { KEY_F8,  CMD_SYS_CTL " --next",       false },
+    { KEY_F9,  CMD_KEYHOLDER " --hold",     false },
+    { KEY_F10, CMD_KEYHOLDER " --spam",     false },
+    { KEY_F12, CMD_CALCULATOR,              false },
 };
 
 static void emit_kbd_ev(SysInputState *st, uint16_t type, uint16_t code, int32_t value) {
@@ -118,12 +123,8 @@ static bool handle_gm320_special_key(SysInputState *st, uint16_t code, int32_t v
         if (value == 1) {
             st->gaming_mode = !st->gaming_mode;
             release_desktop_modifiers(st);
-            if (st->ops.notify) {
-                if (st->gaming_mode) {
-                    st->ops.notify(st->ctx, "Gaming Mode", "Mouse buttons: Mouse4 / Mouse5 / F15", "input-gaming");
-                } else {
-                    st->ops.notify(st->ctx, "Desktop Mode", "Mouse modifiers & chords active", "input-mouse");
-                }
+            if (st->ops.notify_toggle) {
+                st->ops.notify_toggle(st->ctx, "gaming", st->gaming_mode);
             }
         }
         return true;
@@ -297,28 +298,23 @@ static bool handle_keyboard_key(SysInputState *st, DeviceKind kind, uint16_t cod
             if (st->ops.set_casue_scroll_led) {
                 st->ops.set_casue_scroll_led(st->ctx, st->fn_lock);
             }
-            if (st->ops.notify) {
-                st->ops.notify(
-                    st->ctx,
-                    st->fn_lock ? "Fn-Lock ON" : "Fn-Lock OFF",
-                    st->fn_lock ? "CASUE F1-F8: Media & Music controls" : "CASUE F1-F8: Standard F-keys",
-                    "input-keyboard"
-                );
+            if (st->ops.notify_toggle) {
+                st->ops.notify_toggle(st->ctx, "fnlock", st->fn_lock);
             }
         }
         return true;
     }
 
-    /* External CASUE USB KB: F1-F8 media row when Fn-Lock is active & unmodified */
-    if (kind == DEV_KBD_CASUE && code >= KEY_F1 && code <= KEY_F8) {
-        uint16_t bit = (uint16_t)(1u << (code - KEY_F1));
-        bool any_mod = st->shift_l || st->shift_r || st->ctrl_held || st->alt_held || st->meta_held;
+    /* External CASUE USB KB: F1-F10/F12 media & tool row when Fn-Lock is active & unmodified */
+    if (kind == DEV_KBD_CASUE) {
         const KeyCmdRule *rule = find_rule(
             CASUE_FN_LOCK_RULES,
             sizeof(CASUE_FN_LOCK_RULES) / sizeof(CASUE_FN_LOCK_RULES[0]),
             code
         );
         if (rule) {
+            uint16_t bit = (uint16_t)(1u << (size_t)(rule - CASUE_FN_LOCK_RULES));
+            bool any_mod = st->shift_l || st->shift_r || st->ctrl_held || st->alt_held || st->meta_held;
             if (value == 1 && st->fn_lock && !any_mod) {
                 st->swallowed_fn_mask |= bit;
                 trigger_cmd(st, rule->cmd);

@@ -129,12 +129,14 @@ typedef struct {
     cairo_t *cr;
     int width;
     int height;
+    int alloc_width;
+    int alloc_height;
     int x;
     int y;
     gboolean visible;
     gint percent;
     gboolean is_muted;
-    char type[32];      /* "volume" or "brightness" */
+    char type[32];      /* "volume", "brightness", "touchpad", "gaming", "fnlock" */
     char label[64];
     guint timer_id;
 } OSDState;
@@ -1135,6 +1137,89 @@ static gboolean osd_hide_callback(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+static gboolean is_toggle_osd_type(const char *type) {
+    if (!type) return FALSE;
+    return (strcmp(type, "touchpad") == 0 ||
+            strcmp(type, "gaming") == 0 ||
+            strcmp(type, "fnlock") == 0);
+}
+
+static void render_toggle_osd(cairo_t *cr, int w, int h) {
+    gboolean active = (osd.percent > 0);
+    const char *icon_glyph = "󰟀";
+    const char *title = "Touchpad";
+    double on_r = COLOR_GREEN_R, on_g = COLOR_GREEN_G, on_b = COLOR_GREEN_B;
+    double off_r = COLOR_RED_R, off_g = COLOR_RED_G, off_b = COLOR_RED_B;
+
+    if (strcmp(osd.type, "gaming") == 0) {
+        icon_glyph = "󰊴";
+        title = "Game Mode";
+        off_r = COLOR_BLUE_R; off_g = COLOR_BLUE_G; off_b = COLOR_BLUE_B;
+    } else if (strcmp(osd.type, "fnlock") == 0) {
+        icon_glyph = "󰌌";
+        title = "Fn-Lock";
+        off_r = COLOR_PEACH_R; off_g = COLOR_PEACH_G; off_b = COLOR_PEACH_B;
+    }
+
+    double acc_r = active ? on_r : off_r;
+    double acc_g = active ? on_g : off_g;
+    double acc_b = active ? on_b : off_b;
+
+    /* Sleek compact pill body */
+    draw_rounded_rect(cr, 1.0, 1.0, w - 2.0, h - 2.0, h / 2.0);
+    cairo_set_source_rgba(cr, COLOR_MANTLE_R, COLOR_MANTLE_G, COLOR_MANTLE_B, COLOR_MANTLE_A);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgba(cr, acc_r, acc_g, acc_b, 0.55);
+    cairo_set_line_width(cr, 1.5);
+    cairo_stroke(cr);
+
+    /* Icon */
+    PangoLayout *layout_icon = pango_cairo_create_layout(cr);
+    pango_layout_set_font_description(layout_icon, f_osd_icon);
+    pango_layout_set_text(layout_icon, icon_glyph, -1);
+    int iw = 0, ih = 0;
+    pango_layout_get_pixel_size(layout_icon, &iw, &ih);
+    cairo_set_source_rgb(cr, acc_r, acc_g, acc_b);
+    cairo_move_to(cr, 14.0, (h - ih) / 2.0);
+    pango_cairo_show_layout(cr, layout_icon);
+    g_object_unref(layout_icon);
+
+    /* Mode label */
+    PangoLayout *layout_lbl = pango_cairo_create_layout(cr);
+    pango_layout_set_font_description(layout_lbl, f_osd_pct);
+    pango_layout_set_text(layout_lbl, title, -1);
+    int lw = 0, lh = 0;
+    pango_layout_get_pixel_size(layout_lbl, &lw, &lh);
+    cairo_set_source_rgb(cr, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+    cairo_move_to(cr, 40.0, (h - lh) / 2.0);
+    pango_cairo_show_layout(cr, layout_lbl);
+    g_object_unref(layout_lbl);
+
+    /* Compact ON / OFF highlight chip on the right */
+    const char *state_str = active ? "ON" : "OFF";
+    int chip_w = active ? 32 : 36;
+    int chip_h = 20;
+    int chip_x = w - chip_w - 10;
+    int chip_y = (h - chip_h) / 2;
+
+    draw_rounded_rect(cr, chip_x, chip_y, chip_w, chip_h, chip_h / 2.0);
+    cairo_set_source_rgba(cr, acc_r, acc_g, acc_b, 0.20);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgba(cr, acc_r, acc_g, acc_b, 0.55);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    PangoLayout *layout_st = pango_cairo_create_layout(cr);
+    pango_layout_set_font_description(layout_st, f_group);
+    pango_layout_set_text(layout_st, state_str, -1);
+    int sw = 0, sh = 0;
+    pango_layout_get_pixel_size(layout_st, &sw, &sh);
+    cairo_set_source_rgb(cr, acc_r, acc_g, acc_b);
+    cairo_move_to(cr, chip_x + (chip_w - sw) / 2.0, chip_y + (chip_h - sh) / 2.0);
+    pango_cairo_show_layout(cr, layout_st);
+    g_object_unref(layout_st);
+}
+
 static void render_osd() {
     if (!osd.win || !osd.cr) return;
 
@@ -1149,6 +1234,17 @@ static void render_osd() {
     cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
     cairo_paint(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+
+    if (is_toggle_osd_type(osd.type)) {
+        render_toggle_osd(cr, w, h);
+        cairo_pop_group_to_source(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+        cairo_paint(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+        cairo_surface_flush(osd.surface);
+        XFlush(dpy);
+        return;
+    }
 
     /* Draw pill body */
     draw_rounded_rect(cr, 1.0, 1.0, w - 2.0, h - 2.0, h / 2.0);
@@ -1340,14 +1436,16 @@ static void show_osd(const char *type, int percent, gboolean is_muted, const cha
     int screen_w = DisplayWidth(dpy, screen);
     int screen_h = DisplayHeight(dpy, screen);
 
-    osd.width = 300;
-    osd.height = 46;
-    osd.x = (screen_w - osd.width) / 2;
-    osd.y = screen_h - 110;
-    osd.percent = percent;
-    osd.is_muted = is_muted;
     strncpy(osd.type, type ? type : "volume", sizeof(osd.type) - 1);
     osd.type[sizeof(osd.type) - 1] = '\0';
+
+    gboolean is_toggle = is_toggle_osd_type(osd.type);
+    osd.width = is_toggle ? 186 : 300;
+    osd.height = is_toggle ? 38 : 46;
+    osd.x = (screen_w - osd.width) / 2;
+    osd.y = is_toggle ? (screen_h - 102) : (screen_h - 110);
+    osd.percent = percent;
+    osd.is_muted = is_muted;
     if (label) {
         strncpy(osd.label, label, sizeof(osd.label) - 1);
         osd.label[sizeof(osd.label) - 1] = '\0';
@@ -1378,8 +1476,17 @@ static void show_osd(const char *type, int percent, gboolean is_muted, const cha
 
         osd.surface = cairo_xlib_surface_create(dpy, osd.win, visual, osd.width, osd.height);
         osd.cr = cairo_create(osd.surface);
+        osd.alloc_width = osd.width;
+        osd.alloc_height = osd.height;
     } else {
-        XMoveWindow(dpy, osd.win, osd.x, osd.y);
+        if (osd.alloc_width != osd.width || osd.alloc_height != osd.height) {
+            XMoveResizeWindow(dpy, osd.win, osd.x, osd.y, osd.width, osd.height);
+            cairo_xlib_surface_set_size(osd.surface, osd.width, osd.height);
+            osd.alloc_width = osd.width;
+            osd.alloc_height = osd.height;
+        } else {
+            XMoveWindow(dpy, osd.win, osd.x, osd.y);
+        }
     }
 
     render_osd();
@@ -1392,11 +1499,11 @@ static void show_osd(const char *type, int percent, gboolean is_muted, const cha
         osd.visible = TRUE;
     }
 
-    /* Reset / start auto-hide timer (1.2s) */
+    /* Reset / start auto-hide timer */
     if (osd.timer_id > 0) {
         g_source_remove(osd.timer_id);
     }
-    osd.timer_id = g_timeout_add(1200, osd_hide_callback, NULL);
+    osd.timer_id = g_timeout_add(is_toggle ? 950 : 1200, osd_hide_callback, NULL);
 }
 
 /* -------------------------------------------------------------
@@ -3607,6 +3714,12 @@ static void handle_method_call(GDBusConnection *conn,
                 } else if (g_str_has_prefix(tag, "ctouch") || g_str_has_prefix(tag, "touchpad")) {
                     is_osd = TRUE;
                     osd_type = "touchpad";
+                } else if (g_str_has_prefix(tag, "cgaming") || g_str_has_prefix(tag, "gaming")) {
+                    is_osd = TRUE;
+                    osd_type = "gaming";
+                } else if (g_str_has_prefix(tag, "cfnlock") || g_str_has_prefix(tag, "fnlock")) {
+                    is_osd = TRUE;
+                    osd_type = "fnlock";
                 }
                 g_variant_unref(tag_v);
             }
@@ -3629,6 +3742,14 @@ static void handle_method_call(GDBusConnection *conn,
                        g_ascii_strncasecmp(summary, "touchpad", 8) == 0) {
                 is_osd = TRUE;
                 osd_type = "touchpad";
+            } else if ((app_name && g_ascii_strcasecmp(app_name, "gaming") == 0) ||
+                       g_ascii_strncasecmp(summary, "gaming", 6) == 0) {
+                is_osd = TRUE;
+                osd_type = "gaming";
+            } else if ((app_name && g_ascii_strcasecmp(app_name, "fnlock") == 0) ||
+                       g_ascii_strncasecmp(summary, "fnlock", 6) == 0) {
+                is_osd = TRUE;
+                osd_type = "fnlock";
             }
         }
 
@@ -3663,7 +3784,7 @@ static void handle_method_call(GDBusConnection *conn,
             if (strstr(summary, "Muted") || strstr(body, "Muted")) {
                 is_muted = TRUE;
             }
-            if (strcmp(osd_type, "touchpad") == 0) {
+            if (is_toggle_osd_type(osd_type)) {
                 if (strcasestr(summary, "disabled") || strcasestr(summary, "off") ||
                     strcasestr(body, "disabled") || strcasestr(body, "off")) {
                     osd_val = 0;
@@ -3883,6 +4004,8 @@ int main(int argc, char *argv[]) {
             const char *stack_tag = "cvolum";
             if (strcmp(type, "brightness") == 0) stack_tag = "cbright";
             else if (strcmp(type, "touchpad") == 0) stack_tag = "ctouch";
+            else if (strcmp(type, "gaming") == 0) stack_tag = "cgaming";
+            else if (strcmp(type, "fnlock") == 0) stack_tag = "cfnlock";
             g_variant_builder_add(&hints_builder, "{sv}", "x-dunst-stack-tag", g_variant_new_string(stack_tag));
 
             char cap_type[32];
@@ -3890,8 +4013,8 @@ int main(int argc, char *argv[]) {
             if (cap_type[0] >= 'a' && cap_type[0] <= 'z') cap_type[0] -= 32;
 
             char summary[64];
-            if (strcmp(type, "touchpad") == 0) {
-                snprintf(summary, sizeof(summary), "Touchpad: %s", (val > 0) ? "ON" : "OFF");
+            if (is_toggle_osd_type(type)) {
+                snprintf(summary, sizeof(summary), "%s: %s", cap_type, (val > 0) ? "ON" : "OFF");
             } else if (strcmp(extra, "muted") == 0) {
                 snprintf(summary, sizeof(summary), "%s: Muted", cap_type);
             } else {

@@ -22,7 +22,8 @@ typedef struct {
     int scroll_led_calls;
     char cmds[32][128];
     size_t cmd_len;
-    char last_notify_title[64];
+    char last_toggle_kind[32];
+    bool last_toggle_active;
     size_t notify_len;
 } TestHarness;
 
@@ -72,11 +73,10 @@ static void on_run_cmd(void *ctx, const char *cmd) {
     snprintf(h->cmds[h->cmd_len++], 128, "%s", cmd);
 }
 
-static void on_notify(void *ctx, const char *title, const char *body, const char *icon) {
-    (void)body;
-    (void)icon;
+static void on_notify_toggle(void *ctx, const char *kind, bool active) {
     TestHarness *h = ctx;
-    snprintf(h->last_notify_title, 64, "%s", title);
+    snprintf(h->last_toggle_kind, 32, "%s", kind);
+    h->last_toggle_active = active;
     h->notify_len++;
 }
 
@@ -89,7 +89,7 @@ static SysInputOps test_ops(void) {
         .schedule_ptr_tap_release = on_schedule_tap_release,
         .set_casue_scroll_led = on_set_scroll_led,
         .run_cmd = on_run_cmd,
-        .notify = on_notify,
+        .notify_toggle = on_notify_toggle,
     };
 }
 
@@ -170,7 +170,7 @@ static void test_gm320_desktop_and_gaming_mode(void) {
     send_ev(&st, DEV_MOUSE_GM320, EV_KEY, KEY_CALC, 1);
     send_ev(&st, DEV_MOUSE_GM320, EV_KEY, KEY_CALC, 0);
     assert(st.gaming_mode == true);
-    assert(h.notify_len == 1 && strcmp(h.last_notify_title, "Gaming Mode") == 0);
+    assert(h.notify_len == 1 && strcmp(h.last_toggle_kind, "gaming") == 0 && h.last_toggle_active == true);
 
     /* In Gaming Mode, Backward & Forward pass straight through as BTN_SIDE / BTN_EXTRA */
     reset_harness(&h);
@@ -220,7 +220,7 @@ static void test_casue_fn_lock_and_shift_f1(void) {
     assert(h.scroll_led == true && h.scroll_led_calls == 1);
     assert(h.kbd_len == 0);
 
-    /* F1..F8 under Fn-Lock */
+    /* F1..F10, F11 normal, F12 calc under Fn-Lock */
     reset_harness(&h);
     send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F1, 1);
     send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F1, 0);
@@ -230,14 +230,23 @@ static void test_casue_fn_lock_and_shift_f1(void) {
     send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F5, 1);
     send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F5, 2); /* repeat ignored for stop */
     send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F5, 0);
-    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F9, 1); /* F9 stays normal */
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F9, 1);
     send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F9, 0);
-    assert(h.cmd_len == 4);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F10, 1);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F10, 0);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F11, 1); /* F11 stays normal */
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F11, 0);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F12, 1);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_F12, 0);
+    assert(h.cmd_len == 7);
     assert(strstr(h.cmds[0], "LyricViewLauncher") != NULL);
     assert(strstr(h.cmds[1], "sys-control --vol-dec") != NULL);
     assert(strstr(h.cmds[2], "sys-control --vol-dec") != NULL);
     assert(strstr(h.cmds[3], "sys-control --stop") != NULL);
-    assert(h.kbd_len == 4 && h.kbd[0].code == KEY_F9);
+    assert(strstr(h.cmds[4], "KeyHolder --hold") != NULL);
+    assert(strstr(h.cmds[5], "KeyHolder --spam") != NULL);
+    assert(strstr(h.cmds[6], "/calc") != NULL);
+    assert(h.kbd_len == 4 && h.kbd[0].code == KEY_F11);
 
     /* Alt + F4 still passes Alt+F4 cleanly even when Fn-Lock is ON */
     reset_harness(&h);
