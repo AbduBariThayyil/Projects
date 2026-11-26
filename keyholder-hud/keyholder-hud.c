@@ -22,6 +22,7 @@
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/Xrandr.h>
 #include <X11/extensions/shape.h>
 #include <cairo/cairo-xlib.h>
 #include <cairo/cairo.h>
@@ -61,6 +62,11 @@ static GMainLoop *loop = NULL;
 
 static int cur_w = 210;
 static int cur_h = HUD_HEIGHT;
+static int cur_x = 0;
+static int cur_y = HUD_TOP_Y;
+static bool has_xrandr = false;
+static int rr_event_base = 0;
+static int rr_error_base = 0;
 static bool is_visible = false;
 static bool pulse_bright = true;
 static guint hide_timer_id = 0;
@@ -227,14 +233,92 @@ static int compute_target_width(void) {
     return iw < HUD_MIN_W ? HUD_MIN_W : (iw > HUD_MAX_W ? HUD_MAX_W : iw);
 }
 
+static void get_active_monitor_rect(int *out_x, int *out_y, int *out_w, int *out_h) {
+    int mx = 0, my = 0;
+    int mw = DisplayWidth(dpy, screen);
+    int mh = DisplayHeight(dpy, screen);
+
+    XWindowAttributes wa;
+    if (dpy && root != None && XGetWindowAttributes(dpy, root, &wa) && wa.width > 0 && wa.height > 0) {
+        mw = wa.width;
+        mh = wa.height;
+    }
+
+    if (has_xrandr && dpy && root != None) {
+        int px = 0, py = 0, wx = 0, wy = 0;
+        unsigned int mask = 0;
+        Window rr = None, cw = None;
+        bool have_ptr = XQueryPointer(dpy, root, &rr, &cw, &px, &py, &wx, &wy, &mask) != 0;
+
+        int nmon = 0;
+        XRRMonitorInfo *mons = XRRGetMonitors(dpy, root, True, &nmon);
+        if (mons && nmon > 0) {
+            int chosen = -1;
+            if (have_ptr) {
+                for (int i = 0; i < nmon; i++) {
+                    if (mons[i].width > 0 && mons[i].height > 0 &&
+                        px >= mons[i].x && px < mons[i].x + mons[i].width &&
+                        py >= mons[i].y && py < mons[i].y + mons[i].height) {
+                        chosen = i;
+                        break;
+                    }
+                }
+            }
+            if (chosen < 0) {
+                for (int i = 0; i < nmon; i++) {
+                    if (mons[i].primary && mons[i].width > 0 && mons[i].height > 0) {
+                        chosen = i;
+                        break;
+                    }
+                }
+            }
+            if (chosen < 0) {
+                for (int i = 0; i < nmon; i++) {
+                    if (mons[i].width > 0 && mons[i].height > 0) {
+                        chosen = i;
+                        break;
+                    }
+                }
+            }
+            if (chosen >= 0) {
+                mx = mons[chosen].x;
+                my = mons[chosen].y;
+                mw = mons[chosen].width;
+                mh = mons[chosen].height;
+            }
+            XRRFreeMonitors(mons);
+        }
+    }
+
+    if (mw < 320) mw = 320;
+    if (mh < 200) mh = 200;
+    *out_x = mx;
+    *out_y = my;
+    *out_w = mw;
+    *out_h = mh;
+}
+
 static void sync_window_geometry(int target_w) {
     if (!dpy || win == None) return;
-    if (target_w == cur_w) return;
-    cur_w = target_w;
-    int screen_w = DisplayWidth(dpy, screen);
-    int x = (screen_w - cur_w) / 2;
-    XMoveResizeWindow(dpy, win, x, HUD_TOP_Y, (unsigned)cur_w, (unsigned)cur_h);
-    cairo_xlib_surface_set_size(surface, cur_w, cur_h);
+    int mx = 0, my = 0, mw = 0, mh = 0;
+    get_active_monitor_rect(&mx, &my, &mw, &mh);
+    if (target_w > mw - 20) target_w = mw - 20;
+    if (target_w < 120) target_w = 120;
+
+    int top_y = my + ((mh < 540) ? 46 : HUD_TOP_Y);
+    int x = mx + (mw - target_w) / 2;
+
+    if (target_w != cur_w) {
+        cur_w = target_w;
+        cur_x = x;
+        cur_y = top_y;
+        XMoveResizeWindow(dpy, win, cur_x, cur_y, (unsigned)cur_w, (unsigned)cur_h);
+        cairo_xlib_surface_set_size(surface, cur_w, cur_h);
+    } else if (x != cur_x || top_y != cur_y) {
+        cur_x = x;
+        cur_y = top_y;
+        XMoveWindow(dpy, win, cur_x, cur_y);
+    }
 }
 
 static void render_hud(void) {
@@ -524,7 +608,12 @@ static gboolean x11_event_cb(GIOChannel *source, GIOCondition cond, gpointer dat
     while (XPending(dpy)) {
         XEvent ev;
         XNextEvent(dpy, &ev);
-        if (ev.type == Expose && is_visible) render_hud();
+        if (has_xrandr && ev.type == rr_event_base + RRScreenChangeNotify) {
+            XRRUpdateConfiguration(&ev);
+            if (is_visible) render_hud();
+        } else if (ev.type == Expose && is_visible) {
+            render_hud();
+        }
     }
     return G_SOURCE_CONTINUE;
 }
@@ -569,6 +658,10 @@ static void init_window(void) {
 
     screen = DefaultScreen(dpy);
     root = RootWindow(dpy, screen);
+    has_xrandr = XRRQueryExtension(dpy, &rr_event_base, &rr_error_base) != 0;
+    if (has_xrandr) {
+        XRRSelectInput(dpy, root, RRScreenChangeNotifyMask);
+    }
 
     XVisualInfo vinfo;
     if (!XMatchVisualInfo(dpy, screen, 32, TrueColor, &vinfo)) {
@@ -581,8 +674,10 @@ static void init_window(void) {
         colormap = XCreateColormap(dpy, root, visual, AllocNone);
     }
 
-    int screen_w = DisplayWidth(dpy, screen);
-    int x = (screen_w - cur_w) / 2;
+    int mx = 0, my = 0, mw = 0, mh = 0;
+    get_active_monitor_rect(&mx, &my, &mw, &mh);
+    cur_x = mx + (mw - cur_w) / 2;
+    cur_y = my + ((mh < 540) ? 46 : HUD_TOP_Y);
 
     XSetWindowAttributes attrs = {
         .override_redirect = True,
@@ -593,7 +688,7 @@ static void init_window(void) {
     };
 
     win = XCreateWindow(
-        dpy, root, x, HUD_TOP_Y, (unsigned)cur_w, (unsigned)cur_h, 0,
+        dpy, root, cur_x, cur_y, (unsigned)cur_w, (unsigned)cur_h, 0,
         depth, InputOutput, visual,
         CWOverrideRedirect | CWColormap | CWBorderPixel | CWBackPixmap | CWEventMask,
         &attrs

@@ -1,6 +1,6 @@
 CC ?= gcc
-CFLAGS ?= -O2 -Wall -Wextra `pkg-config --cflags gio-2.0 gdk-pixbuf-2.0 x11 cairo pangocairo`
-LIBS = `pkg-config --libs gio-2.0 gdk-pixbuf-2.0 x11 cairo pangocairo` -lm
+CFLAGS ?= -O2 -Wall -Wextra `pkg-config --cflags gio-2.0 gdk-pixbuf-2.0 x11 xrandr cairo pangocairo`
+LIBS = `pkg-config --libs gio-2.0 gdk-pixbuf-2.0 x11 xrandr cairo pangocairo` -lm
 
 TARGET = sys-notif
 PREFIX ?= /home/vibecoder/.local

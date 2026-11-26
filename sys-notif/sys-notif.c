@@ -27,6 +27,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/Xrandr.h>
 #include <cairo/cairo.h>
 #include <cairo/cairo-xlib.h>
 #include <pango/pangocairo.h>
@@ -121,6 +122,81 @@ static int depth = 0;
 static GDBusConnection *dbus_conn = NULL;
 static guint next_id = 1;
 static gint64 last_sound_time = 0;
+static gboolean has_xrandr = FALSE;
+static int rr_event_base = 0;
+static int rr_error_base = 0;
+
+static void get_active_monitor_rect(int *out_x, int *out_y, int *out_w, int *out_h) {
+    int mx = 0, my = 0;
+    int mw = DisplayWidth(dpy, screen);
+    int mh = DisplayHeight(dpy, screen);
+
+    XWindowAttributes wa;
+    if (dpy && root != None && XGetWindowAttributes(dpy, root, &wa) && wa.width > 0 && wa.height > 0) {
+        mw = wa.width;
+        mh = wa.height;
+    }
+
+    if (has_xrandr && dpy && root != None) {
+        int px = 0, py = 0, wx = 0, wy = 0;
+        unsigned int mask = 0;
+        Window rr = None, cw = None;
+        gboolean have_ptr = XQueryPointer(dpy, root, &rr, &cw, &px, &py, &wx, &wy, &mask) != 0;
+
+        int nmon = 0;
+        XRRMonitorInfo *mons = XRRGetMonitors(dpy, root, True, &nmon);
+        if (mons && nmon > 0) {
+            int chosen = -1;
+            if (have_ptr) {
+                for (int i = 0; i < nmon; i++) {
+                    if (mons[i].width > 0 && mons[i].height > 0 &&
+                        px >= mons[i].x && px < mons[i].x + mons[i].width &&
+                        py >= mons[i].y && py < mons[i].y + mons[i].height) {
+                        chosen = i;
+                        break;
+                    }
+                }
+            }
+            if (chosen < 0) {
+                for (int i = 0; i < nmon; i++) {
+                    if (mons[i].primary && mons[i].width > 0 && mons[i].height > 0) {
+                        chosen = i;
+                        break;
+                    }
+                }
+            }
+            if (chosen < 0) {
+                for (int i = 0; i < nmon; i++) {
+                    if (mons[i].width > 0 && mons[i].height > 0) {
+                        chosen = i;
+                        break;
+                    }
+                }
+            }
+            if (chosen >= 0) {
+                mx = mons[chosen].x;
+                my = mons[chosen].y;
+                mw = mons[chosen].width;
+                mh = mons[chosen].height;
+            }
+            XRRFreeMonitors(mons);
+        }
+    }
+
+    if (mw < 320) mw = 320;
+    if (mh < 200) mh = 200;
+    *out_x = mx;
+    *out_y = my;
+    *out_w = mw;
+    *out_h = mh;
+}
+
+static int clamp_dim(int val, int lo, int hi) {
+    if (hi < lo) return hi;
+    if (val < lo) return lo;
+    if (val > hi) return hi;
+    return val;
+}
 
 /* OSD State */
 typedef struct {
@@ -1293,6 +1369,8 @@ static void render_osd() {
     PangoLayout *layout_icon = pango_cairo_create_layout(cr);
     pango_layout_set_font_description(layout_icon, f_osd_icon);
     pango_layout_set_text(layout_icon, icon_glyph, -1);
+    int icon_w = 0, icon_h = 0;
+    pango_layout_get_pixel_size(layout_icon, &icon_w, &icon_h);
 
     if (strcmp(osd.type, "touchpad") == 0) {
         if (osd.percent > 0) {
@@ -1307,7 +1385,7 @@ static void render_osd() {
     } else {
         cairo_set_source_rgb(cr, COLOR_BLUE_R, COLOR_BLUE_G, COLOR_BLUE_B);
     }
-    cairo_move_to(cr, 16, 12);
+    cairo_move_to(cr, 16, (h - icon_h) / 2.0);
     pango_cairo_show_layout(cr, layout_icon);
     g_object_unref(layout_icon);
 
@@ -1432,18 +1510,32 @@ static void render_osd() {
     XFlush(dpy);
 }
 
-static void show_osd(const char *type, int percent, gboolean is_muted, const char *label) {
-    int screen_w = DisplayWidth(dpy, screen);
-    int screen_h = DisplayHeight(dpy, screen);
+static void compute_osd_geometry(gboolean is_toggle, int *out_x, int *out_y, int *out_w, int *out_h) {
+    int mx = 0, my = 0, mw = 0, mh = 0;
+    get_active_monitor_rect(&mx, &my, &mw, &mh);
 
+    int w = is_toggle
+        ? clamp_dim((int)(mw * 0.20), 166, 186)
+        : clamp_dim((int)(mw * 0.26), 210, 300);
+    if (w > mw - 20) w = mw - 20;
+
+    int h = is_toggle
+        ? ((mh < 540) ? 34 : 38)
+        : ((mh < 540) ? 40 : 46);
+
+    int mb = clamp_dim((int)(mh * (is_toggle ? 0.13 : 0.14)), 34, is_toggle ? 102 : 110);
+    *out_w = w;
+    *out_h = h;
+    *out_x = mx + (mw - w) / 2;
+    *out_y = my + mh - h - mb;
+}
+
+static void show_osd(const char *type, int percent, gboolean is_muted, const char *label) {
     strncpy(osd.type, type ? type : "volume", sizeof(osd.type) - 1);
     osd.type[sizeof(osd.type) - 1] = '\0';
 
     gboolean is_toggle = is_toggle_osd_type(osd.type);
-    osd.width = is_toggle ? 186 : 300;
-    osd.height = is_toggle ? 38 : 46;
-    osd.x = (screen_w - osd.width) / 2;
-    osd.y = is_toggle ? (screen_h - 102) : (screen_h - 110);
+    compute_osd_geometry(is_toggle, &osd.x, &osd.y, &osd.width, &osd.height);
     osd.percent = percent;
     osd.is_muted = is_muted;
     if (label) {
@@ -1506,24 +1598,47 @@ static void show_osd(const char *type, int percent, gboolean is_muted, const cha
     osd.timer_id = g_timeout_add(is_toggle ? 950 : 1200, osd_hide_callback, NULL);
 }
 
+static void reposition_osd_if_visible(void) {
+    if (!osd.visible || !osd.win) return;
+    gboolean is_toggle = is_toggle_osd_type(osd.type);
+    compute_osd_geometry(is_toggle, &osd.x, &osd.y, &osd.width, &osd.height);
+    if (osd.alloc_width != osd.width || osd.alloc_height != osd.height) {
+        XMoveResizeWindow(dpy, osd.win, osd.x, osd.y, osd.width, osd.height);
+        cairo_xlib_surface_set_size(osd.surface, osd.width, osd.height);
+        osd.alloc_width = osd.width;
+        osd.alloc_height = osd.height;
+    } else {
+        XMoveWindow(dpy, osd.win, osd.x, osd.y);
+    }
+    render_osd();
+}
+
 /* -------------------------------------------------------------
  * Notification Window Functions (App / System Alerts)
  * ------------------------------------------------------------- */
 static void reposition_notifications() {
-    int screen_w = DisplayWidth(dpy, screen);
-    int normal_y = 45;  /* Below Polybar, right edge */
-    int battery_y = 45; /* Below Polybar, screen top middle */
+    int mx = 0, my = 0, mw = 0, mh = 0;
+    get_active_monitor_rect(&mx, &my, &mw, &mh);
+    int top_pad = (mh < 540) ? 44 : 45;
+    int edge_pad = clamp_dim((int)(mw * 0.015), 10, 16);
+    int normal_y = my + top_pad;
+    int battery_y = my + top_pad;
     NotificationItem *cur = notif_list;
 
     while (cur) {
         if (cur->is_battery_alert) {
-            cur->x = (screen_w - cur->width) / 2;
+            cur->x = mx + (mw - cur->width) / 2;
             cur->y = battery_y;
-            battery_y += cur->height + 10;
+            battery_y += cur->height + 8;
         } else {
-            cur->x = screen_w - cur->width - 16;
+            cur->x = mx + mw - cur->width - edge_pad;
+            if (cur->x < mx + 8) cur->x = mx + 8;
+            if (normal_y + cur->height > my + mh - 8 && normal_y > my + top_pad) {
+                normal_y = my + mh - cur->height - 8;
+                if (normal_y < my + top_pad) normal_y = my + top_pad;
+            }
             cur->y = normal_y;
-            normal_y += cur->height + 10;
+            normal_y += cur->height + 8;
         }
         XMoveWindow(dpy, cur->win, cur->x, cur->y);
         cur = cur->next;
@@ -3378,12 +3493,17 @@ static guint show_notification(const char *app_name, const char *summary, const 
     }
 
     const char *display_title = (chat_grp && strlen(chat_grp) > 0) ? chat_grp : clean_summary;
-    int w = 380;
+    int mx = 0, my = 0, mw = 0, mh = 0;
+    get_active_monitor_rect(&mx, &my, &mw, &mh);
+    int w = clamp_dim((int)(mw * 0.29), 250, 380);
+    if (w > mw - 20) w = mw - 20;
     int h = calculate_notification_height(display_title, init_messages, init_msgs, init_total, init_reel_text, w);
+    if (h > mh - 64) h = mh - 64;
+    if (h < 72) h = 72;
 
-    int screen_w = DisplayWidth(dpy, screen);
-    int x = is_bat ? ((screen_w - w) / 2) : (screen_w - w - 16);
-    int y = 45;
+    int edge_pad = clamp_dim((int)(mw * 0.015), 10, 16);
+    int x = is_bat ? (mx + (mw - w) / 2) : (mx + mw - w - edge_pad);
+    int y = my + ((mh < 540) ? 44 : 45);
 
     /* Burst queue throttling: ensure at most MAX_VISIBLE_NOTIFS cards exist simultaneously */
     prune_oldest_notif_if_needed();
@@ -3884,6 +4004,10 @@ static gboolean x11_event_handler(GIOChannel *source, GIOCondition condition, gp
                 }
                 cur = cur->next;
             }
+        } else if (has_xrandr && ev.type == rr_event_base + RRScreenChangeNotify) {
+            XRRUpdateConfiguration(&ev);
+            reposition_osd_if_visible();
+            reposition_notifications();
         } else if (ev.type == Expose) {
             /* Only redraw on the final expose event in a batch to eliminate redundant draws */
             if (ev.xexpose.count == 0) {
@@ -4048,6 +4172,10 @@ int main(int argc, char *argv[]) {
     }
     screen = DefaultScreen(dpy);
     root = RootWindow(dpy, screen);
+    has_xrandr = XRRQueryExtension(dpy, &rr_event_base, &rr_error_base);
+    if (has_xrandr) {
+        XRRSelectInput(dpy, root, RRScreenChangeNotifyMask);
+    }
 
     init_visual();
     init_fonts();

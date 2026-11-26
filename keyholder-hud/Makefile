@@ -1,6 +1,6 @@
 CC ?= gcc
-CFLAGS ?= -O2 -Wall -Wextra -Wpedantic `pkg-config --cflags cairo pangocairo x11 xext glib-2.0`
-LDFLAGS ?= `pkg-config --libs cairo pangocairo x11 xext glib-2.0`
+CFLAGS ?= -O2 -Wall -Wextra -Wpedantic `pkg-config --cflags cairo pangocairo x11 xext xrandr glib-2.0`
+LDFLAGS ?= `pkg-config --libs cairo pangocairo x11 xext xrandr glib-2.0`
 C_PLAIN ?= -O2 -Wall -Wextra -Wpedantic
 
 HUD_BIN = keyholder-hud
