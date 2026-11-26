@@ -3,12 +3,10 @@
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&amp;family=Quicksand:wght@600;700&amp;display=swap');
       text { font-family: 'Fredoka One', 'Quicksand', 'Nunito', 'Segoe UI', Arial, sans-serif; }
-      .title { font-size: 24px; font-weight: bold; fill: #1E293B; text-anchor: middle; }
+      .title { font-size: 26px; font-weight: bold; fill: #1E293B; text-anchor: middle; }
       .subtitle { font-size: 14px; font-weight: 600; fill: #475569; text-anchor: middle; }
       .cut-guide { stroke: #94A3B8; stroke-width: 1.8; stroke-dasharray: 6, 5; fill: none; }
       .cut-text { font-size: 11px; fill: #64748B; font-weight: bold; }
-      .seat-guide { stroke: #94A3B8; stroke-width: 1.5; stroke-dasharray: 5, 4; fill: rgba(255,255,255,0.85); }
-      .seat-text { font-size: 11px; fill: #64748B; font-weight: bold; text-anchor: middle; }
     </style>
   </defs>
   <!-- Background -->
@@ -16,513 +14,426 @@
   
   <!-- Header Bar -->
   <rect x="25" y="15" width="750" height="75" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
-  <text x="400.0" y="45" class="title">Option 2: 8 Small People</text>
-  <text x="400.0" y="72" class="subtitle">✂ Cut along dashed boxes. Glue 2 people into each of the 4 cars! (8 ÷ 4 = 2)</text>
+  <text x="400.0" y="45" class="title">Option 2: 8 Small Passengers</text>
+  <text x="400.0" y="72" class="subtitle">✂ Cut along dashed boxes. Glue 2 passengers inside each car! (8 ÷ 4 = 2)</text>
 
-        <!-- Kid #1: Leo Cutout Cell -->
+        <!-- Passenger #1: Leo Cutout Box -->
         <rect x="35" y="110" width="170" height="475" rx="12" class="cut-guide" />
         <g transform="translate(47, 128)">
       <text x="0" y="0" class="cut-text">✂ #1: Leo</text>
     </g>
         
         <!-- Name Badge -->
-        <rect x="70" y="142" width="100" height="24" rx="12" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
-        <text x="120.0" y="158" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Leo</text>
+        <rect x="70" y="145" width="100" height="26" rx="13" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
+        <text x="120.0" y="163" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">Leo</text>
         
-        <!-- KID ILLUSTRATION -->
-        <g transform="translate(120.0, 200)">
-          <!-- Waving Left Arm -->
-          <path d="M -24 95 Q -45 65 -40 45" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="-40" cy="45" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+        <!-- PASSENGER ILLUSTRATION (Waist-up passenger - sits in car seat!) -->
+        <g transform="translate(120.0, 230)">
+          <!-- Waving Hand -->
+          <path d="M -22 80 Q -38 55 -34 40" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="40" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Right Arm By Side -->
-          <path d="M 24 95 Q 40 120 35 135" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="35" cy="135" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <path d="M 22 80 Q 36 95 32 110" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="32" cy="110" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
 
-          <!-- Legs & Shoes -->
-          <rect x="-18" y="150" width="14" height="75" rx="5" fill="#3B82F6" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="-11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
-          <rect x="4" y="150" width="14" height="75" rx="5" fill="#3B82F6" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
+          <!-- Shirt / Torso -->
+          <path d="M -24 75 L 24 75 L 22 135 L -22 135 Z" fill="#F97316" stroke="#334155" stroke-width="2.5" />
+          <rect x="-8" y="60" width="16" height="18" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Torso / Shirt -->
-          <path d="M -26 90 L 26 90 L 22 155 L -22 155 Z" fill="#F97316" stroke="#334155" stroke-width="2.5" />
-          <rect x="-8" y="70" width="16" height="22" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          
-          <circle cx="0" cy="115" r="4" fill="#FFFFFF" />
-          <circle cx="0" cy="132" r="4" fill="#FFFFFF" />
-
           <!-- Head -->
-          <circle cx="0" cy="50" r="32" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
+          <circle cx="0" cy="45" r="28" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
           
           <!-- Ears -->
-          <circle cx="-32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          <circle cx="32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="-28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
           <!-- Cheerful Eyes -->
-          <circle cx="-11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="-9.5" cy="46" r="1.5" fill="#FFFFFF" />
-          <circle cx="12.5" cy="46" r="1.5" fill="#FFFFFF" />
+          <circle cx="-10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="-8.5" cy="42" r="1.2" fill="#FFFFFF" />
+          <circle cx="11.5" cy="42" r="1.2" fill="#FFFFFF" />
           
           <!-- Blush -->
-          <ellipse cx="-18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
-          <ellipse cx="18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
+          <ellipse cx="-16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
+          <ellipse cx="16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
           
           <!-- Smile -->
-          <path d="M -9 60 Q 0 70 9 60" fill="none" stroke="#1E293B" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M -8 54 Q 0 63 8 54" fill="none" stroke="#1E293B" stroke-width="2.2" stroke-linecap="round" />
           
           
-            <path d="M -32 45 Q -25 15 0 15 Q 25 15 32 45 C 20 28 0 26 -32 45 Z" fill="#4A2810" stroke="#334155" stroke-width="2.5" />
+            <path d="M -30 45 Q -25 15 0 15 Q 25 15 30 45 C 20 28 0 26 -30 45 Z" fill="#4A2810" stroke="#334155" stroke-width="2.5" />
             <polygon points="-5,15 0,6 5,15" fill="#4A2810" stroke="#334155" stroke-width="2" />
             
         </g>
         
-        <text x="120.0" y="567" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #1</text>
+        <text x="120.0" y="563" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #1</text>
         
 
-        <!-- Kid #2: Mia Cutout Cell -->
+        <!-- Passenger #2: Mia Cutout Box -->
         <rect x="220" y="110" width="170" height="475" rx="12" class="cut-guide" />
         <g transform="translate(232, 128)">
       <text x="0" y="0" class="cut-text">✂ #2: Mia</text>
     </g>
         
         <!-- Name Badge -->
-        <rect x="255" y="142" width="100" height="24" rx="12" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
-        <text x="305.0" y="158" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Mia</text>
+        <rect x="255" y="145" width="100" height="26" rx="13" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
+        <text x="305.0" y="163" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">Mia</text>
         
-        <!-- KID ILLUSTRATION -->
-        <g transform="translate(305.0, 200)">
-          <!-- Waving Left Arm -->
-          <path d="M -24 95 Q -45 65 -40 45" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="-40" cy="45" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+        <!-- PASSENGER ILLUSTRATION (Waist-up passenger - sits in car seat!) -->
+        <g transform="translate(305.0, 230)">
+          <!-- Waving Hand -->
+          <path d="M -22 80 Q -38 55 -34 40" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="40" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Right Arm By Side -->
-          <path d="M 24 95 Q 40 120 35 135" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="35" cy="135" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <path d="M 22 80 Q 36 95 32 110" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="32" cy="110" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
 
-          <!-- Legs & Shoes -->
-          <rect x="-18" y="150" width="14" height="75" rx="5" fill="#8B5CF6" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="-11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
-          <rect x="4" y="150" width="14" height="75" rx="5" fill="#8B5CF6" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
+          <!-- Shirt / Torso -->
+          <path d="M -24 75 L 24 75 L 22 135 L -22 135 Z" fill="#EC4899" stroke="#334155" stroke-width="2.5" />
+          <rect x="-8" y="60" width="16" height="18" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Torso / Shirt -->
-          <path d="M -26 90 L 26 90 L 22 155 L -22 155 Z" fill="#EC4899" stroke="#334155" stroke-width="2.5" />
-          <rect x="-8" y="70" width="16" height="22" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          
-          <circle cx="0" cy="115" r="4" fill="#FFFFFF" />
-          <circle cx="0" cy="132" r="4" fill="#FFFFFF" />
-
           <!-- Head -->
-          <circle cx="0" cy="50" r="32" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
+          <circle cx="0" cy="45" r="28" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
           
           <!-- Ears -->
-          <circle cx="-32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          <circle cx="32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="-28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
           <!-- Cheerful Eyes -->
-          <circle cx="-11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="-9.5" cy="46" r="1.5" fill="#FFFFFF" />
-          <circle cx="12.5" cy="46" r="1.5" fill="#FFFFFF" />
+          <circle cx="-10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="-8.5" cy="42" r="1.2" fill="#FFFFFF" />
+          <circle cx="11.5" cy="42" r="1.2" fill="#FFFFFF" />
           
           <!-- Blush -->
-          <ellipse cx="-18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
-          <ellipse cx="18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
+          <ellipse cx="-16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
+          <ellipse cx="16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
           
           <!-- Smile -->
-          <path d="M -9 60 Q 0 70 9 60" fill="none" stroke="#1E293B" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M -8 54 Q 0 63 8 54" fill="none" stroke="#1E293B" stroke-width="2.2" stroke-linecap="round" />
           
           
-            <path d="M -32 45 Q -25 18 0 18 Q 25 18 32 45 C 20 30 0 28 -32 45 Z" fill="#FBBF24" stroke="#334155" stroke-width="2.5" />
-            <circle cx="-38" cy="40" r="14" fill="#FBBF24" stroke="#334155" stroke-width="2" />
-            <circle cx="38" cy="40" r="14" fill="#FBBF24" stroke="#334155" stroke-width="2" />
-            <circle cx="-30" cy="40" r="4" fill="#EC4899" />
-            <circle cx="30" cy="40" r="4" fill="#EC4899" />
+            <path d="M -30 45 Q -25 18 0 18 Q 25 18 30 45 C 20 30 0 28 -30 45 Z" fill="#FBBF24" stroke="#334155" stroke-width="2.5" />
+            <circle cx="-36" cy="40" r="12" fill="#FBBF24" stroke="#334155" stroke-width="2" />
+            <circle cx="36" cy="40" r="12" fill="#FBBF24" stroke="#334155" stroke-width="2" />
             
         </g>
         
-        <text x="305.0" y="567" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #2</text>
+        <text x="305.0" y="563" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #2</text>
         
 
-        <!-- Kid #3: Sam Cutout Cell -->
+        <!-- Passenger #3: Sam Cutout Box -->
         <rect x="405" y="110" width="170" height="475" rx="12" class="cut-guide" />
         <g transform="translate(417, 128)">
       <text x="0" y="0" class="cut-text">✂ #3: Sam</text>
     </g>
         
         <!-- Name Badge -->
-        <rect x="440" y="142" width="100" height="24" rx="12" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
-        <text x="490.0" y="158" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Sam</text>
+        <rect x="440" y="145" width="100" height="26" rx="13" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
+        <text x="490.0" y="163" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">Sam</text>
         
-        <!-- KID ILLUSTRATION -->
-        <g transform="translate(490.0, 200)">
-          <!-- Waving Left Arm -->
-          <path d="M -24 95 Q -45 65 -40 45" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="-40" cy="45" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+        <!-- PASSENGER ILLUSTRATION (Waist-up passenger - sits in car seat!) -->
+        <g transform="translate(490.0, 230)">
+          <!-- Waving Hand -->
+          <path d="M -22 80 Q -38 55 -34 40" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="40" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Right Arm By Side -->
-          <path d="M 24 95 Q 40 120 35 135" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="35" cy="135" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <path d="M 22 80 Q 36 95 32 110" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="32" cy="110" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
 
-          <!-- Legs & Shoes -->
-          <rect x="-18" y="150" width="14" height="75" rx="5" fill="#1E293B" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="-11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
-          <rect x="4" y="150" width="14" height="75" rx="5" fill="#1E293B" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
+          <!-- Shirt / Torso -->
+          <path d="M -24 75 L 24 75 L 22 135 L -22 135 Z" fill="#10B981" stroke="#334155" stroke-width="2.5" />
+          <rect x="-8" y="60" width="16" height="18" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Torso / Shirt -->
-          <path d="M -26 90 L 26 90 L 22 155 L -22 155 Z" fill="#10B981" stroke="#334155" stroke-width="2.5" />
-          <rect x="-8" y="70" width="16" height="22" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          
-          <circle cx="0" cy="115" r="4" fill="#FFFFFF" />
-          <circle cx="0" cy="132" r="4" fill="#FFFFFF" />
-
           <!-- Head -->
-          <circle cx="0" cy="50" r="32" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
+          <circle cx="0" cy="45" r="28" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
           
           <!-- Ears -->
-          <circle cx="-32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          <circle cx="32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="-28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
           <!-- Cheerful Eyes -->
-          <circle cx="-11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="-9.5" cy="46" r="1.5" fill="#FFFFFF" />
-          <circle cx="12.5" cy="46" r="1.5" fill="#FFFFFF" />
+          <circle cx="-10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="-8.5" cy="42" r="1.2" fill="#FFFFFF" />
+          <circle cx="11.5" cy="42" r="1.2" fill="#FFFFFF" />
           
           <!-- Blush -->
-          <ellipse cx="-18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
-          <ellipse cx="18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
+          <ellipse cx="-16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
+          <ellipse cx="16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
           
           <!-- Smile -->
-          <path d="M -9 60 Q 0 70 9 60" fill="none" stroke="#1E293B" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M -8 54 Q 0 63 8 54" fill="none" stroke="#1E293B" stroke-width="2.2" stroke-linecap="round" />
           
           
-            <circle cx="-20" cy="24" r="14" fill="#1F2937" stroke="#334155" stroke-width="2" />
-            <circle cx="0" cy="18" r="15" fill="#1F2937" stroke="#334155" stroke-width="2" />
-            <circle cx="20" cy="24" r="14" fill="#1F2937" stroke="#334155" stroke-width="2" />
-            <circle cx="-30" cy="38" r="12" fill="#1F2937" stroke="#334155" stroke-width="2" />
-            <circle cx="30" cy="38" r="12" fill="#1F2937" stroke="#334155" stroke-width="2" />
+            <circle cx="-18" cy="24" r="12" fill="#1F2937" stroke="#334155" stroke-width="2" />
+            <circle cx="0" cy="18" r="14" fill="#1F2937" stroke="#334155" stroke-width="2" />
+            <circle cx="18" cy="24" r="12" fill="#1F2937" stroke="#334155" stroke-width="2" />
             
         </g>
         
-        <text x="490.0" y="567" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #3</text>
+        <text x="490.0" y="563" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #3</text>
         
 
-        <!-- Kid #4: Zoe Cutout Cell -->
+        <!-- Passenger #4: Zoe Cutout Box -->
         <rect x="590" y="110" width="170" height="475" rx="12" class="cut-guide" />
         <g transform="translate(602, 128)">
       <text x="0" y="0" class="cut-text">✂ #4: Zoe</text>
     </g>
         
         <!-- Name Badge -->
-        <rect x="625" y="142" width="100" height="24" rx="12" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
-        <text x="675.0" y="158" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Zoe</text>
+        <rect x="625" y="145" width="100" height="26" rx="13" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
+        <text x="675.0" y="163" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">Zoe</text>
         
-        <!-- KID ILLUSTRATION -->
-        <g transform="translate(675.0, 200)">
-          <!-- Waving Left Arm -->
-          <path d="M -24 95 Q -45 65 -40 45" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="-40" cy="45" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+        <!-- PASSENGER ILLUSTRATION (Waist-up passenger - sits in car seat!) -->
+        <g transform="translate(675.0, 230)">
+          <!-- Waving Hand -->
+          <path d="M -22 80 Q -38 55 -34 40" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="40" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Right Arm By Side -->
-          <path d="M 24 95 Q 40 120 35 135" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="35" cy="135" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <path d="M 22 80 Q 36 95 32 110" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="32" cy="110" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
 
-          <!-- Legs & Shoes -->
-          <rect x="-18" y="150" width="14" height="75" rx="5" fill="#06B6D4" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="-11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
-          <rect x="4" y="150" width="14" height="75" rx="5" fill="#06B6D4" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
+          <!-- Shirt / Torso -->
+          <path d="M -24 75 L 24 75 L 22 135 L -22 135 Z" fill="#F59E0B" stroke="#334155" stroke-width="2.5" />
+          <rect x="-8" y="60" width="16" height="18" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Torso / Shirt -->
-          <path d="M -26 90 L 26 90 L 22 155 L -22 155 Z" fill="#F59E0B" stroke="#334155" stroke-width="2.5" />
-          <rect x="-8" y="70" width="16" height="22" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          
-          <circle cx="0" cy="115" r="4" fill="#FFFFFF" />
-          <circle cx="0" cy="132" r="4" fill="#FFFFFF" />
-
           <!-- Head -->
-          <circle cx="0" cy="50" r="32" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
+          <circle cx="0" cy="45" r="28" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
           
           <!-- Ears -->
-          <circle cx="-32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          <circle cx="32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="-28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
           <!-- Cheerful Eyes -->
-          <circle cx="-11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="-9.5" cy="46" r="1.5" fill="#FFFFFF" />
-          <circle cx="12.5" cy="46" r="1.5" fill="#FFFFFF" />
+          <circle cx="-10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="-8.5" cy="42" r="1.2" fill="#FFFFFF" />
+          <circle cx="11.5" cy="42" r="1.2" fill="#FFFFFF" />
           
           <!-- Blush -->
-          <ellipse cx="-18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
-          <ellipse cx="18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
+          <ellipse cx="-16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
+          <ellipse cx="16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
           
           <!-- Smile -->
-          <path d="M -9 60 Q 0 70 9 60" fill="none" stroke="#1E293B" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M -8 54 Q 0 63 8 54" fill="none" stroke="#1E293B" stroke-width="2.2" stroke-linecap="round" />
           
           
-            <path d="M -33 50 Q -25 18 0 18 Q 25 18 33 50 C 20 32 0 30 -33 50 Z" fill="#6B21A8" stroke="#334155" stroke-width="2.5" />
-            <path d="M -31 46 Q 0 25 31 46" fill="none" stroke="#EC4899" stroke-width="5" />
-            <circle cx="-24" cy="38" r="6" fill="#FBBF24" />
+            <path d="M -30 50 Q -25 18 0 18 Q 25 18 30 50 C 20 32 0 30 -30 50 Z" fill="#6B21A8" stroke="#334155" stroke-width="2.5" />
+            <path d="M -28 46 Q 0 25 28 46" fill="none" stroke="#EC4899" stroke-width="5" />
             
         </g>
         
-        <text x="675.0" y="567" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #4</text>
+        <text x="675.0" y="563" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #4</text>
         
 
-        <!-- Kid #5: Max Cutout Cell -->
+        <!-- Passenger #5: Max Cutout Box -->
         <rect x="35" y="615" width="170" height="475" rx="12" class="cut-guide" />
         <g transform="translate(47, 633)">
       <text x="0" y="0" class="cut-text">✂ #5: Max</text>
     </g>
         
         <!-- Name Badge -->
-        <rect x="70" y="647" width="100" height="24" rx="12" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
-        <text x="120.0" y="663" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Max</text>
+        <rect x="70" y="650" width="100" height="26" rx="13" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
+        <text x="120.0" y="668" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">Max</text>
         
-        <!-- KID ILLUSTRATION -->
-        <g transform="translate(120.0, 705)">
-          <!-- Waving Left Arm -->
-          <path d="M -24 95 Q -45 65 -40 45" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="-40" cy="45" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+        <!-- PASSENGER ILLUSTRATION (Waist-up passenger - sits in car seat!) -->
+        <g transform="translate(120.0, 735)">
+          <!-- Waving Hand -->
+          <path d="M -22 80 Q -38 55 -34 40" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="40" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Right Arm By Side -->
-          <path d="M 24 95 Q 40 120 35 135" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="35" cy="135" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <path d="M 22 80 Q 36 95 32 110" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="32" cy="110" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
 
-          <!-- Legs & Shoes -->
-          <rect x="-18" y="150" width="14" height="75" rx="5" fill="#3B82F6" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="-11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
-          <rect x="4" y="150" width="14" height="75" rx="5" fill="#3B82F6" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
+          <!-- Shirt / Torso -->
+          <path d="M -24 75 L 24 75 L 22 135 L -22 135 Z" fill="#EF4444" stroke="#334155" stroke-width="2.5" />
+          <rect x="-8" y="60" width="16" height="18" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Torso / Shirt -->
-          <path d="M -26 90 L 26 90 L 22 155 L -22 155 Z" fill="#EF4444" stroke="#334155" stroke-width="2.5" />
-          <rect x="-8" y="70" width="16" height="22" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          
-          <circle cx="0" cy="115" r="4" fill="#FFFFFF" />
-          <circle cx="0" cy="132" r="4" fill="#FFFFFF" />
-
           <!-- Head -->
-          <circle cx="0" cy="50" r="32" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
+          <circle cx="0" cy="45" r="28" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
           
           <!-- Ears -->
-          <circle cx="-32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          <circle cx="32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="-28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
           <!-- Cheerful Eyes -->
-          <circle cx="-11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="-9.5" cy="46" r="1.5" fill="#FFFFFF" />
-          <circle cx="12.5" cy="46" r="1.5" fill="#FFFFFF" />
+          <circle cx="-10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="-8.5" cy="42" r="1.2" fill="#FFFFFF" />
+          <circle cx="11.5" cy="42" r="1.2" fill="#FFFFFF" />
           
           <!-- Blush -->
-          <ellipse cx="-18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
-          <ellipse cx="18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
+          <ellipse cx="-16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
+          <ellipse cx="16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
           
           <!-- Smile -->
-          <path d="M -9 60 Q 0 70 9 60" fill="none" stroke="#1E293B" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M -8 54 Q 0 63 8 54" fill="none" stroke="#1E293B" stroke-width="2.2" stroke-linecap="round" />
           
           
-            <path d="M -30 42 Q 0 10 30 42 Z" fill="#EF4444" stroke="#334155" stroke-width="2.5" />
-            <path d="M -5 38 L 42 34 L 38 45 L -2 46 Z" fill="#DC2626" stroke="#334155" stroke-width="2" />
-            <circle cx="0" cy="22" r="3" fill="#FFFFFF" />
+            <path d="M -28 42 Q 0 10 28 42 Z" fill="#EF4444" stroke="#334155" stroke-width="2.5" />
+            <path d="M -5 38 L 38 34 L 34 45 L -2 46 Z" fill="#DC2626" stroke="#334155" stroke-width="2" />
             
         </g>
         
-        <text x="120.0" y="1072" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #5</text>
+        <text x="120.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #5</text>
         
 
-        <!-- Kid #6: Ava Cutout Cell -->
+        <!-- Passenger #6: Ava Cutout Box -->
         <rect x="220" y="615" width="170" height="475" rx="12" class="cut-guide" />
         <g transform="translate(232, 633)">
       <text x="0" y="0" class="cut-text">✂ #6: Ava</text>
     </g>
         
         <!-- Name Badge -->
-        <rect x="255" y="647" width="100" height="24" rx="12" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
-        <text x="305.0" y="663" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Ava</text>
+        <rect x="255" y="650" width="100" height="26" rx="13" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
+        <text x="305.0" y="668" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">Ava</text>
         
-        <!-- KID ILLUSTRATION -->
-        <g transform="translate(305.0, 705)">
-          <!-- Waving Left Arm -->
-          <path d="M -24 95 Q -45 65 -40 45" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="-40" cy="45" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+        <!-- PASSENGER ILLUSTRATION (Waist-up passenger - sits in car seat!) -->
+        <g transform="translate(305.0, 735)">
+          <!-- Waving Hand -->
+          <path d="M -22 80 Q -38 55 -34 40" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="40" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Right Arm By Side -->
-          <path d="M 24 95 Q 40 120 35 135" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="35" cy="135" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <path d="M 22 80 Q 36 95 32 110" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="32" cy="110" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
 
-          <!-- Legs & Shoes -->
-          <rect x="-18" y="150" width="14" height="75" rx="5" fill="#10B981" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="-11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
-          <rect x="4" y="150" width="14" height="75" rx="5" fill="#10B981" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
+          <!-- Shirt / Torso -->
+          <path d="M -24 75 L 24 75 L 22 135 L -22 135 Z" fill="#8B5CF6" stroke="#334155" stroke-width="2.5" />
+          <rect x="-8" y="60" width="16" height="18" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Torso / Shirt -->
-          <path d="M -26 90 L 26 90 L 22 155 L -22 155 Z" fill="#8B5CF6" stroke="#334155" stroke-width="2.5" />
-          <rect x="-8" y="70" width="16" height="22" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          
-          <circle cx="0" cy="115" r="4" fill="#FFFFFF" />
-          <circle cx="0" cy="132" r="4" fill="#FFFFFF" />
-
           <!-- Head -->
-          <circle cx="0" cy="50" r="32" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
+          <circle cx="0" cy="45" r="28" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
           
           <!-- Ears -->
-          <circle cx="-32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          <circle cx="32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="-28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
           <!-- Cheerful Eyes -->
-          <circle cx="-11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="-9.5" cy="46" r="1.5" fill="#FFFFFF" />
-          <circle cx="12.5" cy="46" r="1.5" fill="#FFFFFF" />
+          <circle cx="-10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="-8.5" cy="42" r="1.2" fill="#FFFFFF" />
+          <circle cx="11.5" cy="42" r="1.2" fill="#FFFFFF" />
           
           <!-- Blush -->
-          <ellipse cx="-18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
-          <ellipse cx="18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
+          <ellipse cx="-16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
+          <ellipse cx="16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
           
           <!-- Smile -->
-          <path d="M -9 60 Q 0 70 9 60" fill="none" stroke="#1E293B" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M -8 54 Q 0 63 8 54" fill="none" stroke="#1E293B" stroke-width="2.2" stroke-linecap="round" />
           
           
-            <path d="M -32 46 Q 0 22 32 46 C 20 32 0 32 -32 46 Z" fill="#1E293B" stroke="#334155" stroke-width="2.5" />
-            <circle cx="-22" cy="14" r="12" fill="#1E293B" stroke="#334155" stroke-width="2" />
-            <circle cx="22" cy="14" r="12" fill="#1E293B" stroke="#334155" stroke-width="2" />
+            <path d="M -30 46 Q 0 22 30 46 C 20 32 0 32 -30 46 Z" fill="#1E293B" stroke="#334155" stroke-width="2.5" />
+            <circle cx="-20" cy="14" r="11" fill="#1E293B" stroke="#334155" stroke-width="2" />
+            <circle cx="20" cy="14" r="11" fill="#1E293B" stroke="#334155" stroke-width="2" />
             
         </g>
         
-        <text x="305.0" y="1072" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #6</text>
+        <text x="305.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #6</text>
         
 
-        <!-- Kid #7: Ben Cutout Cell -->
+        <!-- Passenger #7: Ben Cutout Box -->
         <rect x="405" y="615" width="170" height="475" rx="12" class="cut-guide" />
         <g transform="translate(417, 633)">
       <text x="0" y="0" class="cut-text">✂ #7: Ben</text>
     </g>
         
         <!-- Name Badge -->
-        <rect x="440" y="647" width="100" height="24" rx="12" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
-        <text x="490.0" y="663" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Ben</text>
+        <rect x="440" y="650" width="100" height="26" rx="13" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
+        <text x="490.0" y="668" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">Ben</text>
         
-        <!-- KID ILLUSTRATION -->
-        <g transform="translate(490.0, 705)">
-          <!-- Waving Left Arm -->
-          <path d="M -24 95 Q -45 65 -40 45" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="-40" cy="45" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+        <!-- PASSENGER ILLUSTRATION (Waist-up passenger - sits in car seat!) -->
+        <g transform="translate(490.0, 735)">
+          <!-- Waving Hand -->
+          <path d="M -22 80 Q -38 55 -34 40" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="40" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Right Arm By Side -->
-          <path d="M 24 95 Q 40 120 35 135" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="35" cy="135" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <path d="M 22 80 Q 36 95 32 110" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="32" cy="110" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
 
-          <!-- Legs & Shoes -->
-          <rect x="-18" y="150" width="14" height="75" rx="5" fill="#F97316" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="-11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
-          <rect x="4" y="150" width="14" height="75" rx="5" fill="#F97316" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
+          <!-- Shirt / Torso -->
+          <path d="M -24 75 L 24 75 L 22 135 L -22 135 Z" fill="#06B6D4" stroke="#334155" stroke-width="2.5" />
+          <rect x="-8" y="60" width="16" height="18" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Torso / Shirt -->
-          <path d="M -26 90 L 26 90 L 22 155 L -22 155 Z" fill="#06B6D4" stroke="#334155" stroke-width="2.5" />
-          <rect x="-8" y="70" width="16" height="22" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          
-          <circle cx="0" cy="115" r="4" fill="#FFFFFF" />
-          <circle cx="0" cy="132" r="4" fill="#FFFFFF" />
-
           <!-- Head -->
-          <circle cx="0" cy="50" r="32" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
+          <circle cx="0" cy="45" r="28" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
           
           <!-- Ears -->
-          <circle cx="-32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          <circle cx="32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="-28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
           <!-- Cheerful Eyes -->
-          <circle cx="-11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="-9.5" cy="46" r="1.5" fill="#FFFFFF" />
-          <circle cx="12.5" cy="46" r="1.5" fill="#FFFFFF" />
+          <circle cx="-10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="-8.5" cy="42" r="1.2" fill="#FFFFFF" />
+          <circle cx="11.5" cy="42" r="1.2" fill="#FFFFFF" />
           
           <!-- Blush -->
-          <ellipse cx="-18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
-          <ellipse cx="18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
+          <ellipse cx="-16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
+          <ellipse cx="16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
           
           <!-- Smile -->
-          <path d="M -9 60 Q 0 70 9 60" fill="none" stroke="#1E293B" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M -8 54 Q 0 63 8 54" fill="none" stroke="#1E293B" stroke-width="2.2" stroke-linecap="round" />
           
           
-            <path d="M -32 45 Q -20 18 0 18 Q 20 18 32 45 C 15 28 0 28 -32 45 Z" fill="#92400E" stroke="#334155" stroke-width="2.5" />
-            <rect x="-21" y="40" width="18" height="15" rx="3" fill="none" stroke="#3B82F6" stroke-width="2.5" />
-            <rect x="3" y="40" width="18" height="15" rx="3" fill="none" stroke="#3B82F6" stroke-width="2.5" />
-            <line x1="-3" y1="47" x2="3" y2="47" stroke="#3B82F6" stroke-width="2.5" />
+            <path d="M -30 45 Q -20 18 0 18 Q 20 18 30 45 C 15 28 0 28 -30 45 Z" fill="#92400E" stroke="#334155" stroke-width="2.5" />
+            <rect x="-20" y="40" width="16" height="14" rx="3" fill="none" stroke="#3B82F6" stroke-width="2.5" />
+            <rect x="4" y="40" width="16" height="14" rx="3" fill="none" stroke="#3B82F6" stroke-width="2.5" />
+            <line x1="-4" y1="47" x2="4" y2="47" stroke="#3B82F6" stroke-width="2.5" />
             
         </g>
         
-        <text x="490.0" y="1072" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #7</text>
+        <text x="490.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #7</text>
         
 
-        <!-- Kid #8: Lily Cutout Cell -->
+        <!-- Passenger #8: Lily Cutout Box -->
         <rect x="590" y="615" width="170" height="475" rx="12" class="cut-guide" />
         <g transform="translate(602, 633)">
       <text x="0" y="0" class="cut-text">✂ #8: Lily</text>
     </g>
         
         <!-- Name Badge -->
-        <rect x="625" y="647" width="100" height="24" rx="12" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
-        <text x="675.0" y="663" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Lily</text>
+        <rect x="625" y="650" width="100" height="26" rx="13" fill="#F1F5F9" stroke="#334155" stroke-width="1.5" />
+        <text x="675.0" y="668" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">Lily</text>
         
-        <!-- KID ILLUSTRATION -->
-        <g transform="translate(675.0, 705)">
-          <!-- Waving Left Arm -->
-          <path d="M -24 95 Q -45 65 -40 45" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="-40" cy="45" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+        <!-- PASSENGER ILLUSTRATION (Waist-up passenger - sits in car seat!) -->
+        <g transform="translate(675.0, 735)">
+          <!-- Waving Hand -->
+          <path d="M -22 80 Q -38 55 -34 40" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="-34" cy="40" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Right Arm By Side -->
-          <path d="M 24 95 Q 40 120 35 135" stroke="#334155" stroke-width="10" stroke-linecap="round" fill="none" />
-          <circle cx="35" cy="135" r="7" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <path d="M 22 80 Q 36 95 32 110" stroke="#334155" stroke-width="9" stroke-linecap="round" fill="none" />
+          <circle cx="32" cy="110" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
 
-          <!-- Legs & Shoes -->
-          <rect x="-18" y="150" width="14" height="75" rx="5" fill="#EAB308" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="-11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
-          <rect x="4" y="150" width="14" height="75" rx="5" fill="#EAB308" stroke="#334155" stroke-width="2.5" />
-          <ellipse cx="11" cy="225" rx="12" ry="7" fill="#1E293B" stroke="#334155" stroke-width="2" />
+          <!-- Shirt / Torso -->
+          <path d="M -24 75 L 24 75 L 22 135 L -22 135 Z" fill="#F43F5E" stroke="#334155" stroke-width="2.5" />
+          <rect x="-8" y="60" width="16" height="18" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
-          <!-- Torso / Shirt -->
-          <path d="M -26 90 L 26 90 L 22 155 L -22 155 Z" fill="#F43F5E" stroke="#334155" stroke-width="2.5" />
-          <rect x="-8" y="70" width="16" height="22" rx="4" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          
-          <circle cx="0" cy="115" r="4" fill="#FFFFFF" />
-          <circle cx="0" cy="132" r="4" fill="#FFFFFF" />
-
           <!-- Head -->
-          <circle cx="0" cy="50" r="32" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
+          <circle cx="0" cy="45" r="28" fill="#FFDFC4" stroke="#334155" stroke-width="2.5" />
           
           <!-- Ears -->
-          <circle cx="-32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
-          <circle cx="32" cy="52" r="6" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="-28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
+          <circle cx="28" cy="46" r="5" fill="#FFDFC4" stroke="#334155" stroke-width="2" />
           
           <!-- Cheerful Eyes -->
-          <circle cx="-11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="11" cy="48" r="4" fill="#1E293B" />
-          <circle cx="-9.5" cy="46" r="1.5" fill="#FFFFFF" />
-          <circle cx="12.5" cy="46" r="1.5" fill="#FFFFFF" />
+          <circle cx="-10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="10" cy="44" r="3.5" fill="#1E293B" />
+          <circle cx="-8.5" cy="42" r="1.2" fill="#FFFFFF" />
+          <circle cx="11.5" cy="42" r="1.2" fill="#FFFFFF" />
           
           <!-- Blush -->
-          <ellipse cx="-18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
-          <ellipse cx="18" cy="56" rx="5" ry="3" fill="#FFB4A2" />
+          <ellipse cx="-16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
+          <ellipse cx="16" cy="50" rx="4" ry="2.5" fill="#FFB4A2" />
           
           <!-- Smile -->
-          <path d="M -9 60 Q 0 70 9 60" fill="none" stroke="#1E293B" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M -8 54 Q 0 63 8 54" fill="none" stroke="#1E293B" stroke-width="2.2" stroke-linecap="round" />
           
           
-            <path d="M -32 46 Q -25 18 0 18 Q 25 18 32 46 C 20 30 0 28 -32 46 Z" fill="#C2410C" stroke="#334155" stroke-width="2.5" />
-            <path d="M 25 35 Q 46 25 45 60 Q 35 50 25 45 Z" fill="#C2410C" stroke="#334155" stroke-width="2" />
-            <circle cx="26" cy="38" r="4" fill="#3B82F6" />
+            <path d="M -30 46 Q -25 18 0 18 Q 25 18 30 46 C 20 30 0 28 -30 46 Z" fill="#C2410C" stroke="#334155" stroke-width="2.5" />
+            <path d="M 24 35 Q 42 25 40 55 Q 32 46 24 42 Z" fill="#C2410C" stroke="#334155" stroke-width="2" />
             
         </g>
         
-        <text x="675.0" y="1072" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #8</text>
+        <text x="675.0" y="1068" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Passenger #8</text>
         </svg>

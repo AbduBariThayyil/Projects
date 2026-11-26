@@ -3,12 +3,10 @@
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&amp;family=Quicksand:wght@600;700&amp;display=swap');
       text { font-family: 'Fredoka One', 'Quicksand', 'Nunito', 'Segoe UI', Arial, sans-serif; }
-      .title { font-size: 24px; font-weight: bold; fill: #1E293B; text-anchor: middle; }
+      .title { font-size: 26px; font-weight: bold; fill: #1E293B; text-anchor: middle; }
       .subtitle { font-size: 14px; font-weight: 600; fill: #475569; text-anchor: middle; }
       .cut-guide { stroke: #94A3B8; stroke-width: 1.8; stroke-dasharray: 6, 5; fill: none; }
       .cut-text { font-size: 11px; fill: #64748B; font-weight: bold; }
-      .seat-guide { stroke: #94A3B8; stroke-width: 1.5; stroke-dasharray: 5, 4; fill: rgba(255,255,255,0.85); }
-      .seat-text { font-size: 11px; fill: #64748B; font-weight: bold; text-anchor: middle; }
     </style>
   </defs>
   <!-- Background -->
@@ -17,7 +15,7 @@
   <!-- Header Bar -->
   <rect x="25" y="15" width="750" height="75" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
   <text x="400.0" y="45" class="title">Option 2: 4 Empty Cars</text>
-  <text x="400.0" y="72" class="subtitle">✂ Cut along dashed cards. Glue 2 passengers in each car! (8 ÷ 4 = 2)</text>
+  <text x="400.0" y="72" class="subtitle">✂ Cut along dashed boxes. Glue 2 passengers inside each car! (8 ÷ 4 = 2)</text>
 
         <!-- Car #1 Cutout Card -->
         <rect x="40" y="110" width="345" height="470" rx="14" class="cut-guide" />
@@ -31,21 +29,21 @@
         
         <!-- CAR DRAWING -->
         <g transform="translate(60, 200)">
-          <!-- Car Cabin / Roof Top -->
-          <path d="M 45 140 Q 60 40 120 35 L 205 35 Q 260 40 270 140 Z" fill="#E63946" stroke="#1E293B" stroke-width="3" />
+          <!-- Car Cabin Roof -->
+          <path d="M 40 140 Q 55 35 115 30 L 210 30 Q 265 35 275 140 Z" fill="#E63946" stroke="#1E293B" stroke-width="3" />
           
-          <!-- Large Windows / Passenger Area with Designated Cut/Paste Targets -->
-          <rect x="68" y="48" width="80" height="82" rx="10" fill="#F1FAEE" stroke="#1E293B" stroke-width="2" />
-          <rect x="162" y="48" width="80" height="82" rx="10" fill="#F1FAEE" stroke="#1E293B" stroke-width="2" />
+          <!-- Large Clear Passenger Windows (Spacious 90x88px windows for people cutouts!) -->
+          <rect x="58" y="42" width="92" height="92" rx="10" fill="#F1FAEE" stroke="#1E293B" stroke-width="2" />
+          <rect x="162" y="42" width="92" height="92" rx="10" fill="#F1FAEE" stroke="#1E293B" stroke-width="2" />
           
-          <!-- Seat 1 and Seat 2 dotted targets -->
-          <rect x="74" y="54" width="68" height="70" rx="6" class="seat-guide" />
-          <text x="108" y="88" class="seat-text">Person 1</text>
-          <text x="108" y="104" font-size="10" fill="#64748B" font-weight="bold" text-anchor="middle">Glue here</text>
+          <!-- Seat 1 and Seat 2 targets -->
+          <rect x="65" y="48" width="78" height="80" rx="8" fill="rgba(255,255,255,0.7)" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="104" y="85" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Person 1</text>
+          <text x="104" y="102" font-size="10" fill="#94A3B8" text-anchor="middle">Glue here</text>
           
-          <rect x="168" y="54" width="68" height="70" rx="6" class="seat-guide" />
-          <text x="202" y="88" class="seat-text">Person 2</text>
-          <text x="202" y="104" font-size="10" fill="#64748B" font-weight="bold" text-anchor="middle">Glue here</text>
+          <rect x="169" y="48" width="78" height="80" rx="8" fill="rgba(255,255,255,0.7)" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="208" y="85" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Person 2</text>
+          <text x="208" y="102" font-size="10" fill="#94A3B8" text-anchor="middle">Glue here</text>
 
           <!-- Main Lower Car Body -->
           <rect x="10" y="130" width="285" height="75" rx="20" fill="#E63946" stroke="#1E293B" stroke-width="3" />
@@ -54,12 +52,15 @@
           <circle cx="288" cy="155" r="12" fill="#FFD166" stroke="#1E293B" stroke-width="2" />
           <circle cx="17" cy="155" r="10" fill="#EF476F" stroke="#1E293B" stroke-width="2" />
           
-          <!-- Door line and handles -->
-          <line x1="152" y1="130" x2="152" y2="195" stroke="#1E293B" stroke-width="2.5" />
-          <rect x="130" y="145" width="16" height="5" rx="2" fill="#1E293B" />
-          <rect x="160" y="145" width="16" height="5" rx="2" fill="#1E293B" />
+          <!-- Door Line & Handles -->
+          <line x1="156" y1="130" x2="156" y2="195" stroke="#1E293B" stroke-width="2.5" />
+          <rect x="134" y="145" width="16" height="5" rx="2" fill="#1E293B" />
+          <rect x="164" y="145" width="16" height="5" rx="2" fill="#1E293B" />
           
-          <!-- Wheels & Hubcaps -->
+          <!-- Smiling Bumper -->
+          <rect x="280" y="172" width="20" height="15" rx="4" fill="#CBD5E1" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Wheels -->
           <circle cx="65" cy="205" r="32" fill="#2B2D42" stroke="#1E293B" stroke-width="3" />
           <circle cx="65" cy="205" r="18" fill="#E5E7EB" stroke="#1E293B" stroke-width="2" />
           <circle cx="65" cy="205" r="6" fill="#1E293B" />
@@ -86,21 +87,21 @@
         
         <!-- CAR DRAWING -->
         <g transform="translate(435, 200)">
-          <!-- Car Cabin / Roof Top -->
-          <path d="M 45 140 Q 60 40 120 35 L 205 35 Q 260 40 270 140 Z" fill="#3A86FF" stroke="#1E293B" stroke-width="3" />
+          <!-- Car Cabin Roof -->
+          <path d="M 40 140 Q 55 35 115 30 L 210 30 Q 265 35 275 140 Z" fill="#3A86FF" stroke="#1E293B" stroke-width="3" />
           
-          <!-- Large Windows / Passenger Area with Designated Cut/Paste Targets -->
-          <rect x="68" y="48" width="80" height="82" rx="10" fill="#E0F2FE" stroke="#1E293B" stroke-width="2" />
-          <rect x="162" y="48" width="80" height="82" rx="10" fill="#E0F2FE" stroke="#1E293B" stroke-width="2" />
+          <!-- Large Clear Passenger Windows (Spacious 90x88px windows for people cutouts!) -->
+          <rect x="58" y="42" width="92" height="92" rx="10" fill="#E0F2FE" stroke="#1E293B" stroke-width="2" />
+          <rect x="162" y="42" width="92" height="92" rx="10" fill="#E0F2FE" stroke="#1E293B" stroke-width="2" />
           
-          <!-- Seat 1 and Seat 2 dotted targets -->
-          <rect x="74" y="54" width="68" height="70" rx="6" class="seat-guide" />
-          <text x="108" y="88" class="seat-text">Person 1</text>
-          <text x="108" y="104" font-size="10" fill="#64748B" font-weight="bold" text-anchor="middle">Glue here</text>
+          <!-- Seat 1 and Seat 2 targets -->
+          <rect x="65" y="48" width="78" height="80" rx="8" fill="rgba(255,255,255,0.7)" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="104" y="85" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Person 1</text>
+          <text x="104" y="102" font-size="10" fill="#94A3B8" text-anchor="middle">Glue here</text>
           
-          <rect x="168" y="54" width="68" height="70" rx="6" class="seat-guide" />
-          <text x="202" y="88" class="seat-text">Person 2</text>
-          <text x="202" y="104" font-size="10" fill="#64748B" font-weight="bold" text-anchor="middle">Glue here</text>
+          <rect x="169" y="48" width="78" height="80" rx="8" fill="rgba(255,255,255,0.7)" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="208" y="85" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Person 2</text>
+          <text x="208" y="102" font-size="10" fill="#94A3B8" text-anchor="middle">Glue here</text>
 
           <!-- Main Lower Car Body -->
           <rect x="10" y="130" width="285" height="75" rx="20" fill="#3A86FF" stroke="#1E293B" stroke-width="3" />
@@ -109,12 +110,15 @@
           <circle cx="288" cy="155" r="12" fill="#FFD166" stroke="#1E293B" stroke-width="2" />
           <circle cx="17" cy="155" r="10" fill="#EF476F" stroke="#1E293B" stroke-width="2" />
           
-          <!-- Door line and handles -->
-          <line x1="152" y1="130" x2="152" y2="195" stroke="#1E293B" stroke-width="2.5" />
-          <rect x="130" y="145" width="16" height="5" rx="2" fill="#1E293B" />
-          <rect x="160" y="145" width="16" height="5" rx="2" fill="#1E293B" />
+          <!-- Door Line & Handles -->
+          <line x1="156" y1="130" x2="156" y2="195" stroke="#1E293B" stroke-width="2.5" />
+          <rect x="134" y="145" width="16" height="5" rx="2" fill="#1E293B" />
+          <rect x="164" y="145" width="16" height="5" rx="2" fill="#1E293B" />
           
-          <!-- Wheels & Hubcaps -->
+          <!-- Smiling Bumper -->
+          <rect x="280" y="172" width="20" height="15" rx="4" fill="#CBD5E1" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Wheels -->
           <circle cx="65" cy="205" r="32" fill="#2B2D42" stroke="#1E293B" stroke-width="3" />
           <circle cx="65" cy="205" r="18" fill="#E5E7EB" stroke="#1E293B" stroke-width="2" />
           <circle cx="65" cy="205" r="6" fill="#1E293B" />
@@ -141,21 +145,21 @@
         
         <!-- CAR DRAWING -->
         <g transform="translate(60, 700)">
-          <!-- Car Cabin / Roof Top -->
-          <path d="M 45 140 Q 60 40 120 35 L 205 35 Q 260 40 270 140 Z" fill="#FFB703" stroke="#1E293B" stroke-width="3" />
+          <!-- Car Cabin Roof -->
+          <path d="M 40 140 Q 55 35 115 30 L 210 30 Q 265 35 275 140 Z" fill="#FFB703" stroke="#1E293B" stroke-width="3" />
           
-          <!-- Large Windows / Passenger Area with Designated Cut/Paste Targets -->
-          <rect x="68" y="48" width="80" height="82" rx="10" fill="#FEF3C7" stroke="#1E293B" stroke-width="2" />
-          <rect x="162" y="48" width="80" height="82" rx="10" fill="#FEF3C7" stroke="#1E293B" stroke-width="2" />
+          <!-- Large Clear Passenger Windows (Spacious 90x88px windows for people cutouts!) -->
+          <rect x="58" y="42" width="92" height="92" rx="10" fill="#FEF3C7" stroke="#1E293B" stroke-width="2" />
+          <rect x="162" y="42" width="92" height="92" rx="10" fill="#FEF3C7" stroke="#1E293B" stroke-width="2" />
           
-          <!-- Seat 1 and Seat 2 dotted targets -->
-          <rect x="74" y="54" width="68" height="70" rx="6" class="seat-guide" />
-          <text x="108" y="88" class="seat-text">Person 1</text>
-          <text x="108" y="104" font-size="10" fill="#64748B" font-weight="bold" text-anchor="middle">Glue here</text>
+          <!-- Seat 1 and Seat 2 targets -->
+          <rect x="65" y="48" width="78" height="80" rx="8" fill="rgba(255,255,255,0.7)" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="104" y="85" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Person 1</text>
+          <text x="104" y="102" font-size="10" fill="#94A3B8" text-anchor="middle">Glue here</text>
           
-          <rect x="168" y="54" width="68" height="70" rx="6" class="seat-guide" />
-          <text x="202" y="88" class="seat-text">Person 2</text>
-          <text x="202" y="104" font-size="10" fill="#64748B" font-weight="bold" text-anchor="middle">Glue here</text>
+          <rect x="169" y="48" width="78" height="80" rx="8" fill="rgba(255,255,255,0.7)" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="208" y="85" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Person 2</text>
+          <text x="208" y="102" font-size="10" fill="#94A3B8" text-anchor="middle">Glue here</text>
 
           <!-- Main Lower Car Body -->
           <rect x="10" y="130" width="285" height="75" rx="20" fill="#FFB703" stroke="#1E293B" stroke-width="3" />
@@ -164,12 +168,15 @@
           <circle cx="288" cy="155" r="12" fill="#FFD166" stroke="#1E293B" stroke-width="2" />
           <circle cx="17" cy="155" r="10" fill="#EF476F" stroke="#1E293B" stroke-width="2" />
           
-          <!-- Door line and handles -->
-          <line x1="152" y1="130" x2="152" y2="195" stroke="#1E293B" stroke-width="2.5" />
-          <rect x="130" y="145" width="16" height="5" rx="2" fill="#1E293B" />
-          <rect x="160" y="145" width="16" height="5" rx="2" fill="#1E293B" />
+          <!-- Door Line & Handles -->
+          <line x1="156" y1="130" x2="156" y2="195" stroke="#1E293B" stroke-width="2.5" />
+          <rect x="134" y="145" width="16" height="5" rx="2" fill="#1E293B" />
+          <rect x="164" y="145" width="16" height="5" rx="2" fill="#1E293B" />
           
-          <!-- Wheels & Hubcaps -->
+          <!-- Smiling Bumper -->
+          <rect x="280" y="172" width="20" height="15" rx="4" fill="#CBD5E1" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Wheels -->
           <circle cx="65" cy="205" r="32" fill="#2B2D42" stroke="#1E293B" stroke-width="3" />
           <circle cx="65" cy="205" r="18" fill="#E5E7EB" stroke="#1E293B" stroke-width="2" />
           <circle cx="65" cy="205" r="6" fill="#1E293B" />
@@ -196,21 +203,21 @@
         
         <!-- CAR DRAWING -->
         <g transform="translate(435, 700)">
-          <!-- Car Cabin / Roof Top -->
-          <path d="M 45 140 Q 60 40 120 35 L 205 35 Q 260 40 270 140 Z" fill="#2A9D8F" stroke="#1E293B" stroke-width="3" />
+          <!-- Car Cabin Roof -->
+          <path d="M 40 140 Q 55 35 115 30 L 210 30 Q 265 35 275 140 Z" fill="#2A9D8F" stroke="#1E293B" stroke-width="3" />
           
-          <!-- Large Windows / Passenger Area with Designated Cut/Paste Targets -->
-          <rect x="68" y="48" width="80" height="82" rx="10" fill="#D1FAE5" stroke="#1E293B" stroke-width="2" />
-          <rect x="162" y="48" width="80" height="82" rx="10" fill="#D1FAE5" stroke="#1E293B" stroke-width="2" />
+          <!-- Large Clear Passenger Windows (Spacious 90x88px windows for people cutouts!) -->
+          <rect x="58" y="42" width="92" height="92" rx="10" fill="#D1FAE5" stroke="#1E293B" stroke-width="2" />
+          <rect x="162" y="42" width="92" height="92" rx="10" fill="#D1FAE5" stroke="#1E293B" stroke-width="2" />
           
-          <!-- Seat 1 and Seat 2 dotted targets -->
-          <rect x="74" y="54" width="68" height="70" rx="6" class="seat-guide" />
-          <text x="108" y="88" class="seat-text">Person 1</text>
-          <text x="108" y="104" font-size="10" fill="#64748B" font-weight="bold" text-anchor="middle">Glue here</text>
+          <!-- Seat 1 and Seat 2 targets -->
+          <rect x="65" y="48" width="78" height="80" rx="8" fill="rgba(255,255,255,0.7)" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="104" y="85" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Person 1</text>
+          <text x="104" y="102" font-size="10" fill="#94A3B8" text-anchor="middle">Glue here</text>
           
-          <rect x="168" y="54" width="68" height="70" rx="6" class="seat-guide" />
-          <text x="202" y="88" class="seat-text">Person 2</text>
-          <text x="202" y="104" font-size="10" fill="#64748B" font-weight="bold" text-anchor="middle">Glue here</text>
+          <rect x="169" y="48" width="78" height="80" rx="8" fill="rgba(255,255,255,0.7)" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="208" y="85" font-size="12" font-weight="bold" fill="#64748B" text-anchor="middle">Person 2</text>
+          <text x="208" y="102" font-size="10" fill="#94A3B8" text-anchor="middle">Glue here</text>
 
           <!-- Main Lower Car Body -->
           <rect x="10" y="130" width="285" height="75" rx="20" fill="#2A9D8F" stroke="#1E293B" stroke-width="3" />
@@ -219,12 +226,15 @@
           <circle cx="288" cy="155" r="12" fill="#FFD166" stroke="#1E293B" stroke-width="2" />
           <circle cx="17" cy="155" r="10" fill="#EF476F" stroke="#1E293B" stroke-width="2" />
           
-          <!-- Door line and handles -->
-          <line x1="152" y1="130" x2="152" y2="195" stroke="#1E293B" stroke-width="2.5" />
-          <rect x="130" y="145" width="16" height="5" rx="2" fill="#1E293B" />
-          <rect x="160" y="145" width="16" height="5" rx="2" fill="#1E293B" />
+          <!-- Door Line & Handles -->
+          <line x1="156" y1="130" x2="156" y2="195" stroke="#1E293B" stroke-width="2.5" />
+          <rect x="134" y="145" width="16" height="5" rx="2" fill="#1E293B" />
+          <rect x="164" y="145" width="16" height="5" rx="2" fill="#1E293B" />
           
-          <!-- Wheels & Hubcaps -->
+          <!-- Smiling Bumper -->
+          <rect x="280" y="172" width="20" height="15" rx="4" fill="#CBD5E1" stroke="#1E293B" stroke-width="2" />
+          
+          <!-- Wheels -->
           <circle cx="65" cy="205" r="32" fill="#2B2D42" stroke="#1E293B" stroke-width="3" />
           <circle cx="65" cy="205" r="18" fill="#E5E7EB" stroke="#1E293B" stroke-width="2" />
           <circle cx="65" cy="205" r="6" fill="#1E293B" />
