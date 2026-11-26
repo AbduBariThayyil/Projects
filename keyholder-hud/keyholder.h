@@ -20,10 +20,14 @@ typedef enum {
 
 typedef struct {
     bool active;
+    bool paused_by_mod;
+    bool phase_released;
     uint16_t code;
     bool is_mouse;
     int64_t grace_until_ns;
     int64_t started_ns;
+    int64_t next_reassert_ns;
+    int64_t last_reassert_ns;
 } KhHoldSlot;
 
 typedef struct {

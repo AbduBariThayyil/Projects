@@ -42,7 +42,7 @@ static KhOps ops(void) {
     return (KhOps){ .emit_key = on_emit, .hud_update = on_hud, .save_config = on_save };
 }
 
-static void test_hold_no_pulse_and_repress_stop(void) {
+static void test_hold_interrupt_restart_and_mod_pause(void) {
     KHTest t = {0};
     KhState st;
     kh_init(&st, ops(), &t, 40, 15);
@@ -65,17 +65,28 @@ static void test_hold_no_pulse_and_repress_stop(void) {
     assert(kh_active_hold_count(&st) == 1);
     assert(t.ev_len == 1 && t.evs[0].code == KEY_LEFT && t.evs[0].value == 1);
 
-    /* Pressing unrelated keys or Super MUST NOT release/repress KEY_LEFT */
+    /* Pressing Super pauses Hold safely (emits 0) and restarts 5ms after release (emits 1) */
     kh_on_key_event(&st, KEY_LEFTMETA, 1, now + 100000000LL);
-    kh_on_key_event(&st, KEY_A, 1, now + 120000000LL);
-    kh_on_key_event(&st, KEY_A, 0, now + 140000000LL);
+    assert(st.holds[0].paused_by_mod == true);
+    assert(t.ev_len == 2 && t.evs[1].code == KEY_LEFT && t.evs[1].value == 0);
     kh_on_key_event(&st, KEY_LEFTMETA, 0, now + 160000000LL);
-    assert(t.ev_len == 1);
+    assert(st.holds[0].paused_by_mod == false && st.holds[0].phase_released == true);
+    kh_tick(&st, now + 170000000LL);
+    assert(st.holds[0].phase_released == false);
+    assert(t.ev_len == 3 && t.evs[2].code == KEY_LEFT && t.evs[2].value == 1);
+
+    /* Unrelated key interrupt past grace schedules clean 12ms release -> repress */
+    kh_on_key_event(&st, KEY_A, 1, now + 400000000LL);
+    assert(st.holds[0].phase_released == true);
+    assert(t.ev_len == 4 && t.evs[3].code == KEY_LEFT && t.evs[3].value == 0);
+    kh_tick(&st, now + 415000000LL);
+    assert(st.holds[0].phase_released == false);
+    assert(t.ev_len == 5 && t.evs[4].code == KEY_LEFT && t.evs[4].value == 1);
 
     /* Re-pressing KEY_LEFT after grace stops it cleanly */
-    kh_on_key_event(&st, KEY_LEFT, 1, now + 500000000LL);
+    kh_on_key_event(&st, KEY_LEFT, 1, now + 600000000LL);
     assert(kh_active_hold_count(&st) == 0);
-    assert(t.ev_len == 2 && t.evs[1].code == KEY_LEFT && t.evs[1].value == 0);
+    assert(t.ev_len == 6 && t.evs[5].code == KEY_LEFT && t.evs[5].value == 0);
 }
 
 static void test_spam_mod_pause_and_simultaneous_hold(void) {
@@ -113,26 +124,30 @@ static void test_spam_mod_pause_and_simultaneous_hold(void) {
     kh_tick(&st, now + 70000000LL); /* release after 15ms hold_ms */
     assert(t.ev_len == before + 1 && t.evs[before].value == 0);
 
-    /* Holding Super pauses spam immediately & releases if down */
+    /* Holding Super pauses BOTH Hold (W) and Spam (LMB) immediately */
     kh_tick(&st, now + 100000000LL); /* press LMB */
     assert(st.spam.phase_down == true);
     size_t pre_super = t.ev_len;
     kh_on_key_event(&st, KEY_LEFTMETA, 1, now + 105000000LL);
+    assert(st.holds[0].paused_by_mod == true);
     assert(st.spam.paused_by_mod == true);
     assert(st.spam.phase_down == false);
-    assert(t.ev_len == pre_super + 1 && t.evs[pre_super].code == BTN_LEFT && t.evs[pre_super].value == 0);
+    assert(t.ev_len == pre_super + 2);
+    assert(t.evs[pre_super].code == KEY_W && t.evs[pre_super].value == 0);
+    assert(t.evs[pre_super + 1].code == BTN_LEFT && t.evs[pre_super + 1].value == 0);
 
     /* No spam ticks emitted while Super is held */
     kh_tick(&st, now + 200000000LL);
-    assert(t.ev_len == pre_super + 1);
+    assert(t.ev_len == pre_super + 2);
 
-    /* Releasing Super resumes spam; holding Shift does NOT pause spam */
+    /* Releasing Super resumes both Hold and Spam; holding Shift does NOT pause */
     kh_on_key_event(&st, KEY_LEFTMETA, 0, now + 220000000LL);
+    assert(st.holds[0].paused_by_mod == false);
     assert(st.spam.paused_by_mod == false);
     kh_on_key_event(&st, KEY_LEFTSHIFT, 1, now + 221000000LL);
-    assert(st.spam.paused_by_mod == false);
+    assert(st.holds[0].paused_by_mod == false && st.spam.paused_by_mod == false);
     kh_tick(&st, now + 230000000LL);
-    assert(st.spam.phase_down == true);
+    assert(st.holds[0].phase_released == false && st.spam.phase_down == true);
 
     /* Terminate releases both W and LMB */
     kh_cmd_terminate(&st, now + 300000000LL);
@@ -150,7 +165,7 @@ static void test_esc_cancels_listen(void) {
 }
 
 int main(void) {
-    test_hold_no_pulse_and_repress_stop();
+    test_hold_interrupt_restart_and_mod_pause();
     test_spam_mod_pause_and_simultaneous_hold();
     test_esc_cancels_listen();
     printf("All KeyHolder core tests passed!\n");

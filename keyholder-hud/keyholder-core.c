@@ -202,20 +202,52 @@ static bool should_pause_spam_for_mods(uint32_t mod_mask, uint16_t spam_code) {
     return false;
 }
 
-static void update_mod_pause(KhState *st, int64_t now_ns) {
-    if (!st->spam.active) return;
+static bool is_hold_paused_any(const KhState *st) {
+    for (int i = 0; i < KH_MAX_HOLDS; i++) {
+        if (st->holds[i].active && st->holds[i].paused_by_mod) return true;
+    }
+    return false;
+}
 
-    bool should_pause = should_pause_spam_for_mods(st->mod_mask, st->spam.code);
-    if (should_pause && !st->spam.paused_by_mod) {
-        if (st->spam.phase_down) {
-            emit_ev(st, st->spam.code, st->spam.is_mouse, 0);
-            st->spam.phase_down = false;
+static void update_mod_pause(KhState *st, int64_t now_ns) {
+    bool hud_dirty = false;
+
+    for (int i = 0; i < KH_MAX_HOLDS; i++) {
+        KhHoldSlot *h = &st->holds[i];
+        if (!h->active) continue;
+        bool should_pause = should_pause_spam_for_mods(st->mod_mask, h->code);
+        if (should_pause && !h->paused_by_mod) {
+            if (!h->phase_released) {
+                emit_ev(st, h->code, h->is_mouse, 0);
+            }
+            h->paused_by_mod = true;
+            h->phase_released = false;
+            hud_dirty = true;
+        } else if (!should_pause && h->paused_by_mod) {
+            h->paused_by_mod = false;
+            h->phase_released = true;
+            h->next_reassert_ns = now_ns + 5000000LL; /* 5ms settle after releasing Super/Alt */
+            hud_dirty = true;
         }
-        st->spam.paused_by_mod = true;
-        notify_hud(st);
-    } else if (!should_pause && st->spam.paused_by_mod) {
-        st->spam.paused_by_mod = false;
-        st->spam.next_tick_ns = now_ns + 5000000LL; /* 5ms settle after releasing Super/Alt */
+    }
+
+    if (st->spam.active) {
+        bool should_pause = should_pause_spam_for_mods(st->mod_mask, st->spam.code);
+        if (should_pause && !st->spam.paused_by_mod) {
+            if (st->spam.phase_down) {
+                emit_ev(st, st->spam.code, st->spam.is_mouse, 0);
+                st->spam.phase_down = false;
+            }
+            st->spam.paused_by_mod = true;
+            hud_dirty = true;
+        } else if (!should_pause && st->spam.paused_by_mod) {
+            st->spam.paused_by_mod = false;
+            st->spam.next_tick_ns = now_ns + 5000000LL; /* 5ms settle after releasing Super/Alt */
+            hud_dirty = true;
+        }
+    }
+
+    if (hud_dirty) {
         notify_hud(st);
     }
 }
@@ -224,8 +256,13 @@ static void stop_hold_idx(KhState *st, int idx, int64_t now_ns) {
     if (idx < 0 || idx >= KH_MAX_HOLDS || !st->holds[idx].active) return;
     uint16_t code = st->holds[idx].code;
     bool is_mouse = st->holds[idx].is_mouse;
+    bool was_down = !st->holds[idx].paused_by_mod && !st->holds[idx].phase_released;
     st->holds[idx].active = false;
-    emit_ev(st, code, is_mouse, 0);
+    st->holds[idx].paused_by_mod = false;
+    st->holds[idx].phase_released = false;
+    if (was_down) {
+        emit_ev(st, code, is_mouse, 0);
+    }
 
     char lbl[24];
     kh_key_label(code, lbl, sizeof(lbl));
@@ -285,14 +322,21 @@ static void activate_latch(KhState *st, KhListenMode mode, uint16_t code, bool i
             stop_hold_idx(st, 0, now_ns);
             free_idx = 0;
         }
+        bool paused_now = should_pause_spam_for_mods(st->mod_mask, code);
         st->holds[free_idx] = (KhHoldSlot){
             .active = true,
+            .paused_by_mod = paused_now,
+            .phase_released = false,
             .code = code,
             .is_mouse = is_mouse,
             .grace_until_ns = now_ns + KH_GRACE_NS,
             .started_ns = now_ns,
+            .next_reassert_ns = 0,
+            .last_reassert_ns = now_ns,
         };
-        emit_ev(st, code, is_mouse, 1);
+        if (!paused_now) {
+            emit_ev(st, code, is_mouse, 1);
+        }
     } else if (mode == KH_LISTEN_SPAM) {
         if (st->spam.active && st->spam.phase_down) {
             emit_ev(st, st->spam.code, st->spam.is_mouse, 0);
@@ -487,20 +531,47 @@ void kh_on_key_event(KhState *st, uint16_t code, int32_t value, int64_t now_ns) 
         return;
     }
 
+    bool is_held_code = false;
+    bool is_spam_code = (st->spam.active && st->spam.code == code);
+
     if (value == 1) {
         bool changed = false;
         for (int i = 0; i < KH_MAX_HOLDS; i++) {
-            if (st->holds[i].active && st->holds[i].code == code && now_ns >= st->holds[i].grace_until_ns) {
-                stop_hold_idx(st, i, now_ns);
-                changed = true;
+            if (st->holds[i].active && st->holds[i].code == code) {
+                is_held_code = true;
+                if (now_ns >= st->holds[i].grace_until_ns) {
+                    stop_hold_idx(st, i, now_ns);
+                    changed = true;
+                }
             }
         }
-        if (st->spam.active && st->spam.code == code && now_ns >= st->spam.grace_until_ns) {
+        if (is_spam_code && now_ns >= st->spam.grace_until_ns) {
             stop_spam(st, now_ns);
             changed = true;
         }
         if (changed) {
             notify_hud(st);
+            return;
+        }
+    } else {
+        for (int i = 0; i < KH_MAX_HOLDS; i++) {
+            if (st->holds[i].active && st->holds[i].code == code) {
+                is_held_code = true;
+            }
+        }
+    }
+
+    /* Restart active Hold(s) cleanly after unrelated in-game key/button interrupts */
+    if (!is_held_code && !is_spam_code && (value == 1 || value == 0) && !kh_is_ignored_code(code)) {
+        for (int i = 0; i < KH_MAX_HOLDS; i++) {
+            KhHoldSlot *h = &st->holds[i];
+            if (h->active && !h->paused_by_mod && !h->phase_released &&
+                now_ns >= h->grace_until_ns && (now_ns - h->last_reassert_ns) >= 80000000LL) {
+                emit_ev(st, h->code, h->is_mouse, 0);
+                h->phase_released = true;
+                h->next_reassert_ns = now_ns + 12000000LL; /* 12ms release before repress */
+                h->last_reassert_ns = now_ns;
+            }
         }
     }
 }
@@ -519,6 +590,14 @@ void kh_tick(KhState *st, int64_t now_ns) {
         KhListenMode m = st->pending_mode;
         st->pending_mode = KH_LISTEN_NONE;
         activate_latch(st, m, st->pending_code, st->pending_is_mouse, now_ns);
+    }
+
+    for (int i = 0; i < KH_MAX_HOLDS; i++) {
+        KhHoldSlot *h = &st->holds[i];
+        if (h->active && !h->paused_by_mod && h->phase_released && now_ns >= h->next_reassert_ns) {
+            emit_ev(st, h->code, h->is_mouse, 1);
+            h->phase_released = false;
+        }
     }
 
     if (st->spam.active && !st->spam.paused_by_mod && now_ns >= st->spam.next_tick_ns) {
@@ -542,6 +621,13 @@ int64_t kh_next_timeout_ns(const KhState *st, int64_t now_ns) {
     int64_t next = -1;
     if (st->waiting_release) {
         next = st->wait_deadline_ns > now_ns ? (st->wait_deadline_ns - now_ns) : 0;
+    }
+    for (int i = 0; i < KH_MAX_HOLDS; i++) {
+        const KhHoldSlot *h = &st->holds[i];
+        if (h->active && !h->paused_by_mod && h->phase_released) {
+            int64_t dt = h->next_reassert_ns > now_ns ? (h->next_reassert_ns - now_ns) : 0;
+            if (next < 0 || dt < next) next = dt;
+        }
     }
     if (st->spam.active && !st->spam.paused_by_mod) {
         int64_t dt = st->spam.next_tick_ns > now_ns ? (st->spam.next_tick_ns - now_ns) : 0;
@@ -618,7 +704,7 @@ void kh_format_hud_message(const KhState *st, int64_t now_ns, char *buf, size_t 
         spam_lbl,
         cps,
         st->spam.active ? st->spam.delay_ms : st->saved_delay_ms,
-        st->spam.paused_by_mod ? 1 : 0,
+        (st->spam.paused_by_mod || is_hold_paused_any(st)) ? 1 : 0,
         elapsed_sec
     );
 }

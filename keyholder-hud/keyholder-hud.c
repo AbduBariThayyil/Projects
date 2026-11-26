@@ -193,7 +193,7 @@ static int compute_target_width(void) {
     bool has_spam = (hud.spam[0] != '\0');
 
     if (has_hold) {
-        w += measure_text(f_tag, "HOLD") + 8.0;
+        w += measure_text(f_tag, (!has_spam && hud.paused) ? "PAUSE" : "HOLD") + 8.0;
         char copy[128];
         snprintf(copy, sizeof(copy), "%s", hud.holds);
         char *sp = NULL;
@@ -303,13 +303,18 @@ static void render_hud(void) {
         bool has_spam = (hud.spam[0] != '\0');
 
         if (has_hold) {
-            draw_text_at(f_tag, "HOLD", cx, cy, 116.0 / 255.0, 199.0 / 255.0, 236.0 / 255.0, 1.0);
-            cx += measure_text(f_tag, "HOLD") + 7.0;
+            bool hpaused = (!has_spam && hud.paused);
+            const char *htag = hpaused ? "PAUSE" : "HOLD";
+            double hr = hpaused ? (250.0 / 255.0) : (116.0 / 255.0);
+            double hg = hpaused ? (179.0 / 255.0) : (199.0 / 255.0);
+            double hb = hpaused ? (135.0 / 255.0) : (236.0 / 255.0);
+            draw_text_at(f_tag, htag, cx, cy, hr, hg, hb, 1.0);
+            cx += measure_text(f_tag, htag) + 7.0;
             char copy[128];
             snprintf(copy, sizeof(copy), "%s", hud.holds);
             char *sp = NULL;
             for (char *tok = strtok_r(copy, ",", &sp); tok; tok = strtok_r(NULL, ",", &sp)) {
-                cx += draw_key_chip(tok, cx, cy, 116.0 / 255.0, 199.0 / 255.0, 236.0 / 255.0) + 5.0;
+                cx += draw_key_chip(tok, cx, cy, hr, hg, hb) + 5.0;
             }
         }
 
