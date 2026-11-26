@@ -606,8 +606,13 @@ static void cleanup_daemon(DaemonCtx *d) {
     }
 }
 
+static void on_game_ctx_changed(void *ctx, bool in_game) {
+    DaemonCtx *d = ctx;
+    sys_input_set_game_context(&d->state, in_game);
+}
+
 static int run_x11_smoke_test(void) {
-    SysInputX11 *x11 = sys_input_x11_create();
+    SysInputX11 *x11 = sys_input_x11_create(NULL, NULL);
     if (!x11) {
         return 1;
     }
@@ -703,7 +708,7 @@ int main(int argc, char **argv) {
     };
     sys_input_init(&d.state, ops, &d);
 
-    d.x11 = sys_input_x11_create();
+    d.x11 = sys_input_x11_create(on_game_ctx_changed, &d);
     attach_x11_to_epoll(&d);
     if (sys_input_x11_fd(d.x11) < 0) {
         struct itimerspec retry = { .it_interval = { .tv_sec = 1 }, .it_value = { .tv_sec = 1 } };
@@ -737,7 +742,7 @@ int main(int argc, char **argv) {
                 if (events[i].events & (EPOLLERR | EPOLLHUP)) {
                     epoll_ctl(d.epoll_fd, EPOLL_CTL_DEL, xfd, NULL);
                     sys_input_x11_destroy(d.x11);
-                    d.x11 = sys_input_x11_create();
+                    d.x11 = sys_input_x11_create(on_game_ctx_changed, &d);
                     struct itimerspec retry = { .it_interval = { .tv_sec = 1 }, .it_value = { .tv_sec = 1 } };
                     timerfd_settime(d.x11_retry_timer_fd, 0, &retry, NULL);
                 } else {

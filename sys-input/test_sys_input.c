@@ -272,6 +272,20 @@ static void test_casue_fn_lock_and_shift_f1(void) {
     assert(strstr(h.cmds[0], "ToggleTouchpad") != NULL);
     assert(strstr(h.cmds[1], "ToggleTouchpad") != NULL);
     assert(strstr(h.cmds[2], "sys-control --vol-inc") != NULL);
+    /* Auto Game Mode: entering game enables, leaving disables, F13 overrides cleanly */
+    reset_harness(&h);
+    sys_input_init(&st, test_ops(), &h);
+    sys_input_set_game_context(&st, true);
+    assert(st.gaming_mode == true && h.notify_len == 1 && h.last_toggle_active == true);
+    /* Manual F13 override inside game turns Gaming Mode OFF */
+    send_ev(&st, DEV_MOUSE_GM320, EV_KEY, KEY_CALC, 1);
+    assert(st.gaming_mode == false && h.notify_len == 2 && h.last_toggle_active == false);
+    /* Returning to desktop leaves it OFF cleanly */
+    sys_input_set_game_context(&st, false);
+    assert(st.gaming_mode == false && h.notify_len == 2);
+    /* Re-entering game re-enables Gaming Mode */
+    sys_input_set_game_context(&st, true);
+    assert(st.gaming_mode == true && h.notify_len == 3 && h.last_toggle_active == true);
 }
 
 int main(void) {

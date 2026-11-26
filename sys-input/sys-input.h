@@ -26,6 +26,7 @@ typedef struct {
 
 typedef struct {
     bool gaming_mode;
+    bool auto_in_game;
     bool fn_lock;
     bool shift_l;
     bool shift_r;
@@ -49,6 +50,7 @@ typedef struct {
 
 void sys_input_init(SysInputState *st, SysInputOps ops, void *ctx);
 void sys_input_handle_event(SysInputState *st, DeviceKind kind, uint16_t type, uint16_t code, int32_t value);
+void sys_input_set_game_context(SysInputState *st, bool in_game);
 void sys_input_on_device_removed(SysInputState *st, DeviceKind kind);
 
 #endif

@@ -392,6 +392,20 @@ void sys_input_handle_event(SysInputState *st, DeviceKind kind, uint16_t type, u
     }
 }
 
+void sys_input_set_game_context(SysInputState *st, bool in_game) {
+    if (in_game == st->auto_in_game) {
+        return;
+    }
+    st->auto_in_game = in_game;
+    if (st->gaming_mode != in_game) {
+        st->gaming_mode = in_game;
+        release_desktop_modifiers(st);
+        if (st->ops.notify_toggle) {
+            st->ops.notify_toggle(st->ctx, "gaming", st->gaming_mode);
+        }
+    }
+}
+
 void sys_input_on_device_removed(SysInputState *st, DeviceKind kind) {
     if (kind == DEV_MOUSE_GM320 || kind == DEV_GENERIC_MOUSE) {
         release_desktop_modifiers(st);
