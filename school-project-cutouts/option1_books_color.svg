@@ -1,0 +1,455 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1130" width="800pt" height="1130pt">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&amp;family=Quicksand:wght@600;700&amp;display=swap');
+      text { font-family: 'Fredoka One', 'Quicksand', 'Nunito', 'Segoe UI', Arial, sans-serif; }
+      .title { font-size: 24px; font-weight: bold; fill: #1E293B; text-anchor: middle; }
+      .subtitle { font-size: 14px; font-weight: 600; fill: #475569; text-anchor: middle; }
+      .cut-guide { stroke: #94A3B8; stroke-width: 1.8; stroke-dasharray: 6, 5; fill: none; }
+      .cut-text { font-size: 11px; fill: #64748B; font-weight: bold; }
+      .seat-guide { stroke: #94A3B8; stroke-width: 1.5; stroke-dasharray: 5, 4; fill: rgba(255,255,255,0.85); }
+      .seat-text { font-size: 11px; fill: #64748B; font-weight: bold; text-anchor: middle; }
+    </style>
+  </defs>
+  <!-- Background -->
+  <rect width="800" height="1130" fill="#FCFDFD" />
+  
+  <!-- Header Bar -->
+  <rect x="25" y="15" width="750" height="75" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
+  <text x="400.0" y="45" class="title">Option 1: 15 Small Books</text>
+  <text x="400.0" y="72" class="subtitle">✂ Cut along dashed rectangles. Divide equally: 15 ÷ 3 = 5 books on each shelf!</text>
+
+        <!-- Book #1 Cutout Cell -->
+        <rect x="45" y="110" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(53, 128)">
+      <text x="0" y="0" class="cut-text">✂ Book #1</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="66.0" y="142" width="96" height="240" rx="8" fill="#EF476F" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="66.0" y="142" width="18" height="240" rx="4" fill="#FFD166" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="71.0" y1="167" x2="79.0" y2="167" stroke="#1E293B" stroke-width="2" />
+        <line x1="71.0" y1="357" x2="79.0" y2="357" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="91.0" y="167" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="123.0" y="217" font-size="34" text-anchor="middle" fill="#FFFFFF">★</text>
+        
+        <!-- Book Title Label -->
+        <rect x="90.0" y="262" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="123.0" y="285" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Star</text>
+        <text x="123.0" y="304" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #1</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="138.0,142 154.0,142 154.0,177 146.0,168 138.0,177" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #2 Cutout Cell -->
+        <rect x="191" y="110" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(199, 128)">
+      <text x="0" y="0" class="cut-text">✂ Book #2</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="212.0" y="142" width="96" height="240" rx="8" fill="#F72585" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="212.0" y="142" width="18" height="240" rx="4" fill="#FFCCD5" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="217.0" y1="167" x2="225.0" y2="167" stroke="#1E293B" stroke-width="2" />
+        <line x1="217.0" y1="357" x2="225.0" y2="357" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="237.0" y="167" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="269.0" y="217" font-size="34" text-anchor="middle" fill="#FFFFFF">♥</text>
+        
+        <!-- Book Title Label -->
+        <rect x="236.0" y="262" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="269.0" y="285" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Heart</text>
+        <text x="269.0" y="304" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #2</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="284.0,142 300.0,142 300.0,177 292.0,168 284.0,177" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #3 Cutout Cell -->
+        <rect x="337" y="110" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(345, 128)">
+      <text x="0" y="0" class="cut-text">✂ Book #3</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="358.0" y="142" width="96" height="240" rx="8" fill="#FFB703" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="358.0" y="142" width="18" height="240" rx="4" fill="#FFE8D6" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="363.0" y1="167" x2="371.0" y2="167" stroke="#1E293B" stroke-width="2" />
+        <line x1="363.0" y1="357" x2="371.0" y2="357" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="383.0" y="167" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="415.0" y="217" font-size="34" text-anchor="middle" fill="#FFFFFF">☀</text>
+        
+        <!-- Book Title Label -->
+        <rect x="382.0" y="262" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="415.0" y="285" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Sun</text>
+        <text x="415.0" y="304" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #3</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="430.0,142 446.0,142 446.0,177 438.0,168 430.0,177" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #4 Cutout Cell -->
+        <rect x="483" y="110" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(491, 128)">
+      <text x="0" y="0" class="cut-text">✂ Book #4</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="504.0" y="142" width="96" height="240" rx="8" fill="#06D6A0" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="504.0" y="142" width="18" height="240" rx="4" fill="#C7F9CC" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="509.0" y1="167" x2="517.0" y2="167" stroke="#1E293B" stroke-width="2" />
+        <line x1="509.0" y1="357" x2="517.0" y2="357" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="529.0" y="167" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="561.0" y="217" font-size="34" text-anchor="middle" fill="#FFFFFF">♫</text>
+        
+        <!-- Book Title Label -->
+        <rect x="528.0" y="262" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="561.0" y="285" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Music</text>
+        <text x="561.0" y="304" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #4</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="576.0,142 592.0,142 592.0,177 584.0,168 576.0,177" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #5 Cutout Cell -->
+        <rect x="629" y="110" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(637, 128)">
+      <text x="0" y="0" class="cut-text">✂ Book #5</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="650.0" y="142" width="96" height="240" rx="8" fill="#118AB2" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="650.0" y="142" width="18" height="240" rx="4" fill="#A2D2FF" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="655.0" y1="167" x2="663.0" y2="167" stroke="#1E293B" stroke-width="2" />
+        <line x1="655.0" y1="357" x2="663.0" y2="357" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="675.0" y="167" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="707.0" y="217" font-size="34" text-anchor="middle" fill="#FFFFFF">🚀</text>
+        
+        <!-- Book Title Label -->
+        <rect x="674.0" y="262" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="707.0" y="285" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Rocket</text>
+        <text x="707.0" y="304" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #5</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="722.0,142 738.0,142 738.0,177 730.0,168 722.0,177" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #6 Cutout Cell -->
+        <rect x="45" y="440" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(53, 458)">
+      <text x="0" y="0" class="cut-text">✂ Book #6</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="66.0" y="472" width="96" height="240" rx="8" fill="#FB8500" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="66.0" y="472" width="18" height="240" rx="4" fill="#FFE5D9" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="71.0" y1="497" x2="79.0" y2="497" stroke="#1E293B" stroke-width="2" />
+        <line x1="71.0" y1="687" x2="79.0" y2="687" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="91.0" y="497" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="123.0" y="547" font-size="34" text-anchor="middle" fill="#FFFFFF">✿</text>
+        
+        <!-- Book Title Label -->
+        <rect x="90.0" y="592" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="123.0" y="615" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Flower</text>
+        <text x="123.0" y="634" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #6</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="138.0,472 154.0,472 154.0,507 146.0,498 138.0,507" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #7 Cutout Cell -->
+        <rect x="191" y="440" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(199, 458)">
+      <text x="0" y="0" class="cut-text">✂ Book #7</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="212.0" y="472" width="96" height="240" rx="8" fill="#D90429" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="212.0" y="472" width="18" height="240" rx="4" fill="#FFCCD5" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="217.0" y1="497" x2="225.0" y2="497" stroke="#1E293B" stroke-width="2" />
+        <line x1="217.0" y1="687" x2="225.0" y2="687" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="237.0" y="497" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="269.0" y="547" font-size="34" text-anchor="middle" fill="#FFFFFF">🍎</text>
+        
+        <!-- Book Title Label -->
+        <rect x="236.0" y="592" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="269.0" y="615" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Apple</text>
+        <text x="269.0" y="634" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #7</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="284.0,472 300.0,472 300.0,507 292.0,498 284.0,507" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #8 Cutout Cell -->
+        <rect x="337" y="440" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(345, 458)">
+      <text x="0" y="0" class="cut-text">✂ Book #8</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="358.0" y="472" width="96" height="240" rx="8" fill="#8338EC" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="358.0" y="472" width="18" height="240" rx="4" fill="#E0AAFF" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="363.0" y1="497" x2="371.0" y2="497" stroke="#1E293B" stroke-width="2" />
+        <line x1="363.0" y1="687" x2="371.0" y2="687" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="383.0" y="497" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="415.0" y="547" font-size="34" text-anchor="middle" fill="#FFFFFF">🐱</text>
+        
+        <!-- Book Title Label -->
+        <rect x="382.0" y="592" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="415.0" y="615" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Cat</text>
+        <text x="415.0" y="634" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #8</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="430.0,472 446.0,472 446.0,507 438.0,498 430.0,507" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #9 Cutout Cell -->
+        <rect x="483" y="440" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(491, 458)">
+      <text x="0" y="0" class="cut-text">✂ Book #9</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="504.0" y="472" width="96" height="240" rx="8" fill="#3A86FF" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="504.0" y="472" width="18" height="240" rx="4" fill="#BEE9E8" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="509.0" y1="497" x2="517.0" y2="497" stroke="#1E293B" stroke-width="2" />
+        <line x1="509.0" y1="687" x2="517.0" y2="687" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="529.0" y="497" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="561.0" y="547" font-size="34" text-anchor="middle" fill="#FFFFFF">☺</text>
+        
+        <!-- Book Title Label -->
+        <rect x="528.0" y="592" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="561.0" y="615" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Smile</text>
+        <text x="561.0" y="634" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #9</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="576.0,472 592.0,472 592.0,507 584.0,498 576.0,507" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #10 Cutout Cell -->
+        <rect x="629" y="440" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(637, 458)">
+      <text x="0" y="0" class="cut-text">✂ Book #10</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="650.0" y="472" width="96" height="240" rx="8" fill="#2B9348" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="650.0" y="472" width="18" height="240" rx="4" fill="#D8F3DC" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="655.0" y1="497" x2="663.0" y2="497" stroke="#1E293B" stroke-width="2" />
+        <line x1="655.0" y1="687" x2="663.0" y2="687" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="675.0" y="497" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="707.0" y="547" font-size="34" text-anchor="middle" fill="#FFFFFF">🌲</text>
+        
+        <!-- Book Title Label -->
+        <rect x="674.0" y="592" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="707.0" y="615" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Tree</text>
+        <text x="707.0" y="634" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #10</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="722.0,472 738.0,472 738.0,507 730.0,498 722.0,507" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #11 Cutout Cell -->
+        <rect x="45" y="770" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(53, 788)">
+      <text x="0" y="0" class="cut-text">✂ Book #11</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="66.0" y="802" width="96" height="240" rx="8" fill="#5A189A" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="66.0" y="802" width="18" height="240" rx="4" fill="#E0AAFF" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="71.0" y1="827" x2="79.0" y2="827" stroke="#1E293B" stroke-width="2" />
+        <line x1="71.0" y1="1017" x2="79.0" y2="1017" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="91.0" y="827" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="123.0" y="877" font-size="34" text-anchor="middle" fill="#FFFFFF">☾</text>
+        
+        <!-- Book Title Label -->
+        <rect x="90.0" y="922" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="123.0" y="945" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Moon</text>
+        <text x="123.0" y="964" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #11</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="138.0,802 154.0,802 154.0,837 146.0,828 138.0,837" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #12 Cutout Cell -->
+        <rect x="191" y="770" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(199, 788)">
+      <text x="0" y="0" class="cut-text">✂ Book #12</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="212.0" y="802" width="96" height="240" rx="8" fill="#E76F51" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="212.0" y="802" width="18" height="240" rx="4" fill="#F4A261" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="217.0" y1="827" x2="225.0" y2="827" stroke="#1E293B" stroke-width="2" />
+        <line x1="217.0" y1="1017" x2="225.0" y2="1017" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="237.0" y="827" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="269.0" y="877" font-size="34" text-anchor="middle" fill="#FFFFFF">✎</text>
+        
+        <!-- Book Title Label -->
+        <rect x="236.0" y="922" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="269.0" y="945" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Pencil</text>
+        <text x="269.0" y="964" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #12</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="284.0,802 300.0,802 300.0,837 292.0,828 284.0,837" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #13 Cutout Cell -->
+        <rect x="337" y="770" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(345, 788)">
+      <text x="0" y="0" class="cut-text">✂ Book #13</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="358.0" y="802" width="96" height="240" rx="8" fill="#0077B6" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="358.0" y="802" width="18" height="240" rx="4" fill="#90E0EF" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="363.0" y1="827" x2="371.0" y2="827" stroke="#1E293B" stroke-width="2" />
+        <line x1="363.0" y1="1017" x2="371.0" y2="1017" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="383.0" y="827" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="415.0" y="877" font-size="34" text-anchor="middle" fill="#FFFFFF">🐟</text>
+        
+        <!-- Book Title Label -->
+        <rect x="382.0" y="922" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="415.0" y="945" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Fish</text>
+        <text x="415.0" y="964" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #13</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="430.0,802 446.0,802 446.0,837 438.0,828 430.0,837" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #14 Cutout Cell -->
+        <rect x="483" y="770" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(491, 788)">
+      <text x="0" y="0" class="cut-text">✂ Book #14</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="504.0" y="802" width="96" height="240" rx="8" fill="#48CAE4" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="504.0" y="802" width="18" height="240" rx="4" fill="#CAF0F8" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="509.0" y1="827" x2="517.0" y2="827" stroke="#1E293B" stroke-width="2" />
+        <line x1="509.0" y1="1017" x2="517.0" y2="1017" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="529.0" y="827" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="561.0" y="877" font-size="34" text-anchor="middle" fill="#FFFFFF">☁</text>
+        
+        <!-- Book Title Label -->
+        <rect x="528.0" y="922" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="561.0" y="945" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Cloud</text>
+        <text x="561.0" y="964" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #14</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="576.0,802 592.0,802 592.0,837 584.0,828 576.0,837" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        
+
+        <!-- Book #15 Cutout Cell -->
+        <rect x="629" y="770" width="138" height="320" rx="8" class="cut-guide" />
+        <g transform="translate(637, 788)">
+      <text x="0" y="0" class="cut-text">✂ Book #15</text>
+    </g>
+        
+        <!-- Book Body -->
+        <rect x="650.0" y="802" width="96" height="240" rx="8" fill="#FF006E" stroke="#1E293B" stroke-width="2.5" />
+        
+        <!-- Spine Stripe -->
+        <rect x="650.0" y="802" width="18" height="240" rx="4" fill="#FFBE0B" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Spine Stitch Marks -->
+        <line x1="655.0" y1="827" x2="663.0" y2="827" stroke="#1E293B" stroke-width="2" />
+        <line x1="655.0" y1="1017" x2="663.0" y2="1017" stroke="#1E293B" stroke-width="2" />
+        
+        <!-- Book Cover Emblem Box -->
+        <rect x="675.0" y="827" width="64" height="75" rx="8" fill="rgba(255,255,255,0.25)" stroke="#1E293B" stroke-width="1.8" />
+        <text x="707.0" y="877" font-size="34" text-anchor="middle" fill="#FFFFFF">🌈</text>
+        
+        <!-- Book Title Label -->
+        <rect x="674.0" y="922" width="66" height="55" rx="6" fill="rgba(255,255,255,0.95)" stroke="#1E293B" stroke-width="1.5" />
+        <text x="707.0" y="945" font-size="13" font-weight="bold" fill="#0F172A" text-anchor="middle">Rainbow</text>
+        <text x="707.0" y="964" font-size="11" font-weight="bold" fill="#64748B" text-anchor="middle">Book #15</text>
+        
+        <!-- Bookmark Ribbon -->
+        <polygon points="722.0,802 738.0,802 738.0,837 730.0,828 722.0,837" fill="#FFD166" stroke="#1E293B" stroke-width="1.5" />
+        </svg>
