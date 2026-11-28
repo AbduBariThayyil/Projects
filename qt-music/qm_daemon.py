@@ -162,8 +162,13 @@ class GstEngine:
         for sink_name in ("pipewiresink", "pulsesink", "autoaudiosink"):
             asink = self.Gst.ElementFactory.make(sink_name, None)
             if asink:
-                if sink_name in ("pipewiresink", "pulsesink") and asink.find_property("client-name"):
-                    asink.set_property("client-name", "qt-music")
+                if sink_name in ("pipewiresink", "pulsesink"):
+                    if asink.find_property("client-name"):
+                        asink.set_property("client-name", "qt-music")
+                    if asink.find_property("stream-properties"):
+                        st_props = self.Gst.Structure.new_from_string("props,application.name=qt-music,media.role=music")
+                        if st_props:
+                            asink.set_property("stream-properties", st_props)
                 self.pb.set_property("audio-sink", asink)
                 break
         self._state = "Stopped"
