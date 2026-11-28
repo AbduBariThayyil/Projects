@@ -234,14 +234,16 @@ static gboolean headless_integration_tick(gpointer user_data) {
     printf("  [INTEGRATION] UI initialized successfully in headless X11.\n");
     assert(app_state.window != NULL);
     assert(app_state.entry != NULL);
-    assert(app_state.listbox != NULL);
+    assert(app_state.flowbox != NULL);
     assert(app_state.cmd_row != NULL);
     assert(app_state.apps != NULL && app_state.apps->len > 0);
+    assert(gtk_flow_box_get_max_children_per_line(GTK_FLOW_BOX(app_state.flowbox)) == LAUNCHER_COLS);
 
     /* Test search entry change to '!' */
     gtk_entry_set_text(GTK_ENTRY(app_state.entry), "!echo hello");
     on_search_changed(GTK_SEARCH_ENTRY(app_state.entry), NULL);
     assert(g_strcmp0(app_state.current_query, "!echo hello") == 0);
+    assert(gtk_flow_box_get_max_children_per_line(GTK_FLOW_BOX(app_state.flowbox)) == 1);
     const char *lbl_text = gtk_label_get_text(GTK_LABEL(app_state.cmd_title_label));
     assert(g_strcmp0(lbl_text, "Execute: echo hello") == 0);
 
@@ -249,9 +251,26 @@ static gboolean headless_integration_tick(gpointer user_data) {
     gtk_entry_set_text(GTK_ENTRY(app_state.entry), "term");
     on_search_changed(GTK_SEARCH_ENTRY(app_state.entry), NULL);
     assert(g_strcmp0(app_state.current_query, "term") == 0);
+    assert(gtk_flow_box_get_max_children_per_line(GTK_FLOW_BOX(app_state.flowbox)) == LAUNCHER_COLS);
+
+    /* Test click inside does NOT quit, click outside DOES quit */
+    int wx = 0, wy = 0;
+    gdk_window_get_origin(gtk_widget_get_window(app_state.window), &wx, &wy);
+    GdkEventButton inside_ev = {0};
+    inside_ev.type = GDK_BUTTON_PRESS;
+    inside_ev.x_root = wx + 20;
+    inside_ev.y_root = wy + 20;
+    assert(on_window_button_press(app_state.window, &inside_ev, NULL) == GDK_EVENT_PROPAGATE);
+    assert(is_quitting == FALSE);
+
+    GdkEventButton outside_ev = {0};
+    outside_ev.type = GDK_BUTTON_PRESS;
+    outside_ev.x_root = wx - 20;
+    outside_ev.y_root = wy - 20;
+    assert(on_window_button_press(app_state.window, &outside_ev, NULL) == GDK_EVENT_STOP);
+    assert(is_quitting == TRUE);
 
     printf("  [INTEGRATION] All integration assertions passed. Quitting cleanly.\n");
-    safe_quit();
     return G_SOURCE_REMOVE;
 }
 
