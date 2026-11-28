@@ -116,22 +116,29 @@ static void kill_competing_agents(void) {
 int main(int argc, char *argv[]) {
     gboolean opt_replace = FALSE;
     gboolean opt_test_dialog = FALSE;
+    gboolean opt_dialog_worker = FALSE;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
-            g_print("sys-polkit version %s (Catppuccin Mocha GTK3)\n", SYS_POLKIT_VERSION);
+            g_print("sys-polkit version %s (Dusk Horizon GTK3)\n", SYS_POLKIT_VERSION);
             return 0;
         } else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--replace") == 0) {
             opt_replace = TRUE;
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--test-dialog") == 0) {
             opt_test_dialog = TRUE;
+        } else if (strcmp(argv[i], "--dialog-worker") == 0) {
+            opt_dialog_worker = TRUE;
         } else {
             g_printerr("sys-polkit: Unknown option '%s'. Use --help for usage.\n", argv[i]);
             return 1;
         }
+    }
+
+    if (opt_dialog_worker) {
+        return sys_polkit_dialog_run_worker();
     }
 
     if (opt_test_dialog) {

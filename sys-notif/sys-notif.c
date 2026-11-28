@@ -72,45 +72,45 @@ static const gchar introspection_xml[] =
   "  </interface>"
   "</node>";
 
-/* Catppuccin Mocha Color Palette */
-#define COLOR_BASE_R    (30.0 / 255.0)
-#define COLOR_BASE_G    (30.0 / 255.0)
-#define COLOR_BASE_B    (46.0 / 255.0)
+/* Dusk Horizon Color Palette (matched to wallpaper2.jpg) */
+#define COLOR_BASE_R    (24.0 / 255.0)
+#define COLOR_BASE_G    (26.0 / 255.0)
+#define COLOR_BASE_B    (44.0 / 255.0)
 #define COLOR_BASE_A    0.95
 
-#define COLOR_MANTLE_R  (24.0 / 255.0)
-#define COLOR_MANTLE_G  (24.0 / 255.0)
-#define COLOR_MANTLE_B  (37.0 / 255.0)
+#define COLOR_MANTLE_R  (19.0 / 255.0)
+#define COLOR_MANTLE_G  (21.0 / 255.0)
+#define COLOR_MANTLE_B  (35.0 / 255.0)
 #define COLOR_MANTLE_A  0.94
 
-#define COLOR_SURFACE_R (49.0 / 255.0)
-#define COLOR_SURFACE_G (50.0 / 255.0)
-#define COLOR_SURFACE_B (68.0 / 255.0)
-#define COLOR_SURFACE_A 0.85
+#define COLOR_SURFACE_R (35.0 / 255.0)
+#define COLOR_SURFACE_G (36.0 / 255.0)
+#define COLOR_SURFACE_B (59.0 / 255.0)
+#define COLOR_SURFACE_A 0.88
 
-#define COLOR_TEXT_R    (205.0 / 255.0)
-#define COLOR_TEXT_G    (214.0 / 255.0)
-#define COLOR_TEXT_B    (244.0 / 255.0)
+#define COLOR_TEXT_R    (243.0 / 255.0)
+#define COLOR_TEXT_G    (230.0 / 255.0)
+#define COLOR_TEXT_B    (220.0 / 255.0)
 
-#define COLOR_SUBTEXT_R (166.0 / 255.0)
+#define COLOR_SUBTEXT_R (184.0 / 255.0)
 #define COLOR_SUBTEXT_G (173.0 / 255.0)
-#define COLOR_SUBTEXT_B (200.0 / 255.0)
+#define COLOR_SUBTEXT_B (196.0 / 255.0)
 
-#define COLOR_BLUE_R    (137.0 / 255.0)
-#define COLOR_BLUE_G    (180.0 / 255.0)
-#define COLOR_BLUE_B    (250.0 / 255.0)
+#define COLOR_BLUE_R    (123.0 / 255.0)
+#define COLOR_BLUE_G    (155.0 / 255.0)
+#define COLOR_BLUE_B    (224.0 / 255.0)
 
-#define COLOR_PEACH_R   (250.0 / 255.0)
-#define COLOR_PEACH_G   (179.0 / 255.0)
-#define COLOR_PEACH_B   (135.0 / 255.0)
+#define COLOR_PEACH_R   (247.0 / 255.0)
+#define COLOR_PEACH_G   (178.0 / 255.0)
+#define COLOR_PEACH_B   (119.0 / 255.0)
 
-#define COLOR_RED_R     (243.0 / 255.0)
-#define COLOR_RED_G     (139.0 / 255.0)
-#define COLOR_RED_B     (168.0 / 255.0)
+#define COLOR_RED_R     (235.0 / 255.0)
+#define COLOR_RED_G     (111.0 / 255.0)
+#define COLOR_RED_B     (124.0 / 255.0)
 
-#define COLOR_GREEN_R   (166.0 / 255.0)
-#define COLOR_GREEN_G   (227.0 / 255.0)
-#define COLOR_GREEN_B   (161.0 / 255.0)
+#define COLOR_GREEN_R   (141.0 / 255.0)
+#define COLOR_GREEN_G   (211.0 / 255.0)
+#define COLOR_GREEN_B   (158.0 / 255.0)
 
 /* X11 & App State */
 static Display *dpy = NULL;
@@ -2482,9 +2482,9 @@ static void render_notification(NotificationItem *item) {
         pango_layout_set_width(layout, text_available_w * PANGO_SCALE);
         char reel_body[128];
         if (item->reel_count == 1) {
-            snprintf(reel_body, sizeof(reel_body), "<span foreground=\"#cdd6f4\">• Sent a reel</span>");
+            snprintf(reel_body, sizeof(reel_body), "<span foreground=\"#f3e6dc\">• Sent a reel</span>");
         } else {
-            snprintf(reel_body, sizeof(reel_body), "<span foreground=\"#cdd6f4\">• Sent %d reels</span>", item->reel_count);
+            snprintf(reel_body, sizeof(reel_body), "<span foreground=\"#f3e6dc\">• Sent %d reels</span>", item->reel_count);
         }
         pango_layout_set_markup(layout, reel_body, -1);
         cairo_move_to(cr, content_x, body_y);
@@ -4079,15 +4079,15 @@ int main(int argc, char *argv[]) {
         }
         if (dnd) {
             if (count == 0) {
-                printf("%%{F#fab387}󰂛%%{F-}\n");
+                printf("%%{F#f7b277}󰂛%%{F-}\n");
             } else {
-                printf("%%{F#fab387}󰂛%%{F-} %%{F#cdd6f4}%d%%{F-}\n", count);
+                printf("%%{F#f7b277}󰂛%%{F-} %%{F#f3e6dc}%d%%{F-}\n", count);
             }
         } else {
             if (count == 0) {
-                printf("%%{F#6c7086}󰂚%%{F-}\n");
+                printf("%%{F#7c6d8a}󰂚%%{F-}\n");
             } else {
-                printf("%%{F#89b4fa}󱅫%%{F-} %%{F#cdd6f4}%d%%{F-}\n", count);
+                printf("%%{F#f7b277}󱅫%%{F-} %%{F#f3e6dc}%d%%{F-}\n", count);
             }
         }
         return 0;

@@ -88,7 +88,8 @@ static void test_dialog_layout_and_mechanics(int argc, char *argv[]) {
     /* Test prompt updates */
     sys_polkit_dialog_set_prompt(dlg, "Enter superuser password:", FALSE);
 
-    /* Test error updates */
+    /* Test info & error updates */
+    sys_polkit_dialog_set_info(dlg, "Place your finger on the fingerprint reader");
     sys_polkit_dialog_set_error(dlg, "Invalid credentials, try again.");
 
     /* Test sensitivity */
@@ -102,6 +103,13 @@ static void test_dialog_layout_and_mechanics(int argc, char *argv[]) {
             gtk_main_iteration_do(FALSE);
         }
     }
+
+    /* Verify compact dialog dimensions */
+    int width = 0, height = 0;
+    gtk_window_get_size(GTK_WINDOW(win), &width, &height);
+    assert(width > 0 && width <= 440);
+    assert(height > 0 && height <= 340);
+    printf("  -> Dialog size verified: %dx%d px\n", width, height);
 
     /* Test clearing entry */
     sys_polkit_dialog_clear_entry(dlg);

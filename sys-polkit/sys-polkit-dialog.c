@@ -1,6 +1,8 @@
 #include "sys-polkit-dialog.h"
 #include <pwd.h>
 #include <grp.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <gdk/gdkkeysyms.h>
 
@@ -15,6 +17,7 @@ struct _SysPolkitDialog {
     GtkWidget *identity_single_label;
     GtkWidget *prompt_label;
     GtkWidget *entry;
+    GtkWidget *info_label;
     GtkWidget *error_label;
     GtkWidget *btn_cancel;
     GtkWidget *btn_auth;
@@ -27,115 +30,121 @@ struct _SysPolkitDialog {
 
 static const char *CATPPUCCIN_CSS =
 "window.sys-polkit-window {\n"
-"    background-color: #1e1e2e;\n"
-"    border: 2px solid #cba6f7;\n"
-"    border-radius: 14px;\n"
+"    background-color: #181a2c;\n"
+"    border: 2px solid #f7b277;\n"
+"    border-radius: 10px;\n"
 "}\n"
 ".auth-card {\n"
-"    padding: 22px 24px;\n"
-"    background-color: #1e1e2e;\n"
+"    padding: 14px 16px;\n"
+"    background-color: #181a2c;\n"
 "}\n"
 ".auth-title {\n"
 "    font-family: 'JetBrainsMono Nerd Font', 'Noto Sans', sans-serif;\n"
-"    font-size: 13pt;\n"
+"    font-size: 11pt;\n"
 "    font-weight: 800;\n"
-"    color: #cdd6f4;\n"
+"    color: #f3e6dc;\n"
 "}\n"
 ".auth-message {\n"
 "    font-family: 'JetBrainsMono Nerd Font', 'Noto Sans', sans-serif;\n"
-"    font-size: 10pt;\n"
-"    color: #bac2de;\n"
+"    font-size: 9pt;\n"
+"    color: #b8adc4;\n"
 "}\n"
 ".auth-action-id {\n"
 "    font-family: 'JetBrainsMono Nerd Font', monospace;\n"
-"    font-size: 8.5pt;\n"
-"    color: #6c7086;\n"
-"    margin-top: 2px;\n"
+"    font-size: 8pt;\n"
+"    color: #7c6d8a;\n"
+"    margin-top: 1px;\n"
 "}\n"
 ".auth-id-header {\n"
 "    font-family: 'JetBrainsMono Nerd Font', sans-serif;\n"
-"    font-size: 9.5pt;\n"
+"    font-size: 8.5pt;\n"
 "    font-weight: 600;\n"
-"    color: #89b4fa;\n"
+"    color: #8ecae6;\n"
 "}\n"
 ".auth-id-badge {\n"
 "    font-family: 'JetBrainsMono Nerd Font', monospace;\n"
-"    font-size: 9.5pt;\n"
+"    font-size: 8.5pt;\n"
 "    font-weight: 700;\n"
-"    color: #b4befe;\n"
-"    background-color: #313244;\n"
-"    border-radius: 6px;\n"
-"    padding: 3px 10px;\n"
+"    color: #f7b277;\n"
+"    background-color: #23243b;\n"
+"    border-radius: 5px;\n"
+"    padding: 2px 8px;\n"
 "}\n"
 ".auth-prompt-label {\n"
 "    font-family: 'JetBrainsMono Nerd Font', sans-serif;\n"
-"    font-size: 9pt;\n"
+"    font-size: 8.5pt;\n"
 "    font-weight: 600;\n"
-"    color: #a6adc8;\n"
-"    margin-bottom: 2px;\n"
+"    color: #b8adc4;\n"
+"    margin-bottom: 1px;\n"
 "}\n"
 "entry.auth-entry {\n"
-"    background-color: #181825;\n"
-"    border: 1.5px solid #45475a;\n"
-"    border-radius: 8px;\n"
-"    color: #cdd6f4;\n"
+"    background-color: #131523;\n"
+"    border: 1.5px solid #343252;\n"
+"    border-radius: 7px;\n"
+"    color: #f3e6dc;\n"
 "    font-family: 'JetBrainsMono Nerd Font', monospace;\n"
-"    font-size: 11pt;\n"
-"    padding: 8px 12px;\n"
-"    caret-color: #cba6f7;\n"
+"    font-size: 9.5pt;\n"
+"    padding: 6px 10px;\n"
+"    caret-color: #f7b277;\n"
 "}\n"
 "entry.auth-entry:selected {\n"
-"    background-color: #585b70;\n"
-"    color: #cdd6f4;\n"
+"    background-color: #343252;\n"
+"    color: #f3e6dc;\n"
 "}\n"
 "entry.auth-entry:focus {\n"
-"    border-color: #cba6f7;\n"
+"    border-color: #f7b277;\n"
+"}\n"
+".auth-info {\n"
+"    font-family: 'JetBrainsMono Nerd Font', sans-serif;\n"
+"    font-size: 8.5pt;\n"
+"    font-weight: 600;\n"
+"    color: #8ecae6;\n"
+"    margin-top: 2px;\n"
 "}\n"
 ".auth-error {\n"
 "    font-family: 'JetBrainsMono Nerd Font', sans-serif;\n"
-"    font-size: 9.5pt;\n"
+"    font-size: 8.5pt;\n"
 "    font-weight: 700;\n"
-"    color: #f38ba8;\n"
-"    margin-top: 4px;\n"
-"    margin-bottom: 2px;\n"
+"    color: #eb6f7c;\n"
+"    margin-top: 2px;\n"
 "}\n"
 "button.btn-cancel {\n"
-"    background-color: #313244;\n"
-"    color: #cdd6f4;\n"
+"    background-color: #23243b;\n"
+"    color: #f3e6dc;\n"
 "    font-family: 'JetBrainsMono Nerd Font', sans-serif;\n"
-"    font-size: 10pt;\n"
+"    font-size: 9pt;\n"
 "    font-weight: 600;\n"
-"    border-radius: 8px;\n"
-"    border: 1px solid #45475a;\n"
-"    padding: 7px 18px;\n"
+"    border-radius: 7px;\n"
+"    border: 1px solid #343252;\n"
+"    padding: 5px 14px;\n"
 "}\n"
 "button.btn-cancel:hover {\n"
-"    background-color: #45475a;\n"
-"    color: #ffffff;\n"
+"    background-color: #343252;\n"
+"    color: #fcf4eb;\n"
 "}\n"
 "button.btn-auth {\n"
-"    background-color: #cba6f7;\n"
-"    color: #11111b;\n"
+"    background-color: #f7b277;\n"
+"    color: #131523;\n"
 "    font-family: 'JetBrainsMono Nerd Font', sans-serif;\n"
-"    font-size: 10pt;\n"
+"    font-size: 9pt;\n"
 "    font-weight: 700;\n"
-"    border-radius: 8px;\n"
-"    border: 1px solid #cba6f7;\n"
-"    padding: 7px 22px;\n"
+"    border-radius: 7px;\n"
+"    border: 1px solid #f7b277;\n"
+"    padding: 5px 16px;\n"
 "}\n"
 "button.btn-auth:hover {\n"
-"    background-color: #b4befe;\n"
-"    border-color: #b4befe;\n"
+"    background-color: #f9d68b;\n"
+"    border-color: #f9d68b;\n"
 "}\n"
 "button.btn-auth:disabled, entry.auth-entry:disabled {\n"
 "    opacity: 0.6;\n"
 "}\n"
 "combobox button {\n"
-"    background-color: #181825;\n"
-"    border: 1.5px solid #45475a;\n"
+"    background-color: #131523;\n"
+"    border: 1.5px solid #343252;\n"
 "    border-radius: 6px;\n"
-"    color: #cdd6f4;\n"
-"    padding: 4px 10px;\n"
+"    color: #f3e6dc;\n"
+"    padding: 3px 8px;\n"
 "}\n";
 
 static gboolean s_styles_initialized = FALSE;
@@ -262,7 +271,7 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
     gtk_window_set_title(GTK_WINDOW(dlg->window), "Authentication Required");
     gtk_window_set_role(GTK_WINDOW(dlg->window), SYS_POLKIT_WM_CLASS);
     gtk_window_set_position(GTK_WINDOW(dlg->window), GTK_WIN_POS_CENTER_ALWAYS);
-    gtk_window_set_default_size(GTK_WINDOW(dlg->window), 450, 260);
+    gtk_window_set_default_size(GTK_WINDOW(dlg->window), 360, -1);
     gtk_window_set_resizable(GTK_WINDOW(dlg->window), FALSE);
     gtk_window_set_type_hint(GTK_WINDOW(dlg->window), GDK_WINDOW_TYPE_HINT_DIALOG);
     gtk_window_set_modal(GTK_WINDOW(dlg->window), TRUE);
@@ -277,13 +286,13 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
     g_signal_connect(dlg->window, "delete-event", G_CALLBACK(on_window_delete_event), dlg);
 
     /* Main Box */
-    GtkWidget *main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    GtkWidget *main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     GtkStyleContext *card_ctx = gtk_widget_get_style_context(main_box);
     gtk_style_context_add_class(card_ctx, "auth-card");
     gtk_container_add(GTK_CONTAINER(dlg->window), main_box);
 
     /* Header Row (Icon + Title & Description) */
-    GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_box_pack_start(GTK_BOX(main_box), header_box, FALSE, FALSE, 0);
 
     /* Icon */
@@ -295,13 +304,13 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
             chosen_icon = "system-lock-screen";
         }
     }
-    dlg->icon_widget = gtk_image_new_from_icon_name(chosen_icon, GTK_ICON_SIZE_DIALOG);
-    gtk_image_set_pixel_size(GTK_IMAGE(dlg->icon_widget), 48);
+    dlg->icon_widget = gtk_image_new_from_icon_name(chosen_icon, GTK_ICON_SIZE_DND);
+    gtk_image_set_pixel_size(GTK_IMAGE(dlg->icon_widget), 32);
     gtk_widget_set_valign(dlg->icon_widget, GTK_ALIGN_START);
     gtk_box_pack_start(GTK_BOX(header_box), dlg->icon_widget, FALSE, FALSE, 0);
 
     /* Header text vbox */
-    GtkWidget *text_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    GtkWidget *text_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
     gtk_box_pack_start(GTK_BOX(header_box), text_box, TRUE, TRUE, 0);
 
     dlg->title_label = gtk_label_new("Authentication Required");
@@ -317,7 +326,9 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
     gtk_widget_set_halign(dlg->message_label, GTK_ALIGN_START);
     gtk_label_set_line_wrap(GTK_LABEL(dlg->message_label), TRUE);
     gtk_label_set_line_wrap_mode(GTK_LABEL(dlg->message_label), PANGO_WRAP_WORD_CHAR);
-    gtk_label_set_max_width_chars(GTK_LABEL(dlg->message_label), 46);
+    gtk_label_set_max_width_chars(GTK_LABEL(dlg->message_label), 40);
+    gtk_label_set_lines(GTK_LABEL(dlg->message_label), 3);
+    gtk_label_set_ellipsize(GTK_LABEL(dlg->message_label), PANGO_ELLIPSIZE_END);
     GtkStyleContext *msg_ctx = gtk_widget_get_style_context(dlg->message_label);
     gtk_style_context_add_class(msg_ctx, "auth-message");
     gtk_box_pack_start(GTK_BOX(text_box), dlg->message_label, FALSE, FALSE, 0);
@@ -327,6 +338,8 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
         dlg->action_label = gtk_label_new(action_str);
         g_free(action_str);
         gtk_widget_set_halign(dlg->action_label, GTK_ALIGN_START);
+        gtk_label_set_max_width_chars(GTK_LABEL(dlg->action_label), 38);
+        gtk_label_set_ellipsize(GTK_LABEL(dlg->action_label), PANGO_ELLIPSIZE_MIDDLE);
         GtkStyleContext *act_ctx = gtk_widget_get_style_context(dlg->action_label);
         gtk_style_context_add_class(act_ctx, "auth-action-id");
         gtk_box_pack_start(GTK_BOX(text_box), dlg->action_label, FALSE, FALSE, 0);
@@ -409,18 +422,30 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
     g_signal_connect(dlg->entry, "key-press-event", G_CALLBACK(on_window_key_press), dlg);
     gtk_box_pack_start(GTK_BOX(main_box), dlg->entry, FALSE, FALSE, 0);
 
+    /* Info Label */
+    dlg->info_label = gtk_label_new("");
+    gtk_widget_set_halign(dlg->info_label, GTK_ALIGN_START);
+    gtk_label_set_line_wrap(GTK_LABEL(dlg->info_label), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(dlg->info_label), 42);
+    GtkStyleContext *info_ctx = gtk_widget_get_style_context(dlg->info_label);
+    gtk_style_context_add_class(info_ctx, "auth-info");
+    gtk_widget_set_no_show_all(dlg->info_label, TRUE);
+    gtk_box_pack_start(GTK_BOX(main_box), dlg->info_label, FALSE, FALSE, 0);
+
     /* Error Label */
     dlg->error_label = gtk_label_new("");
     gtk_widget_set_halign(dlg->error_label, GTK_ALIGN_START);
+    gtk_label_set_line_wrap(GTK_LABEL(dlg->error_label), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(dlg->error_label), 42);
     GtkStyleContext *err_ctx = gtk_widget_get_style_context(dlg->error_label);
     gtk_style_context_add_class(err_ctx, "auth-error");
     gtk_widget_set_no_show_all(dlg->error_label, TRUE);
     gtk_box_pack_start(GTK_BOX(main_box), dlg->error_label, FALSE, FALSE, 0);
 
     /* Button Row */
-    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_widget_set_halign(btn_box, GTK_ALIGN_END);
-    gtk_box_pack_start(GTK_BOX(main_box), btn_box, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(main_box), btn_box, FALSE, FALSE, 2);
 
     dlg->btn_cancel = gtk_button_new_with_label("Cancel");
     GtkStyleContext *can_ctx = gtk_widget_get_style_context(dlg->btn_cancel);
@@ -458,6 +483,18 @@ void sys_polkit_dialog_set_error(SysPolkitDialog *dialog, const gchar *error_msg
     } else {
         gtk_label_set_text(GTK_LABEL(dialog->error_label), "");
         gtk_widget_hide(dialog->error_label);
+    }
+}
+
+void sys_polkit_dialog_set_info(SysPolkitDialog *dialog, const gchar *info_msg) {
+    if (dialog == NULL || dialog->info_label == NULL) return;
+    if (info_msg != NULL && info_msg[0] != '\0') {
+        gtk_label_set_text(GTK_LABEL(dialog->info_label), info_msg);
+        gtk_widget_set_no_show_all(dialog->info_label, FALSE);
+        gtk_widget_show(dialog->info_label);
+    } else {
+        gtk_label_set_text(GTK_LABEL(dialog->info_label), "");
+        gtk_widget_hide(dialog->info_label);
     }
 }
 
@@ -529,4 +566,171 @@ void sys_polkit_dialog_destroy(SysPolkitDialog *dialog) {
         dialog->window = NULL;
     }
     g_free(dialog);
+}
+
+typedef struct {
+    GMainLoop *loop;
+    SysPolkitDialog *dialog;
+    GList *identities;
+} WorkerState;
+
+static gchar *decode_b64_str(const gchar *b64) {
+    if (b64 == NULL || b64[0] == '\0' || g_strcmp0(b64, "-") == 0) {
+        return g_strdup("");
+    }
+    gsize out_len = 0;
+    guchar *raw = g_base64_decode(b64, &out_len);
+    gchar *res = g_malloc(out_len + 1);
+    if (out_len > 0) memcpy(res, raw, out_len);
+    res[out_len] = '\0';
+    g_free(raw);
+    return res;
+}
+
+static void worker_on_submit(const gchar *password, gpointer user_data) {
+    (void)user_data;
+    const gchar *pw = password ? password : "";
+    gchar *b64 = g_base64_encode((const guchar *)pw, strlen(pw));
+    fprintf(stdout, "SUBMIT\t%s\n", b64);
+    fflush(stdout);
+    explicit_bzero(b64, strlen(b64));
+    g_free(b64);
+}
+
+static void worker_on_cancel(gpointer user_data) {
+    (void)user_data;
+    fprintf(stdout, "CANCEL\n");
+    fflush(stdout);
+}
+
+static void worker_on_identity(PolkitIdentity *identity, gpointer user_data) {
+    WorkerState *st = (WorkerState *)user_data;
+    gint idx = g_list_index(st->identities, identity);
+    if (idx >= 0) {
+        fprintf(stdout, "IDENTITY\t%d\n", idx);
+        fflush(stdout);
+    }
+}
+
+static gboolean worker_on_stdin(GIOChannel *src, GIOCondition cond, gpointer user_data) {
+    WorkerState *st = (WorkerState *)user_data;
+    if (cond & (G_IO_HUP | G_IO_ERR)) {
+        if (st->loop && g_main_loop_is_running(st->loop)) {
+            g_main_loop_quit(st->loop);
+        }
+        return G_SOURCE_REMOVE;
+    }
+
+    gchar *line = NULL;
+    gsize len = 0;
+    GError *err = NULL;
+    GIOStatus status = g_io_channel_read_line(src, &line, &len, NULL, &err);
+    if (status == G_IO_STATUS_AGAIN) {
+        g_clear_error(&err);
+        return G_SOURCE_CONTINUE;
+    }
+    if (status != G_IO_STATUS_NORMAL || line == NULL) {
+        g_clear_error(&err);
+        g_free(line);
+        if (st->loop && g_main_loop_is_running(st->loop)) {
+            g_main_loop_quit(st->loop);
+        }
+        return G_SOURCE_REMOVE;
+    }
+
+    g_strchomp(line);
+    gchar **parts = g_strsplit(line, "\t", -1);
+    const gchar *cmd = (parts != NULL && parts[0] != NULL) ? parts[0] : "";
+
+    if (g_strcmp0(cmd, "INIT") == 0 && parts[1] && parts[2] && parts[3] && parts[4] && st->dialog == NULL) {
+        gchar *action_id = decode_b64_str(parts[1]);
+        gchar *message = decode_b64_str(parts[2]);
+        gchar *icon_name = decode_b64_str(parts[3]);
+        int n_ids = atoi(parts[4]);
+
+        for (int i = 0; i < n_ids && parts[5 + i] != NULL; i++) {
+            gchar *id_str = decode_b64_str(parts[5 + i]);
+            GError *id_err = NULL;
+            PolkitIdentity *id = polkit_identity_from_string(id_str, &id_err);
+            g_clear_error(&id_err);
+            if (id != NULL) {
+                st->identities = g_list_append(st->identities, id);
+            }
+            g_free(id_str);
+        }
+
+        SysPolkitDialogCallbacks cb = {
+            .on_submit = worker_on_submit,
+            .on_cancel = worker_on_cancel,
+            .on_identity_changed = worker_on_identity,
+            .user_data = st
+        };
+        st->dialog = sys_polkit_dialog_new(action_id, message, icon_name, NULL, st->identities, &cb);
+        sys_polkit_dialog_show(st->dialog);
+
+        g_free(action_id);
+        g_free(message);
+        g_free(icon_name);
+    } else if (g_strcmp0(cmd, "INFO") == 0 && st->dialog != NULL) {
+        gchar *msg = parts[1] ? decode_b64_str(parts[1]) : g_strdup("");
+        sys_polkit_dialog_set_info(st->dialog, msg);
+        g_free(msg);
+    } else if (g_strcmp0(cmd, "ERROR") == 0 && st->dialog != NULL) {
+        gchar *msg = parts[1] ? decode_b64_str(parts[1]) : g_strdup("");
+        sys_polkit_dialog_set_error(st->dialog, msg);
+        g_free(msg);
+    } else if (g_strcmp0(cmd, "PROMPT") == 0 && parts[1] && st->dialog != NULL) {
+        gboolean echo_on = (atoi(parts[1]) != 0);
+        gchar *prompt = parts[2] ? decode_b64_str(parts[2]) : g_strdup("");
+        sys_polkit_dialog_set_prompt(st->dialog, prompt, echo_on);
+        g_free(prompt);
+    } else if (g_strcmp0(cmd, "SENSITIVE") == 0 && parts[1] && st->dialog != NULL) {
+        sys_polkit_dialog_set_sensitive(st->dialog, atoi(parts[1]) != 0);
+    } else if (g_strcmp0(cmd, "CLEAR") == 0 && st->dialog != NULL) {
+        sys_polkit_dialog_clear_entry(st->dialog);
+    } else if (g_strcmp0(cmd, "FOCUS") == 0 && st->dialog != NULL) {
+        sys_polkit_dialog_focus_entry(st->dialog);
+    } else if (g_strcmp0(cmd, "QUIT") == 0) {
+        g_strfreev(parts);
+        g_free(line);
+        if (st->loop && g_main_loop_is_running(st->loop)) {
+            g_main_loop_quit(st->loop);
+        }
+        return G_SOURCE_REMOVE;
+    }
+
+    g_strfreev(parts);
+    g_free(line);
+    return G_SOURCE_CONTINUE;
+}
+
+int sys_polkit_dialog_run_worker(void) {
+    if (!gtk_init_check(NULL, NULL)) {
+        return 1;
+    }
+
+    WorkerState st = {
+        .loop = g_main_loop_new(NULL, FALSE),
+        .dialog = NULL,
+        .identities = NULL
+    };
+
+    GIOChannel *in_ch = g_io_channel_unix_new(STDIN_FILENO);
+    g_io_channel_set_encoding(in_ch, NULL, NULL);
+    g_io_channel_set_flags(in_ch, G_IO_FLAG_NONBLOCK, NULL);
+    g_io_add_watch(in_ch, G_IO_IN | G_IO_HUP | G_IO_ERR, worker_on_stdin, &st);
+
+    g_main_loop_run(st.loop);
+
+    if (st.dialog != NULL) {
+        sys_polkit_dialog_destroy(st.dialog);
+        st.dialog = NULL;
+    }
+    if (st.identities != NULL) {
+        g_list_free_full(st.identities, g_object_unref);
+        st.identities = NULL;
+    }
+    g_io_channel_unref(in_ch);
+    g_main_loop_unref(st.loop);
+    return 0;
 }

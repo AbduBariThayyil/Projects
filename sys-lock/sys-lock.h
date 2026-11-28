@@ -63,50 +63,50 @@ typedef enum {
     UI_STATE_FPRINT_WARNING
 } UiState;
 
-/* Catppuccin Mocha Color Palette (sRGB Normalized 0.0 - 1.0) */
-#define COLOR_BASE_R      (30.0  / 255.0)
-#define COLOR_BASE_G      (30.0  / 255.0)
-#define COLOR_BASE_B      (46.0  / 255.0)
+/* Dusk Horizon Color Palette (matched to wallpaper2.jpg) */
+#define COLOR_BASE_R      (24.0  / 255.0)
+#define COLOR_BASE_G      (26.0  / 255.0)
+#define COLOR_BASE_B      (44.0  / 255.0)
 
-#define COLOR_MANTLE_R    (24.0  / 255.0)
-#define COLOR_MANTLE_G    (24.0  / 255.0)
-#define COLOR_MANTLE_B    (37.0  / 255.0)
+#define COLOR_MANTLE_R    (19.0  / 255.0)
+#define COLOR_MANTLE_G    (21.0  / 255.0)
+#define COLOR_MANTLE_B    (35.0  / 255.0)
 
-#define COLOR_CRUST_R     (17.0  / 255.0)
-#define COLOR_CRUST_G     (17.0  / 255.0)
-#define COLOR_CRUST_B     (27.0  / 255.0)
+#define COLOR_CRUST_R     (14.0  / 255.0)
+#define COLOR_CRUST_G     (16.0  / 255.0)
+#define COLOR_CRUST_B     (28.0  / 255.0)
 
-#define COLOR_TEXT_R      (205.0 / 255.0)
-#define COLOR_TEXT_G      (214.0 / 255.0)
-#define COLOR_TEXT_B      (244.0 / 255.0)
+#define COLOR_TEXT_R      (243.0 / 255.0)
+#define COLOR_TEXT_G      (230.0 / 255.0)
+#define COLOR_TEXT_B      (220.0 / 255.0)
 
-#define COLOR_SUBTEXT_R   (166.0 / 255.0)
+#define COLOR_SUBTEXT_R   (184.0 / 255.0)
 #define COLOR_SUBTEXT_G   (173.0 / 255.0)
-#define COLOR_SUBTEXT_B   (200.0 / 255.0)
+#define COLOR_SUBTEXT_B   (196.0 / 255.0)
 
-#define COLOR_MAUVE_R     (203.0 / 255.0)
-#define COLOR_MAUVE_G     (166.0 / 255.0)
-#define COLOR_MAUVE_B     (247.0 / 255.0)
+#define COLOR_MAUVE_R     (247.0 / 255.0)
+#define COLOR_MAUVE_G     (178.0 / 255.0)
+#define COLOR_MAUVE_B     (119.0 / 255.0)
 
-#define COLOR_LAVENDER_R  (180.0 / 255.0)
-#define COLOR_LAVENDER_G  (190.0 / 255.0)
-#define COLOR_LAVENDER_B  (254.0 / 255.0)
+#define COLOR_LAVENDER_R  (200.0 / 255.0)
+#define COLOR_LAVENDER_G  (132.0 / 255.0)
+#define COLOR_LAVENDER_B  (166.0 / 255.0)
 
 #define COLOR_YELLOW_R    (249.0 / 255.0)
-#define COLOR_YELLOW_G    (226.0 / 255.0)
-#define COLOR_YELLOW_B    (175.0 / 255.0)
+#define COLOR_YELLOW_G    (214.0 / 255.0)
+#define COLOR_YELLOW_B    (139.0 / 255.0)
 
-#define COLOR_RED_R       (243.0 / 255.0)
-#define COLOR_RED_G       (139.0 / 255.0)
-#define COLOR_RED_B       (168.0 / 255.0)
+#define COLOR_RED_R       (235.0 / 255.0)
+#define COLOR_RED_G       (111.0 / 255.0)
+#define COLOR_RED_B       (124.0 / 255.0)
 
-#define COLOR_GREEN_R     (166.0 / 255.0)
-#define COLOR_GREEN_G     (227.0 / 255.0)
-#define COLOR_GREEN_B     (161.0 / 255.0)
+#define COLOR_GREEN_R     (141.0 / 255.0)
+#define COLOR_GREEN_G     (211.0 / 255.0)
+#define COLOR_GREEN_B     (158.0 / 255.0)
 
-#define COLOR_PEACH_R     (250.0 / 255.0)
-#define COLOR_PEACH_G     (179.0 / 255.0)
-#define COLOR_PEACH_B     (135.0 / 255.0)
+#define COLOR_PEACH_R     (247.0 / 255.0)
+#define COLOR_PEACH_G     (178.0 / 255.0)
+#define COLOR_PEACH_B     (119.0 / 255.0)
 
 /* Maximum lengths */
 #define MAX_PASSWORD_LEN 256

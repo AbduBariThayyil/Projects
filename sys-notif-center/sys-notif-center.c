@@ -128,30 +128,30 @@ static gboolean on_focus_out(GtkWidget *widget, GdkEventFocus *event, gpointer u
 }
 
 /* --------------------------------------------------------------------------
- * CSS Styling (Catppuccin Mocha)
+ * CSS Styling (Dusk Horizon — matched to wallpaper2.jpg)
  * -------------------------------------------------------------------------- */
 static const char *STYLE_CSS =
 "window.center-modal {\n"
-"    background-color: rgba(30, 30, 46, 0.95);\n"
-"    border: 1.5px solid rgba(137, 180, 250, 0.6);\n"
+"    background-color: rgba(24, 26, 44, 0.95);\n"
+"    border: 1.5px solid rgba(247, 178, 119, 0.65);\n"
 "    border-radius: 16px;\n"
 "}\n"
 "\n"
 ".header-bar {\n"
 "    padding: 14px 18px 10px 18px;\n"
-"    border-bottom: 1px solid rgba(49, 50, 68, 0.7);\n"
+"    border-bottom: 1px solid rgba(52, 50, 82, 0.75);\n"
 "}\n"
 "\n"
 ".header-title {\n"
 "    font-family: 'JetBrainsMono Nerd Font';\n"
 "    font-size: 13pt;\n"
 "    font-weight: bold;\n"
-"    color: #cdd6f4;\n"
+"    color: #f3e6dc;\n"
 "}\n"
 "\n"
 ".header-badge {\n"
-"    background-color: rgba(250, 179, 135, 0.22);\n"
-"    color: #fab387;\n"
+"    background-color: rgba(247, 178, 119, 0.22);\n"
+"    color: #f7b277;\n"
 "    font-family: 'JetBrains Mono';\n"
 "    font-size: 8.5pt;\n"
 "    font-weight: bold;\n"
@@ -160,23 +160,23 @@ static const char *STYLE_CSS =
 "}\n"
 "\n"
 ".btn-clear {\n"
-"    background-color: rgba(243, 139, 168, 0.18);\n"
-"    color: #f38ba8;\n"
+"    background-color: rgba(235, 111, 124, 0.18);\n"
+"    color: #eb6f7c;\n"
 "    font-family: 'JetBrainsMono Nerd Font';\n"
 "    font-size: 9pt;\n"
 "    font-weight: bold;\n"
 "    padding: 4px 12px;\n"
 "    border-radius: 8px;\n"
-"    border: 1px solid rgba(243, 139, 168, 0.4);\n"
+"    border: 1px solid rgba(235, 111, 124, 0.4);\n"
 "}\n"
 ".btn-clear:hover {\n"
-"    background-color: rgba(243, 139, 168, 0.35);\n"
-"    color: #ffffff;\n"
+"    background-color: rgba(235, 111, 124, 0.35);\n"
+"    color: #fcf4eb;\n"
 "}\n"
 "\n"
 ".btn-close {\n"
 "    background-color: transparent;\n"
-"    color: #a6adc8;\n"
+"    color: #b8adc4;\n"
 "    font-size: 11pt;\n"
 "    font-weight: bold;\n"
 "    padding: 4px 8px;\n"
@@ -184,8 +184,8 @@ static const char *STYLE_CSS =
 "    border: none;\n"
 "}\n"
 ".btn-close:hover {\n"
-"    background-color: rgba(243, 139, 168, 0.25);\n"
-"    color: #f38ba8;\n"
+"    background-color: rgba(235, 111, 124, 0.25);\n"
+"    color: #eb6f7c;\n"
 "}\n"
 "\n"
 ".cards-container {\n"
@@ -193,16 +193,16 @@ static const char *STYLE_CSS =
 "}\n"
 "\n"
 ".notif-card {\n"
-"    background-color: rgba(24, 24, 37, 0.75);\n"
-"    border: 1px solid rgba(49, 50, 68, 0.65);\n"
+"    background-color: rgba(19, 21, 35, 0.78);\n"
+"    border: 1px solid rgba(52, 50, 82, 0.7);\n"
 "    border-radius: 10px;\n"
 "    padding: 10px 14px;\n"
 "    margin-bottom: 8px;\n"
 "    transition: all 120ms ease;\n"
 "}\n"
 ".notif-card:hover {\n"
-"    background-color: rgba(49, 50, 68, 0.6);\n"
-"    border-color: rgba(137, 180, 250, 0.5);\n"
+"    background-color: rgba(35, 36, 59, 0.68);\n"
+"    border-color: rgba(247, 178, 119, 0.55);\n"
 "}\n"
 "\n"
 ".card-header {\n"
@@ -217,57 +217,57 @@ static const char *STYLE_CSS =
 "    border-radius: 6px;\n"
 "    margin-right: 6px;\n"
 "}\n"
-".tag-whatsapp  { background-color: rgba(166, 227, 161, 0.2); color: #a6e3a1; }\n"
-".tag-instagram { background-color: rgba(245, 194, 231, 0.2); color: #f5c2e7; }\n"
-".tag-discord   { background-color: rgba(180, 190, 254, 0.2); color: #b4befe; }\n"
-".tag-power     { background-color: rgba(250, 179, 135, 0.2); color: #fab387; }\n"
-".tag-default   { background-color: rgba(137, 180, 250, 0.2); color: #89b4fa; }\n"
+".tag-whatsapp  { background-color: rgba(141, 211, 158, 0.2); color: #8dd39e; }\n"
+".tag-instagram { background-color: rgba(200, 132, 166, 0.22); color: #dba0bd; }\n"
+".tag-discord   { background-color: rgba(123, 155, 224, 0.22); color: #9bb5eb; }\n"
+".tag-power     { background-color: rgba(247, 178, 119, 0.22); color: #f7b277; }\n"
+".tag-default   { background-color: rgba(142, 202, 230, 0.2); color: #8ecae6; }\n"
 "\n"
 ".card-title {\n"
 "    font-family: 'JetBrains Mono';\n"
 "    font-size: 10pt;\n"
 "    font-weight: bold;\n"
-"    color: #cdd6f4;\n"
+"    color: #f3e6dc;\n"
 "}\n"
 "\n"
 ".card-time {\n"
 "    font-family: 'JetBrains Mono';\n"
 "    font-size: 8pt;\n"
-"    color: #6c7086;\n"
+"    color: #7c6d8a;\n"
 "}\n"
 "\n"
 ".msg-line {\n"
 "    font-family: 'JetBrains Mono';\n"
 "    font-size: 9pt;\n"
-"    color: #cdd6f4;\n"
+"    color: #f3e6dc;\n"
 "    margin-top: 3px;\n"
 "}\n"
 "\n"
 ".msg-sender {\n"
-"    color: #89b4fa;\n"
+"    color: #f7b277;\n"
 "    font-weight: bold;\n"
 "}\n"
 "\n"
 ".msg-subtext {\n"
-"    color: #a6adc8;\n"
+"    color: #b8adc4;\n"
 "}\n"
 "\n"
 ".btn-dismiss-card {\n"
 "    background-color: transparent;\n"
-"    color: #6c7086;\n"
+"    color: #7c6d8a;\n"
 "    font-size: 9pt;\n"
 "    padding: 2px 6px;\n"
 "    border-radius: 4px;\n"
 "    border: none;\n"
 "}\n"
 ".btn-dismiss-card:hover {\n"
-"    color: #f38ba8;\n"
-"    background-color: rgba(243, 139, 168, 0.2);\n"
+"    color: #eb6f7c;\n"
+"    background-color: rgba(235, 111, 124, 0.2);\n"
 "}\n"
 "\n"
 ".btn-expand {\n"
-"    background-color: rgba(49, 50, 68, 0.4);\n"
-"    color: #fab387;\n"
+"    background-color: rgba(35, 36, 59, 0.55);\n"
+"    color: #f7b277;\n"
 "    font-family: 'JetBrains Mono';\n"
 "    font-size: 8.5pt;\n"
 "    font-weight: bold;\n"
@@ -277,7 +277,7 @@ static const char *STYLE_CSS =
 "    margin: 4px 0px;\n"
 "}\n"
 ".btn-expand:hover {\n"
-"    background-color: rgba(250, 179, 135, 0.2);\n"
+"    background-color: rgba(247, 178, 119, 0.22);\n"
 "}\n"
 "\n"
 ".empty-state {\n"
@@ -286,19 +286,19 @@ static const char *STYLE_CSS =
 ".empty-icon {\n"
 "    font-family: 'JetBrainsMono Nerd Font';\n"
 "    font-size: 36pt;\n"
-"    color: #6c7086;\n"
+"    color: #7c6d8a;\n"
 "}\n"
 ".empty-label {\n"
 "    font-family: 'JetBrains Mono';\n"
 "    font-size: 11pt;\n"
 "    font-weight: bold;\n"
-"    color: #cdd6f4;\n"
+"    color: #f3e6dc;\n"
 "    margin-top: 8px;\n"
 "}\n"
 ".empty-sub {\n"
 "    font-family: 'JetBrains Mono';\n"
 "    font-size: 9pt;\n"
-"    color: #6c7086;\n"
+"    color: #7c6d8a;\n"
 "}\n";
 
 /* --------------------------------------------------------------------------
@@ -524,7 +524,7 @@ static GdkPixbuf *pixbuf_round_crop(GdkPixbuf *src, int size) {
     /* Antialiased border ring */
     cairo_reset_clip(cr);
     cairo_arc(cr, r, r, r - 0.75, 0, 2 * M_PI);
-    cairo_set_source_rgba(cr, 137.0/255.0, 180.0/255.0, 250.0/255.0, 0.45);
+    cairo_set_source_rgba(cr, 247.0/255.0, 178.0/255.0, 119.0/255.0, 0.50);
     cairo_set_line_width(cr, 1.2);
     cairo_stroke(cr);
 
@@ -543,20 +543,20 @@ static GdkPixbuf *create_fallback_badge(const char *app, const char *title, int 
 
     char *low = g_ascii_strdown(app ? app : "", -1);
     if (strstr(low, "whatsapp")) {
-        cairo_set_source_rgb(cr, 166.0/255.0, 227.0/255.0, 161.0/255.0);
+        cairo_set_source_rgb(cr, 141.0/255.0, 211.0/255.0, 158.0/255.0);
     } else if (strstr(low, "instagram")) {
-        cairo_set_source_rgb(cr, 245.0/255.0, 194.0/255.0, 231.0/255.0);
+        cairo_set_source_rgb(cr, 200.0/255.0, 132.0/255.0, 166.0/255.0);
     } else if (strstr(low, "discord")) {
-        cairo_set_source_rgb(cr, 180.0/255.0, 190.0/255.0, 254.0/255.0);
+        cairo_set_source_rgb(cr, 123.0/255.0, 155.0/255.0, 224.0/255.0);
     } else if (strstr(low, "power")) {
-        cairo_set_source_rgb(cr, 250.0/255.0, 179.0/255.0, 135.0/255.0);
+        cairo_set_source_rgb(cr, 247.0/255.0, 178.0/255.0, 119.0/255.0);
     } else {
-        cairo_set_source_rgb(cr, 137.0/255.0, 180.0/255.0, 250.0/255.0);
+        cairo_set_source_rgb(cr, 142.0/255.0, 202.0/255.0, 230.0/255.0);
     }
     g_free(low);
 
     cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 24.0/255.0, 24.0/255.0, 37.0/255.0, 0.4);
+    cairo_set_source_rgba(cr, 19.0/255.0, 21.0/255.0, 35.0/255.0, 0.4);
     cairo_set_line_width(cr, 1.5);
     cairo_stroke(cr);
 
@@ -567,7 +567,7 @@ static GdkPixbuf *create_fallback_badge(const char *app, const char *title, int 
 
     cairo_select_font_face(cr, "JetBrains Mono", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
     cairo_set_font_size(cr, size * 0.48);
-    cairo_set_source_rgb(cr, 24.0/255.0, 24.0/255.0, 37.0/255.0);
+    cairo_set_source_rgb(cr, 19.0/255.0, 21.0/255.0, 35.0/255.0);
 
     cairo_text_extents_t ext;
     cairo_text_extents(cr, letter, &ext);
@@ -1213,10 +1213,10 @@ static GtkWidget *create_conversation_card(ConversationGroup *cg) {
             char *esc_body = safe_markup_escape(clean_b);
             char *line_str = NULL;
             if (m->sender && strlen(m->sender) > 0 && g_ascii_strcasecmp(m->sender, cg->app) != 0) {
-                line_str = g_strdup_printf("• <span foreground='#89b4fa'><b>%s:</b></span> <span foreground='#a6adc8'>%s</span>",
+                line_str = g_strdup_printf("• <span foreground='#f7b277'><b>%s:</b></span> <span foreground='#b8adc4'>%s</span>",
                                            esc_sender, esc_body);
             } else {
-                line_str = g_strdup_printf("• <span foreground='#a6adc8'>%s</span>", esc_body);
+                line_str = g_strdup_printf("• <span foreground='#b8adc4'>%s</span>", esc_body);
             }
             g_free(esc_sender);
             g_free(esc_body);
@@ -1249,7 +1249,7 @@ static GtkWidget *create_conversation_card(ConversationGroup *cg) {
             char *esc_body = safe_markup_escape(clean_b);
             char *line_str = NULL;
             if (m->sender && strlen(m->sender) > 0 && g_ascii_strcasecmp(m->sender, cg->app) != 0) {
-                line_str = g_strdup_printf("• <span foreground='#89b4fa'><b>%s:</b></span> %s",
+                line_str = g_strdup_printf("• <span foreground='#f7b277'><b>%s:</b></span> %s",
                                            esc_sender, esc_body);
             } else {
                 line_str = g_strdup_printf("• %s", esc_body);
@@ -1274,7 +1274,7 @@ static GtkWidget *create_conversation_card(ConversationGroup *cg) {
             char *esc_body = safe_markup_escape(clean_b);
             char *line_str = NULL;
             if (m->sender && strlen(m->sender) > 0 && g_ascii_strcasecmp(m->sender, cg->app) != 0) {
-                line_str = g_strdup_printf("• <span foreground='#89b4fa'><b>%s:</b></span> %s",
+                line_str = g_strdup_printf("• <span foreground='#f7b277'><b>%s:</b></span> %s",
                                            esc_sender, esc_body);
             } else {
                 line_str = g_strdup_printf("• %s", esc_body);

@@ -158,13 +158,13 @@ static double draw_key_chip(const char *label, double x, double cy, double ar, d
     double cy_top = cy - ch / 2.0;
 
     draw_rounded_rect(cr, x, cy_top, cw, ch, 6.0);
-    cairo_set_source_rgba(cr, 49.0 / 255.0, 50.0 / 255.0, 68.0 / 255.0, 0.92);
+    cairo_set_source_rgba(cr, 35.0 / 255.0, 36.0 / 255.0, 59.0 / 255.0, 0.92);
     cairo_fill_preserve(cr);
     cairo_set_source_rgba(cr, ar, ag, ab, 0.65);
     cairo_set_line_width(cr, 1.0);
     cairo_stroke(cr);
 
-    draw_text_at(f_chip, label, x + (cw - tw) / 2.0, cy, 205.0 / 255.0, 214.0 / 255.0, 244.0 / 255.0, 1.0);
+    draw_text_at(f_chip, label, x + (cw - tw) / 2.0, cy, 243.0 / 255.0, 230.0 / 255.0, 220.0 / 255.0, 1.0);
     return cw;
 }
 
@@ -331,14 +331,14 @@ static void render_hud(void) {
     double h = (double)cur_h;
     double cy = h / 2.0;
 
-    /* Accent color */
-    double ar = 166.0 / 255.0, ag = 227.0 / 255.0, ab = 161.0 / 255.0; /* Green */
+    /* Accent color (Dusk Horizon) */
+    double ar = 141.0 / 255.0, ag = 211.0 / 255.0, ab = 158.0 / 255.0; /* Forest Sage */
     if (hud.is_stop) {
-        ar = 243.0 / 255.0; ag = 139.0 / 255.0; ab = 168.0 / 255.0; /* Red */
+        ar = 235.0 / 255.0; ag = 111.0 / 255.0; ab = 124.0 / 255.0; /* Ember Red */
     } else if (strcmp(hud.listen, "hold") == 0 || (hud.holds[0] && !hud.spam[0])) {
-        ar = 116.0 / 255.0; ag = 199.0 / 255.0; ab = 236.0 / 255.0; /* Sapphire */
+        ar = 142.0 / 255.0; ag = 202.0 / 255.0; ab = 230.0 / 255.0; /* Sky Mist */
     } else if (strcmp(hud.listen, "spam") == 0 || hud.paused) {
-        ar = 250.0 / 255.0; ag = 179.0 / 255.0; ab = 135.0 / 255.0; /* Peach */
+        ar = 247.0 / 255.0; ag = 178.0 / 255.0; ab = 119.0 / 255.0; /* Sunset Amber */
     }
 
     cairo_push_group(cr);
@@ -348,9 +348,9 @@ static void render_hud(void) {
 
     /* Sleek Mantle/Base pill */
     draw_rounded_rect(cr, 1.0, 1.0, w - 2.0, h - 2.0, (h - 2.0) / 2.0);
-    cairo_set_source_rgba(cr, 24.0 / 255.0, 24.0 / 255.0, 37.0 / 255.0, 0.92);
+    cairo_set_source_rgba(cr, 19.0 / 255.0, 21.0 / 255.0, 35.0 / 255.0, 0.93);
     cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, ar, ag, ab, 0.55);
+    cairo_set_source_rgba(cr, ar, ag, ab, 0.58);
     cairo_set_line_width(cr, 1.25);
     cairo_stroke(cr);
 
@@ -364,13 +364,13 @@ static void render_hud(void) {
 
     if (hud.is_stop) {
         draw_text_at(f_meta, hud.stop_msg[0] ? hud.stop_msg : "Released", cx, cy,
-                     205.0 / 255.0, 214.0 / 255.0, 244.0 / 255.0, 0.95);
+                     243.0 / 255.0, 230.0 / 255.0, 220.0 / 255.0, 0.95);
     } else if (strcmp(hud.listen, "none") != 0) {
         bool is_sp = (strcmp(hud.listen, "spam") == 0);
         const char *tag = is_sp ? "SPAM" : "HOLD";
-        double tr = is_sp ? (250.0 / 255.0) : (116.0 / 255.0);
-        double tg = is_sp ? (179.0 / 255.0) : (199.0 / 255.0);
-        double tb = is_sp ? (135.0 / 255.0) : (236.0 / 255.0);
+        double tr = is_sp ? (247.0 / 255.0) : (142.0 / 255.0);
+        double tg = is_sp ? (178.0 / 255.0) : (202.0 / 255.0);
+        double tb = is_sp ? (119.0 / 255.0) : (230.0 / 255.0);
 
         draw_text_at(f_tag, tag, cx, cy, tr, tg, tb, 1.0);
         cx += measure_text(f_tag, tag) + 10.0;
@@ -381,7 +381,7 @@ static void render_hud(void) {
         } else {
             snprintf(info, sizeof(info), "Press key • Esc");
         }
-        draw_text_at(f_meta, info, cx, cy, 186.0 / 255.0, 194.0 / 255.0, 222.0 / 255.0, 0.95);
+        draw_text_at(f_meta, info, cx, cy, 184.0 / 255.0, 173.0 / 255.0, 196.0 / 255.0, 0.95);
     } else {
         bool has_hold = (hud.holds[0] != '\0');
         bool has_spam = (hud.spam[0] != '\0');
@@ -389,9 +389,9 @@ static void render_hud(void) {
         if (has_hold) {
             bool hpaused = (!has_spam && hud.paused);
             const char *htag = hpaused ? "PAUSE" : "HOLD";
-            double hr = hpaused ? (250.0 / 255.0) : (116.0 / 255.0);
-            double hg = hpaused ? (179.0 / 255.0) : (199.0 / 255.0);
-            double hb = hpaused ? (135.0 / 255.0) : (236.0 / 255.0);
+            double hr = hpaused ? (247.0 / 255.0) : (142.0 / 255.0);
+            double hg = hpaused ? (178.0 / 255.0) : (202.0 / 255.0);
+            double hb = hpaused ? (119.0 / 255.0) : (230.0 / 255.0);
             draw_text_at(f_tag, htag, cx, cy, hr, hg, hb, 1.0);
             cx += measure_text(f_tag, htag) + 7.0;
             char copy[128];
@@ -403,7 +403,7 @@ static void render_hud(void) {
         }
 
         if (has_hold && has_spam) {
-            cairo_set_source_rgba(cr, 88.0 / 255.0, 91.0 / 255.0, 112.0 / 255.0, 0.7);
+            cairo_set_source_rgba(cr, 124.0 / 255.0, 109.0 / 255.0, 138.0 / 255.0, 0.7);
             cairo_set_line_width(cr, 1.0);
             cairo_move_to(cr, cx + 2.0, 8.0);
             cairo_line_to(cr, cx + 2.0, h - 8.0);
@@ -412,23 +412,23 @@ static void render_hud(void) {
         }
 
         if (has_spam) {
-            double sr = hud.paused ? (250.0 / 255.0) : (166.0 / 255.0);
-            double sg = hud.paused ? (179.0 / 255.0) : (227.0 / 255.0);
-            double sb = hud.paused ? (135.0 / 255.0) : (161.0 / 255.0);
+            double sr = hud.paused ? (247.0 / 255.0) : (141.0 / 255.0);
+            double sg = hud.paused ? (178.0 / 255.0) : (211.0 / 255.0);
+            double sb = hud.paused ? (119.0 / 255.0) : (158.0 / 255.0);
             const char *stag = hud.paused ? "PAUSE" : "SPAM";
             draw_text_at(f_tag, stag, cx, cy, sr, sg, sb, 1.0);
             cx += measure_text(f_tag, stag) + 7.0;
             cx += draw_key_chip(hud.spam, cx, cy, sr, sg, sb) + 6.0;
             char rate_str[24];
             snprintf(rate_str, sizeof(rate_str), "%.0f/s", hud.cps);
-            draw_text_at(f_meta, rate_str, cx, cy, 166.0 / 255.0, 173.0 / 255.0, 200.0 / 255.0, 0.95);
+            draw_text_at(f_meta, rate_str, cx, cy, 184.0 / 255.0, 173.0 / 255.0, 196.0 / 255.0, 0.95);
         }
 
         char timer_str[24];
         long el = hud.base_sec + (long)((mono_ns() - hud.recv_mono_ns) / 1000000000LL);
         format_elapsed(el, timer_str, sizeof(timer_str));
         int tw = measure_text(f_meta, timer_str);
-        draw_text_at(f_meta, timer_str, w - tw - 14.0, cy, 147.0 / 255.0, 153.0 / 255.0, 178.0 / 255.0, 0.9);
+        draw_text_at(f_meta, timer_str, w - tw - 14.0, cy, 152.0 / 255.0, 139.0 / 255.0, 166.0 / 255.0, 0.9);
     }
 
     cairo_pop_group_to_source(cr);

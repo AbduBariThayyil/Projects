@@ -143,7 +143,7 @@ static void render_no_music(void) {
     if (pad < 0) pad = 0;
 
     char buf[512];
-    snprintf(buf, sizeof(buf), "%%{O45}%%{A1:%s:}%%{F#4c566a}%s%%{F-}%%{A}%*s\n", LAUNCH_CMD, txt, pad, "");
+    snprintf(buf, sizeof(buf), "%%{O45}%%{A1:%s:}%%{F#7c6d8a}%s%%{F-}%%{A}%*s\n", LAUNCH_CMD, txt, pad, "");
     safe_write_output(buf);
 }
 
@@ -245,12 +245,12 @@ static void render_active_music(void) {
            "%%{A4:playerctl -p %s position 5+:}"
            "%%{A5:playerctl -p %s position 5-:}"
            "%%{A3:%s:}"
-           "%%{A1:%s:}%%{F#bd93f9}%s%%{F-}  %%{F#f8f8f2}%s%%{F-}%%{A}  "
-           "%%{F#50fa7b}%%{A1:playerctl -p %s play-pause:}%s%%{A}%%{F-} "
-           "%%{F#8be9fd}%%{A1:playerctl -p %s previous:}󰒮%%{A}%%{F-} "
-           "%%{A1:%s:}%%{F#bd93f9}%s%%{F-} %%{F#ff79c6}%s%%{F-}%%{A} "
-           "%%{F#8be9fd}%%{A1:playerctl -p %s next:}󰒭%%{A}%%{F-}  "
-           "%%{F#ff5555}%%{A1:%s:}󰅖%%{A}%%{F-}"
+           "%%{A1:%s:}%%{F#f7b277}%s%%{F-}  %%{F#f3e6dc}%s%%{F-}%%{A}  "
+           "%%{F#8dd39e}%%{A1:playerctl -p %s play-pause:}%s%%{A}%%{F-} "
+           "%%{F#8ecae6}%%{A1:playerctl -p %s previous:}󰒮%%{A}%%{F-} "
+           "%%{A1:%s:}%%{F#f7b277}%s%%{F-} %%{F#c884a6}%s%%{F-}%%{A} "
+           "%%{F#8ecae6}%%{A1:playerctl -p %s next:}󰒭%%{A}%%{F-}  "
+           "%%{F#eb6f7c}%%{A1:%s:}󰅖%%{A}%%{F-}"
            "%%{A}%%{A}%%{A}\n",
            PLAYER_PARAM,
            PLAYER_PARAM,

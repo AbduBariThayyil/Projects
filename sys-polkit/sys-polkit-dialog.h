@@ -27,6 +27,7 @@ SysPolkitDialog *sys_polkit_dialog_new(const gchar                    *action_id
 
 void             sys_polkit_dialog_show(SysPolkitDialog *dialog);
 void             sys_polkit_dialog_set_error(SysPolkitDialog *dialog, const gchar *error_msg);
+void             sys_polkit_dialog_set_info(SysPolkitDialog *dialog, const gchar *info_msg);
 void             sys_polkit_dialog_set_prompt(SysPolkitDialog *dialog, const gchar *prompt, gboolean echo_on);
 void             sys_polkit_dialog_set_sensitive(SysPolkitDialog *dialog, gboolean sensitive);
 void             sys_polkit_dialog_clear_entry(SysPolkitDialog *dialog);
@@ -35,5 +36,6 @@ PolkitIdentity  *sys_polkit_dialog_get_selected_identity(SysPolkitDialog *dialog
 GtkWidget       *sys_polkit_dialog_get_window(SysPolkitDialog *dialog);
 GtkWidget       *sys_polkit_dialog_get_cancel_button(SysPolkitDialog *dialog);
 void             sys_polkit_dialog_destroy(SysPolkitDialog *dialog);
+int              sys_polkit_dialog_run_worker(void);
 
 #endif /* SYS_POLKIT_DIALOG_H */
