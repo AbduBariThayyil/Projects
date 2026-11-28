@@ -34,6 +34,7 @@ static const KeyCmdRule GLOBAL_MEDIA_RULES[] = {
     { KEY_STOP,           CMD_SYS_CTL " --stop",       false },
     { KEY_BRIGHTNESSUP,   CMD_SYS_CTL " --bri-up",     true  },
     { KEY_BRIGHTNESSDOWN, CMD_SYS_CTL " --bri-down",   true  },
+    { KEY_CONFIG,         CMD_MUSIC_APP,               false },
 };
 
 static const KeyCmdRule CASUE_FN_LOCK_RULES[] = {
@@ -288,6 +289,25 @@ static bool handle_keyboard_key(SysInputState *st, DeviceKind kind, uint16_t cod
         return false;
     }
 
+    /* Global bare END key: instant study-panic hide + switch to desktop 5 */
+    if (code == KEY_END) {
+        bool any_mod = st->shift_l || st->shift_r || st->ctrl_held || st->alt_held || st->meta_held;
+        if (value == 1 && !any_mod) {
+            st->swallowed_end = true;
+            trigger_cmd(st, CMD_SYS_CTL " --study-panic");
+            return true;
+        }
+        if (st->swallowed_end) {
+            if (value == 2) {
+                return true;
+            }
+            if (value == 0) {
+                st->swallowed_end = false;
+            }
+            return true;
+        }
+    }
+
     /* Shift + F1 runs BacklightToggle everywhere (including lockscreen & games) */
     if (code == KEY_F1) {
         if (value == 1 && (st->shift_l || st->shift_r)) {
@@ -454,6 +474,7 @@ void sys_input_on_device_removed(SysInputState *st, DeviceKind kind) {
     }
     if (kind == DEV_KBD_CASUE) {
         st->swallowed_fn_mask = 0;
+        st->swallowed_end = false;
         st->shift_l = false;
         st->shift_r = false;
         st->ctrl_held = false;

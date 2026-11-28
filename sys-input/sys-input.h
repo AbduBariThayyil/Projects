@@ -44,6 +44,7 @@ typedef struct {
     uint32_t swallowed_mouse_btns;
     bool swallowed_space;
     bool swallowed_f1;
+    bool swallowed_end;
     uint16_t swallowed_fn_mask;
     bool kbd_dirty;
     bool ptr_dirty;

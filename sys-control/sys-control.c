@@ -291,12 +291,347 @@ static void ctl_brightness(const char *action, const char *step_str) {
 }
 
 /* -------------------------------------------------------------
- * 3. Hider Control (Windows & Bar)
+ * 3. Hider Control (Fast Native Node Hide, Study Panic & Bar)
  * ------------------------------------------------------------- */
+static int x11_nonfatal_err(Display *dpy, XErrorEvent *ev) {
+    (void)dpy;
+    (void)ev;
+    return 0;
+}
+
+static int run_argv_sync(const char *const argv[]) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > 2) close(devnull);
+        }
+        execvp(argv[0], (char *const *)argv);
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+static void spawn_argv_detached(const char *const argv[], const char *workdir) {
+    pid_t pid = fork();
+    if (pid != 0) return;
+
+    setsid();
+    if (workdir && *workdir) {
+        if (chdir(workdir) != 0) {
+            /* keep current directory if chdir fails */
+        }
+    }
+    int devnull = open("/dev/null", O_RDWR);
+    if (devnull >= 0) {
+        dup2(devnull, STDIN_FILENO);
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+        if (devnull > 2) close(devnull);
+    }
+    execvp(argv[0], (char *const *)argv);
+    _exit(127);
+}
+
+static int query_bspc_lines(const char *cmd, char lines[][32], int max_lines) {
+    FILE *f = popen(cmd, "r");
+    if (!f) return 0;
+    int count = 0;
+    char buf[64];
+    while (count < max_lines && fgets(buf, sizeof(buf), f)) {
+        g_strstrip(buf);
+        if (buf[0] != '\0') {
+            g_strlcpy(lines[count], buf, 32);
+            count++;
+        }
+    }
+    pclose(f);
+    return count;
+}
+
+static int list_contains(const char *wid, char list[][32], int count) {
+    for (int i = 0; i < count; i++) {
+        if (strcmp(wid, list[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static void save_node_meta_and_hide(const char *wid_str, const char *desktop_hint, int capture_thumb) {
+    if (!wid_str || !*wid_str) return;
+
+    const char *thumb_dir = "/tmp/Minimize_thumbs";
+    const char *meta_dir = "/tmp/Minimize_meta";
+    g_mkdir_with_parents(thumb_dir, 0755);
+    g_mkdir_with_parents(meta_dir, 0755);
+
+    char desktop[64] = {0};
+    if (desktop_hint && *desktop_hint) {
+        g_strlcpy(desktop, desktop_hint, sizeof(desktop));
+    } else {
+        char qcmd[128];
+        snprintf(qcmd, sizeof(qcmd), "bspc query -D -n %s --names 2>/dev/null", wid_str);
+        exec_cmd_output(qcmd, desktop, sizeof(desktop));
+    }
+
+    char tree_json[4096] = {0};
+    char tcmd[128];
+    snprintf(tcmd, sizeof(tcmd), "bspc query -T -n %s 2>/dev/null", wid_str);
+    FILE *tf = popen(tcmd, "r");
+    if (tf) {
+        size_t n = fread(tree_json, 1, sizeof(tree_json) - 1, tf);
+        tree_json[n] = '\0';
+        pclose(tf);
+    }
+
+    const char *state = "tiled";
+    if (strstr(tree_json, "\"state\":\"floating\"") != NULL) {
+        state = "floating";
+    } else if (strstr(tree_json, "\"state\":\"fullscreen\"") != NULL) {
+        state = "fullscreen";
+    } else if (strstr(tree_json, "\"state\":\"pseudo_tiled\"") != NULL) {
+        state = "pseudo_tiled";
+    }
+
+    char path[256];
+    if (desktop[0] != '\0') {
+        snprintf(path, sizeof(path), "%s/%s.desktop", meta_dir, wid_str);
+        FILE *df = fopen(path, "w");
+        if (df) {
+            fprintf(df, "%s\n", desktop);
+            fclose(df);
+        }
+    }
+
+    snprintf(path, sizeof(path), "%s/%s.state", meta_dir, wid_str);
+    FILE *sf = fopen(path, "w");
+    if (sf) {
+        fprintf(sf, "%s\n", state);
+        fclose(sf);
+    }
+
+    if (capture_thumb) {
+        char thumb_path[256];
+        snprintf(thumb_path, sizeof(thumb_path), "%s/%s.jpg", thumb_dir, wid_str);
+        const char *maim_argv[] = { "maim", "-i", wid_str, thumb_path, NULL };
+        run_argv_sync(maim_argv);
+    }
+
+    const char *hide_argv[] = { "bspc", "node", wid_str, "-g", "hidden=on", NULL };
+    run_argv_sync(hide_argv);
+}
+
+static void ctl_hider_node(const char *target_wid) {
+    char wid[32] = {0};
+    if (target_wid && *target_wid) {
+        g_strlcpy(wid, target_wid, sizeof(wid));
+    } else {
+        exec_cmd_output("bspc query -N -n focused 2>/dev/null", wid, sizeof(wid));
+    }
+    if (wid[0] == '\0') return;
+    save_node_meta_and_hide(wid, NULL, 1);
+}
+
 static void ctl_hider(const char *target) {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "/home/vibecoder/.config/bspwm/bin/Hider %s", target ? target : "");
     spawn_async(cmd);
+}
+
+static void read_x11_window_info(Display *dpy, Window w, char *res_name, size_t rn_sz,
+                                 char *res_class, size_t rc_sz, char *title, size_t title_sz) {
+    res_name[0] = '\0';
+    res_class[0] = '\0';
+    title[0] = '\0';
+    if (!dpy || w == None) return;
+
+    XClassHint ch = {0};
+    if (XGetClassHint(dpy, w, &ch)) {
+        if (ch.res_name) {
+            g_strlcpy(res_name, ch.res_name, rn_sz);
+            XFree(ch.res_name);
+        }
+        if (ch.res_class) {
+            g_strlcpy(res_class, ch.res_class, rc_sz);
+            XFree(ch.res_class);
+        }
+    }
+
+    Atom net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
+    Atom utf8 = XInternAtom(dpy, "UTF8_STRING", False);
+    Atom actual_type = None;
+    int actual_format = 0;
+    unsigned long nitems = 0, bytes_after = 0;
+    unsigned char *prop = NULL;
+    if (XGetWindowProperty(dpy, w, net_wm_name, 0, 256, False, utf8,
+                           &actual_type, &actual_format, &nitems, &bytes_after, &prop) == Success && prop) {
+        g_strlcpy(title, (const char *)prop, title_sz);
+        XFree(prop);
+    } else {
+        char *wm_name = NULL;
+        if (XFetchName(dpy, w, &wm_name) && wm_name) {
+            g_strlcpy(title, wm_name, title_sz);
+            XFree(wm_name);
+        }
+    }
+}
+
+static int str_eq_any_ci(const char *s, const char *const *candidates, size_t n) {
+    if (!s || !*s) return 0;
+    for (size_t i = 0; i < n; i++) {
+        if (strcasecmp(s, candidates[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int is_terminal_window(Display *dpy, const char *wid_str) {
+    if (!dpy || !wid_str || !*wid_str) return 0;
+    unsigned long val = strtoul(wid_str, NULL, 16);
+    if (val == 0) return 0;
+
+    char res_name[128], res_class[128], title[256];
+    read_x11_window_info(dpy, (Window)val, res_name, sizeof(res_name),
+                         res_class, sizeof(res_class), title, sizeof(title));
+
+    static const char *const TERM_CLASSES[] = {
+        "alacritty", "kitty", "st", "st-256color", "ghostty", "com.mitchellh.ghostty",
+        "wezterm", "org.wezfurlong.wezterm", "urxvt", "rxvt", "xterm", "foot",
+        "floaterm", "konsole", "gnome-terminal"
+    };
+    return str_eq_any_ci(res_name, TERM_CLASSES, G_N_ELEMENTS(TERM_CLASSES)) ||
+           str_eq_any_ci(res_class, TERM_CLASSES, G_N_ELEMENTS(TERM_CLASSES));
+}
+
+static int is_game_window(Display *dpy, const char *wid_str) {
+    if (!dpy || !wid_str || !*wid_str) return 0;
+    unsigned long val = strtoul(wid_str, NULL, 16);
+    if (val == 0) return 0;
+
+    char res_name[128], res_class[128], title[256];
+    read_x11_window_info(dpy, (Window)val, res_name, sizeof(res_name),
+                         res_class, sizeof(res_class), title, sizeof(title));
+
+    char hay[512];
+    snprintf(hay, sizeof(hay), "%s %s %s", res_name, res_class, title);
+
+    static const char *const GAME_IDENTIFIERS[] = {
+        "wine", ".exe", "minecraft", "terraria", "mindustry",
+        "retroarch", "steam_app_", "mgba", "gba-crossplay",
+        "pegasus-frontend", "lutris", "gamescope", "dolphin-emu",
+        "ppsspp", "pcsx2"
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(GAME_IDENTIFIERS); i++) {
+        if (strcasestr(hay, GAME_IDENTIFIERS[i]) != NULL) return 1;
+    }
+    return 0;
+}
+
+static void launch_study_terminal(void) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) home = "/home/vibecoder";
+
+    char cfg_path[512];
+    snprintf(cfg_path, sizeof(cfg_path), "%s/.config/bspwm/config/.term", home);
+    char term[64] = "alacritty";
+    FILE *tf = fopen(cfg_path, "r");
+    if (tf) {
+        if (fgets(term, sizeof(term), tf)) {
+            g_strstrip(term);
+            for (int i = 0; term[i]; i++) term[i] = g_ascii_tolower(term[i]);
+        }
+        fclose(tf);
+    }
+
+    char projects_dir[512];
+    snprintf(projects_dir, sizeof(projects_dir), "%s/Projects", home);
+
+    const char *rule_class = "Alacritty";
+    if (strcmp(term, "kitty") == 0) rule_class = "kitty";
+    else if (strcmp(term, "st") == 0) rule_class = "St";
+    else if (strcmp(term, "ghostty") == 0) rule_class = "Ghostty";
+
+    const char *rule_argv[] = { "bspc", "rule", "-a", rule_class, "desktop=^5", "follow=on", "--one-shot", NULL };
+    run_argv_sync(rule_argv);
+
+    if (strcmp(term, "kitty") == 0) {
+        const char *argv[] = { "kitty", "--directory", projects_dir, "zsh", "-ic", "studyguide; exec zsh", NULL };
+        spawn_argv_detached(argv, projects_dir);
+    } else if (strcmp(term, "st") == 0) {
+        const char *argv[] = { "st", "-e", "zsh", "-ic", "studyguide; exec zsh", NULL };
+        spawn_argv_detached(argv, projects_dir);
+    } else if (strcmp(term, "ghostty") == 0) {
+        char wd_arg[600];
+        snprintf(wd_arg, sizeof(wd_arg), "--working-directory=%s", projects_dir);
+        const char *argv[] = { "ghostty", wd_arg, "-e", "zsh", "-ic", "studyguide; exec zsh", NULL };
+        spawn_argv_detached(argv, projects_dir);
+    } else {
+        const char *argv[] = { "alacritty", "--working-directory", projects_dir, "-e", "zsh", "-ic", "studyguide; exec zsh", NULL };
+        spawn_argv_detached(argv, projects_dir);
+    }
+}
+
+static void ctl_study_panic(void) {
+    Display *dpy = XOpenDisplay(NULL);
+    if (dpy) {
+        XSetErrorHandler(x11_nonfatal_err);
+    }
+
+    char focused_wid[32] = {0};
+    exec_cmd_output("bspc query -N -n focused 2>/dev/null", focused_wid, sizeof(focused_wid));
+
+    char desk5_wins[128][32];
+    int desk5_count = query_bspc_lines("bspc query -N -d '^5' -n .window.!hidden 2>/dev/null", desk5_wins, 128);
+
+    char desk6_wins[128][32];
+    int desk6_count = query_bspc_lines("bspc query -N -d '^6' -n .window.!hidden 2>/dev/null", desk6_wins, 128);
+
+    char all_wins[256][32];
+    int all_count = query_bspc_lines("bspc query -N -n .window.!hidden 2>/dev/null", all_wins, 256);
+
+    char desk5_term_wid[32] = {0};
+    for (int i = 0; i < desk5_count; i++) {
+        if (is_terminal_window(dpy, desk5_wins[i])) {
+            g_strlcpy(desk5_term_wid, desk5_wins[i], sizeof(desk5_term_wid));
+            break;
+        }
+    }
+
+    /* Instantly hide all games (desktop 6 + known game classes) + active focused window if not on desktop 5 */
+    for (int i = 0; i < all_count; i++) {
+        const char *w = all_wins[i];
+        if (list_contains(w, desk5_wins, desk5_count)) {
+            continue;
+        }
+        int in_6 = list_contains(w, desk6_wins, desk6_count);
+        int is_focused = (focused_wid[0] != '\0' && strcmp(w, focused_wid) == 0);
+        if (in_6 || is_focused || is_game_window(dpy, w)) {
+            save_node_meta_and_hide(w, in_6 ? "6" : NULL, 0);
+        }
+    }
+
+    if (desk5_term_wid[0] != '\0') {
+        const char *desk_argv[] = { "bspc", "desktop", "-f", "^5", NULL };
+        run_argv_sync(desk_argv);
+        const char *focus_argv[] = { "bspc", "node", desk5_term_wid, "-f", NULL };
+        run_argv_sync(focus_argv);
+    } else {
+        /* Clear desktop 5 by hiding existing non-terminal windows, then open terminal with studyguide */
+        for (int i = 0; i < desk5_count; i++) {
+            save_node_meta_and_hide(desk5_wins[i], "5", 0);
+        }
+        const char *desk_argv[] = { "bspc", "desktop", "-f", "^5", NULL };
+        run_argv_sync(desk_argv);
+        launch_study_terminal();
+    }
+
+    if (dpy) {
+        XCloseDisplay(dpy);
+    }
 }
 
 /* -------------------------------------------------------------
@@ -563,7 +898,9 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "--bar-show") == 0) {
         ctl_hider("--bar-show");
     } else if (strcmp(arg, "--hider-node") == 0 || strcmp(arg, "node") == 0 || strcmp(arg, "--node") == 0 || strcmp(arg, "--hide-node") == 0 || strcmp(arg, "--window") == 0) {
-        ctl_hider("--node");
+        ctl_hider_node(argc >= 3 ? argv[2] : NULL);
+    } else if (strcmp(arg, "--study-panic") == 0) {
+        ctl_study_panic();
     } else if (strcmp(arg, "--restore") == 0 || strcmp(arg, "--restore-node") == 0) {
         ctl_hider("--restore");
     } else if (strcmp(arg, "--hider-menu") == 0 || strcmp(arg, "--windows-menu") == 0 || strcmp(arg, "--hidden-menu") == 0 || strcmp(arg, "--menu-hider") == 0) {

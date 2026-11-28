@@ -263,15 +263,17 @@ static void test_casue_fn_lock_and_shift_f1(void) {
     send_ev(&st, DEV_KBD_LAPTOP, EV_KEY, KEY_F2, 0);
     assert(h.cmd_len == 0 && h.kbd_len == 4 && h.kbd[0].code == KEY_F2);
 
-    /* Hardware media + Toshiba touchpad toggle bypass grabs */
+    /* Hardware media + Toshiba touchpad toggle + XF86Tools (KEY_CONFIG) bypass grabs */
     reset_harness(&h);
     send_ev(&st, DEV_KBD_ACPI, EV_KEY, KEY_TOUCHPAD_TOGGLE, 1);
     send_ev(&st, DEV_KBD_ACPI, EV_KEY, KEY_UNKNOWN, 1);
     send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_VOLUMEUP, 1);
-    assert(h.cmd_len == 3);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_CONFIG, 1);
+    assert(h.cmd_len == 4);
     assert(strstr(h.cmds[0], "ToggleTouchpad") != NULL);
     assert(strstr(h.cmds[1], "ToggleTouchpad") != NULL);
     assert(strstr(h.cmds[2], "sys-control --vol-inc") != NULL);
+    assert(strstr(h.cmds[3], "LyricViewLauncher") != NULL);
     /* Auto Game Mode: entering game enables, leaving disables, F13 overrides, NFS maps J/K */
     reset_harness(&h);
     sys_input_init(&st, test_ops(), &h);
@@ -298,6 +300,23 @@ static void test_casue_fn_lock_and_shift_f1(void) {
     assert(h.kbd[2].code == KEY_K && h.kbd[2].value == 1);
     assert(h.kbd[4].code == KEY_J && h.kbd[4].value == 0);
     assert(h.kbd[6].code == KEY_K && h.kbd[6].value == 0);
+
+    /* Bare KEY_END triggers study-panic and swallows key; Shift/Ctrl+END pass through */
+    reset_harness(&h);
+    sys_input_init(&st, test_ops(), &h);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_END, 1);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_END, 2);
+    send_ev(&st, DEV_KBD_CASUE, EV_KEY, KEY_END, 0);
+    assert(h.cmd_len == 1 && strstr(h.cmds[0], "sys-control --study-panic") != NULL);
+    assert(h.kbd_len == 0);
+
+    reset_harness(&h);
+    send_ev(&st, DEV_KBD_LAPTOP, EV_KEY, KEY_LEFTSHIFT, 1);
+    send_ev(&st, DEV_KBD_LAPTOP, EV_KEY, KEY_END, 1);
+    send_ev(&st, DEV_KBD_LAPTOP, EV_KEY, KEY_END, 0);
+    send_ev(&st, DEV_KBD_LAPTOP, EV_KEY, KEY_LEFTSHIFT, 0);
+    assert(h.cmd_len == 0);
+    assert(h.kbd_len == 8 && h.kbd[2].code == KEY_END && h.kbd[2].value == 1);
 }
 
 int main(void) {
