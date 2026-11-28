@@ -224,12 +224,16 @@ class GstEngine:
                 self.seek(s)
         elif t == G.MessageType.STATE_CHANGED and msg.src == self.pb:
             _old, new, _pend = msg.parse_state_changed()
-            if self._buffering:
+            if self._buffering or self._switching:
                 return
-            st = ("Playing" if new == G.State.PLAYING
-                  else "Paused" if new == G.State.PAUSED
-                  else "Stopped")
-            if self._switching and st == "Stopped":
+            # Ignore READY/NULL during preroll or pause; only stop()/EOS/ERROR sets Stopped.
+            if new == G.State.PLAYING:
+                st = "Playing"
+            elif new == G.State.PAUSED:
+                if self._want_playing:
+                    return  # transient preroll READY->PAUSED on path to PLAYING
+                st = "Paused"
+            else:
                 return
             if st != self._state:
                 self._state = st

@@ -60,9 +60,48 @@ static char current_title[256] = "Unknown";
 static char current_artist[256] = "";
 static gint64 current_pos_us = 0;
 static gint64 current_len_us = 0;
-static time_t last_sync_time = 0;
+static gint64 last_sync_mono_us = 0;
 static int face_idx = 0;
 static guint scroll_offset = 0;
+
+static void render_active_music(void);
+
+static void on_position_reply(GObject *src, GAsyncResult *res, gpointer user_data) {
+    (void)user_data;
+    GError *err = NULL;
+    GVariant *out = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+    if (err) {
+        g_clear_error(&err);
+        return;
+    }
+    GVariant *inner = NULL;
+    g_variant_get(out, "(v)", &inner);
+    if (inner && g_variant_is_of_type(inner, G_VARIANT_TYPE_INT64)) {
+        current_pos_us = g_variant_get_int64(inner);
+        last_sync_mono_us = g_get_monotonic_time();
+        render_active_music();
+    }
+    if (inner) g_variant_unref(inner);
+    g_variant_unref(out);
+}
+
+static void query_position_async(void) {
+    if (!dbus_conn || active_bus_name[0] == '\0') return;
+    g_dbus_connection_call(
+        dbus_conn,
+        active_bus_name,
+        "/org/mpris/MediaPlayer2",
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        g_variant_new("(ss)", "org.mpris.MediaPlayer2.Player", "Position"),
+        G_VARIANT_TYPE("(v)"),
+        G_DBUS_CALL_FLAGS_NONE,
+        300,
+        NULL,
+        on_position_reply,
+        NULL
+    );
+}
 
 static void init_runtime_paths(void) {
     const char *xdg = getenv("XDG_RUNTIME_DIR");
@@ -158,12 +197,15 @@ static void render_active_music(void) {
     const char *play_icon = is_playing ? "󰏤" : "󰐊";
     const char *face = is_playing ? FACES[face_idx % NUM_FACES] : "(•‿•)";
 
-    /* Calculate current position taking elapsed time into account */
-    gint64 pos_sec = current_pos_us / 1000000;
-    if (is_playing && last_sync_time > 0) {
-        time_t now = time(NULL);
-        pos_sec += (now - last_sync_time);
+    /* Calculate current position taking elapsed monotonic microseconds into account */
+    gint64 pos_us = current_pos_us;
+    if (is_playing && last_sync_mono_us > 0) {
+        gint64 elapsed_us = g_get_monotonic_time() - last_sync_mono_us;
+        if (elapsed_us > 0) {
+            pos_us += elapsed_us;
+        }
     }
+    gint64 pos_sec = pos_us / 1000000;
     gint64 total_sec = current_len_us / 1000000;
     if (total_sec > 0 && pos_sec > total_sec) {
         pos_sec = total_sec;
@@ -306,6 +348,8 @@ static void parse_metadata(GVariant *dict) {
                 if (strcmp(current_title, t) != 0) {
                     g_strlcpy(current_title, t, sizeof(current_title));
                     scroll_offset = 0;
+                    current_pos_us = 0;
+                    last_sync_mono_us = g_get_monotonic_time();
                 }
             }
         } else if (strcmp(key, "xesam:artist") == 0) {
@@ -369,7 +413,7 @@ static void fetch_player_state(void) {
             }
         } else if (strcmp(prop_name, "Position") == 0) {
             current_pos_us = g_variant_get_int64(prop_val);
-            last_sync_time = time(NULL);
+            last_sync_mono_us = g_get_monotonic_time();
         } else if (strcmp(prop_name, "Metadata") == 0) {
             parse_metadata(prop_val);
         }
@@ -408,20 +452,40 @@ static void on_properties_changed(GDBusConnection *connection,
     const gchar *key;
     GVariant *val;
 
+    gboolean metadata_changed = FALSE;
+    gboolean status_changed = FALSE;
+
     while (g_variant_iter_next(&iter, "{&sv}", &key, &val)) {
         if (strcmp(key, "PlaybackStatus") == 0) {
             const char *st = g_variant_get_string(val, NULL);
             if (strcmp(current_status, st) != 0) {
+                gboolean was_playing = (strcmp(current_status, "Playing") == 0);
+                gboolean now_playing = (strcmp(st, "Playing") == 0);
+                gint64 now_us = g_get_monotonic_time();
+                if (was_playing && !now_playing && last_sync_mono_us > 0) {
+                    gint64 elapsed_us = now_us - last_sync_mono_us;
+                    if (elapsed_us > 0) {
+                        current_pos_us += elapsed_us;
+                    }
+                    if (current_len_us > 0 && current_pos_us > current_len_us) {
+                        current_pos_us = current_len_us;
+                    }
+                    last_sync_mono_us = now_us;
+                } else if (!was_playing && now_playing) {
+                    last_sync_mono_us = now_us;
+                }
                 g_strlcpy(current_status, st, sizeof(current_status));
-                if (strcmp(current_status, "Playing") != 0) {
+                if (!now_playing) {
                     scroll_offset = 0;
                 }
+                status_changed = TRUE;
             }
         } else if (strcmp(key, "Metadata") == 0) {
             parse_metadata(val);
+            metadata_changed = TRUE;
         } else if (strcmp(key, "Position") == 0) {
             current_pos_us = g_variant_get_int64(val);
-            last_sync_time = time(NULL);
+            last_sync_mono_us = g_get_monotonic_time();
         }
         g_variant_unref(val);
     }
@@ -429,6 +493,9 @@ static void on_properties_changed(GDBusConnection *connection,
 
     sync_tick_timer();
     render_active_music();
+    if (status_changed || metadata_changed) {
+        query_position_async();
+    }
 }
 
 /* Handle Seeked signal */
@@ -445,7 +512,7 @@ static void on_seeked_signal(GDBusConnection *connection,
     gint64 pos = 0;
     g_variant_get(parameters, "(x)", &pos);
     current_pos_us = pos;
-    last_sync_time = time(NULL);
+    last_sync_mono_us = g_get_monotonic_time();
 
     render_active_music();
 }
