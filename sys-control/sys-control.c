@@ -318,9 +318,9 @@ static int run_argv_sync(const char *const argv[]) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-static void spawn_argv_detached(const char *const argv[], const char *workdir) {
+static pid_t spawn_argv_detached(const char *const argv[], const char *workdir) {
     pid_t pid = fork();
-    if (pid != 0) return;
+    if (pid != 0) return pid;
 
     setsid();
     if (workdir && *workdir) {
@@ -531,7 +531,7 @@ static int is_game_window(Display *dpy, const char *wid_str) {
     return 0;
 }
 
-static void launch_study_terminal(void) {
+static pid_t launch_study_terminal(void) {
     const char *home = getenv("HOME");
     if (!home || !*home) home = "/home/vibecoder";
 
@@ -560,19 +560,159 @@ static void launch_study_terminal(void) {
 
     if (strcmp(term, "kitty") == 0) {
         const char *argv[] = { "kitty", "--directory", projects_dir, "zsh", "-ic", "studyguide; exec zsh", NULL };
-        spawn_argv_detached(argv, projects_dir);
+        return spawn_argv_detached(argv, projects_dir);
     } else if (strcmp(term, "st") == 0) {
         const char *argv[] = { "st", "-e", "zsh", "-ic", "studyguide; exec zsh", NULL };
-        spawn_argv_detached(argv, projects_dir);
+        return spawn_argv_detached(argv, projects_dir);
     } else if (strcmp(term, "ghostty") == 0) {
         char wd_arg[600];
         snprintf(wd_arg, sizeof(wd_arg), "--working-directory=%s", projects_dir);
         const char *argv[] = { "ghostty", wd_arg, "-e", "zsh", "-ic", "studyguide; exec zsh", NULL };
-        spawn_argv_detached(argv, projects_dir);
+        return spawn_argv_detached(argv, projects_dir);
     } else {
         const char *argv[] = { "alacritty", "--working-directory", projects_dir, "-e", "zsh", "-ic", "studyguide; exec zsh", NULL };
-        spawn_argv_detached(argv, projects_dir);
+        return spawn_argv_detached(argv, projects_dir);
     }
+}
+
+#define PANIC_STATE_FILE "/tmp/study_panic_state"
+#define PANIC_TERM_FILE  "/tmp/study_panic_term.wid"
+
+static unsigned long get_window_pid(Display *dpy, const char *wid_str) {
+    if (!dpy || !wid_str || !*wid_str) return 0;
+    unsigned long val = strtoul(wid_str, NULL, 16);
+    if (val == 0) return 0;
+
+    Atom atom_pid = XInternAtom(dpy, "_NET_WM_PID", False);
+    Atom actual_type = None;
+    int actual_format = 0;
+    unsigned long nitems = 0, bytes_after = 0;
+    unsigned char *prop = NULL;
+    unsigned long pid = 0;
+    if (XGetWindowProperty(dpy, (Window)val, atom_pid, 0, 1, False, XA_CARDINAL,
+                           &actual_type, &actual_format, &nitems, &bytes_after, &prop) == Success && prop) {
+        if (nitems >= 1 && actual_format == 32) {
+            pid = *(unsigned long *)prop;
+        }
+        XFree(prop);
+    }
+    return pid;
+}
+
+static void restore_hidden_node(const char *wid_str) {
+    if (!wid_str || !*wid_str) return;
+
+    char check_cmd[128];
+    char out[32] = {0};
+    snprintf(check_cmd, sizeof(check_cmd), "bspc query -N -n %.31s.hidden 2>/dev/null", wid_str);
+    exec_cmd_output(check_cmd, out, sizeof(out));
+
+    char meta_desk[256], meta_state[256], thumb_jpg[256], thumb_webp[256];
+    snprintf(meta_desk, sizeof(meta_desk), "/tmp/Minimize_meta/%.31s.desktop", wid_str);
+    snprintf(meta_state, sizeof(meta_state), "/tmp/Minimize_meta/%.31s.state", wid_str);
+    snprintf(thumb_jpg, sizeof(thumb_jpg), "/tmp/Minimize_thumbs/%.31s.jpg", wid_str);
+    snprintf(thumb_webp, sizeof(thumb_webp), "/tmp/Minimize_thumbs/%.31s.webp", wid_str);
+
+    if (out[0] != '\0') {
+        char saved_state[64] = "tiled";
+        FILE *sf = fopen(meta_state, "r");
+        if (sf) {
+            if (fgets(saved_state, sizeof(saved_state), sf)) {
+                g_strstrip(saved_state);
+            }
+            fclose(sf);
+        }
+        if (saved_state[0] == '\0') g_strlcpy(saved_state, "tiled", sizeof(saved_state));
+
+        const char *unhide_argv[] = { "bspc", "node", wid_str, "-g", "hidden=off", NULL };
+        run_argv_sync(unhide_argv);
+        const char *state_argv[] = { "bspc", "node", wid_str, "-t", saved_state, NULL };
+        run_argv_sync(state_argv);
+    }
+
+    unlink(meta_desk);
+    unlink(meta_state);
+    unlink(thumb_jpg);
+    unlink(thumb_webp);
+}
+
+static void revert_study_panic(Display *dpy) {
+    FILE *f = fopen(PANIC_STATE_FILE, "r");
+    if (!f) return;
+
+    char prev_desk[64] = {0};
+    char prev_focused[32] = {0};
+    char spawned_wid[32] = {0};
+    unsigned long spawned_pid = 0;
+    char hidden_wids[256][32];
+    int hidden_count = 0;
+
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        g_strstrip(line);
+        if (strncmp(line, "prev_desktop=", 13) == 0) {
+            g_strlcpy(prev_desk, line + 13, sizeof(prev_desk));
+        } else if (strncmp(line, "prev_focused=", 13) == 0) {
+            g_strlcpy(prev_focused, line + 13, sizeof(prev_focused));
+        } else if (strncmp(line, "spawned_wid=", 12) == 0) {
+            g_strlcpy(spawned_wid, line + 12, sizeof(spawned_wid));
+        } else if (strncmp(line, "spawned_pid=", 12) == 0) {
+            spawned_pid = strtoul(line + 12, NULL, 10);
+        } else if (strncmp(line, "hidden=", 7) == 0 && hidden_count < 256) {
+            g_strlcpy(hidden_wids[hidden_count], line + 7, 32);
+            hidden_count++;
+        }
+    }
+    fclose(f);
+
+    /* Hide the study terminal if study-panic opened/unhid it so desktop 5 reverts cleanly */
+    if (spawned_wid[0] == '\0' && spawned_pid > 0 && dpy) {
+        char desk5_wins[128][32];
+        int desk5_count = query_bspc_lines("bspc query -N -d '^5' -n .window.!hidden 2>/dev/null", desk5_wins, 128);
+        for (int i = 0; i < desk5_count; i++) {
+            if (get_window_pid(dpy, desk5_wins[i]) == spawned_pid) {
+                g_strlcpy(spawned_wid, desk5_wins[i], sizeof(spawned_wid));
+                break;
+            }
+        }
+    }
+    if (spawned_wid[0] != '\0') {
+        char exists[32] = {0};
+        char qcmd[128];
+        snprintf(qcmd, sizeof(qcmd), "bspc query -N -n %s 2>/dev/null", spawned_wid);
+        exec_cmd_output(qcmd, exists, sizeof(exists));
+        if (exists[0] != '\0') {
+            const char *hide_argv[] = { "bspc", "node", spawned_wid, "-g", "hidden=on", NULL };
+            run_argv_sync(hide_argv);
+            FILE *tf = fopen(PANIC_TERM_FILE, "w");
+            if (tf) {
+                fprintf(tf, "%s\n", spawned_wid);
+                fclose(tf);
+            }
+        }
+    }
+
+    for (int i = 0; i < hidden_count; i++) {
+        restore_hidden_node(hidden_wids[i]);
+    }
+
+    if (prev_desk[0] != '\0') {
+        const char *desk_argv[] = { "bspc", "desktop", "-f", prev_desk, NULL };
+        run_argv_sync(desk_argv);
+    }
+
+    if (prev_focused[0] != '\0') {
+        char vis[32] = {0};
+        char qcmd[128];
+        snprintf(qcmd, sizeof(qcmd), "bspc query -N -n %s.!hidden 2>/dev/null", prev_focused);
+        exec_cmd_output(qcmd, vis, sizeof(vis));
+        if (vis[0] != '\0') {
+            const char *focus_argv[] = { "bspc", "node", prev_focused, "-f", NULL };
+            run_argv_sync(focus_argv);
+        }
+    }
+
+    unlink(PANIC_STATE_FILE);
 }
 
 static void ctl_study_panic(void) {
@@ -580,6 +720,18 @@ static void ctl_study_panic(void) {
     if (dpy) {
         XSetErrorHandler(x11_nonfatal_err);
     }
+
+    char cur_desk[64] = {0};
+    exec_cmd_output("bspc query -D -d focused --names 2>/dev/null", cur_desk, sizeof(cur_desk));
+
+    /* Pressing END again while in study-panic state on desktop 5 reverts everything */
+    if (strcmp(cur_desk, "5") == 0 && access(PANIC_STATE_FILE, F_OK) == 0) {
+        revert_study_panic(dpy);
+        if (dpy) XCloseDisplay(dpy);
+        return;
+    }
+
+    unlink(PANIC_STATE_FILE);
 
     char focused_wid[32] = {0};
     exec_cmd_output("bspc query -N -n focused 2>/dev/null", focused_wid, sizeof(focused_wid));
@@ -601,6 +753,9 @@ static void ctl_study_panic(void) {
         }
     }
 
+    char hidden_wids[256][32];
+    int hidden_count = 0;
+
     /* Instantly hide all games (desktop 6 + known game classes) + active focused window if not on desktop 5 */
     for (int i = 0; i < all_count; i++) {
         const char *w = all_wins[i];
@@ -611,8 +766,14 @@ static void ctl_study_panic(void) {
         int is_focused = (focused_wid[0] != '\0' && strcmp(w, focused_wid) == 0);
         if (in_6 || is_focused || is_game_window(dpy, w)) {
             save_node_meta_and_hide(w, in_6 ? "6" : NULL, 0);
+            if (hidden_count < 256) {
+                g_strlcpy(hidden_wids[hidden_count++], w, 32);
+            }
         }
     }
+
+    pid_t spawned_pid = 0;
+    char spawned_wid[32] = {0};
 
     if (desk5_term_wid[0] != '\0') {
         const char *desk_argv[] = { "bspc", "desktop", "-f", "^5", NULL };
@@ -620,13 +781,57 @@ static void ctl_study_panic(void) {
         const char *focus_argv[] = { "bspc", "node", desk5_term_wid, "-f", NULL };
         run_argv_sync(focus_argv);
     } else {
-        /* Clear desktop 5 by hiding existing non-terminal windows, then open terminal with studyguide */
+        /* Clear desktop 5 by hiding existing non-terminal windows */
         for (int i = 0; i < desk5_count; i++) {
             save_node_meta_and_hide(desk5_wins[i], "5", 0);
+            if (hidden_count < 256) {
+                g_strlcpy(hidden_wids[hidden_count++], desk5_wins[i], 32);
+            }
         }
         const char *desk_argv[] = { "bspc", "desktop", "-f", "^5", NULL };
         run_argv_sync(desk_argv);
-        launch_study_terminal();
+
+        /* Re-show previously spawned study terminal if still alive, else launch a fresh one */
+        FILE *tf = fopen(PANIC_TERM_FILE, "r");
+        char saved_term_wid[32] = {0};
+        if (tf) {
+            if (fgets(saved_term_wid, sizeof(saved_term_wid), tf)) {
+                g_strstrip(saved_term_wid);
+            }
+            fclose(tf);
+        }
+        if (saved_term_wid[0] != '\0') {
+            char exists[32] = {0};
+            char qcmd[128];
+            snprintf(qcmd, sizeof(qcmd), "bspc query -N -n %s 2>/dev/null", saved_term_wid);
+            exec_cmd_output(qcmd, exists, sizeof(exists));
+            if (exists[0] != '\0') {
+                const char *move_argv[] = { "bspc", "node", saved_term_wid, "-d", "^5", NULL };
+                run_argv_sync(move_argv);
+                const char *unhide_argv[] = { "bspc", "node", saved_term_wid, "-g", "hidden=off", NULL };
+                run_argv_sync(unhide_argv);
+                const char *focus_argv[] = { "bspc", "node", saved_term_wid, "-f", NULL };
+                run_argv_sync(focus_argv);
+                g_strlcpy(spawned_wid, saved_term_wid, sizeof(spawned_wid));
+            } else {
+                unlink(PANIC_TERM_FILE);
+            }
+        }
+        if (spawned_wid[0] == '\0') {
+            spawned_pid = launch_study_terminal();
+        }
+    }
+
+    FILE *sf = fopen(PANIC_STATE_FILE, "w");
+    if (sf) {
+        if (cur_desk[0] != '\0') fprintf(sf, "prev_desktop=%s\n", cur_desk);
+        if (focused_wid[0] != '\0') fprintf(sf, "prev_focused=%s\n", focused_wid);
+        if (spawned_pid > 0) fprintf(sf, "spawned_pid=%ld\n", (long)spawned_pid);
+        if (spawned_wid[0] != '\0') fprintf(sf, "spawned_wid=%s\n", spawned_wid);
+        for (int i = 0; i < hidden_count; i++) {
+            fprintf(sf, "hidden=%s\n", hidden_wids[i]);
+        }
+        fclose(sf);
     }
 
     if (dpy) {
